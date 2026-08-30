@@ -3,12 +3,16 @@
 
 #include "cpplink/app.hpp"
 
+#include <memory>
 #include <ostream>
 
+#include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
 #include "cpplink/explain.hpp"
+#include "cpplink/explain_blocking.hpp"
 #include "cpplink/inspect.hpp"
 #include "cpplink/parquet_loader.hpp"
+#include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
@@ -25,6 +29,8 @@ void PrintUsage(std::ostream& out) {
         << "commands:\n"
         << "  inspect     load a parquet file and report cardinality and memory\n"
         << "  explain     show the comparison levels a single pair lands on\n"
+        << "  explain-blocking  price every blocking source without enumerating\n"
+        << "  recall      measure what fraction of known pairs blocking reaches\n"
         << "  gen-sample  write a sample parquet file with planted duplicates\n"
         << "\n"
         << "options:\n"
@@ -33,6 +39,10 @@ void PrintUsage(std::ostream& out) {
         << "\n"
         << "cpplink inspect --schema <schema.json> <file.parquet>\n"
         << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b> "
+           "<file.parquet>\n"
+        << "cpplink explain-blocking --schema <schema.json> [--count] "
+           "<file.parquet>\n"
+        << "cpplink recall --schema <schema.json> --truth <truth.csv> "
            "<file.parquet>\n"
         << "cpplink gen-sample --out <file.parquet> [--rows N] [--seed N]\n"
         << "                   [--duplicate-rate F] [--truth <file.csv>]\n";
@@ -196,6 +206,110 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
+// Loads a schema and a parquet file, the opening move of every blocking command.
+bool LoadForBlocking(const std::string& schema_path, const std::string& data_path,
+                     Schema* schema, std::unique_ptr<RecordStore>* store,
+                     BlockingPlan* plan, std::ostream& err) {
+    std::string error;
+    if (!LoadSchema(schema_path, schema, &error)) {
+        err << "cpplink: " << error << "\n";
+        return false;
+    }
+    if (schema->blocking.empty()) {
+        err << "cpplink: the schema declares no \"blocking\" sources\n";
+        return false;
+    }
+    *store = std::make_unique<RecordStore>(*schema);
+    if (!LoadParquet(data_path, *schema, store->get(), nullptr, &error)) {
+        err << "cpplink: " << error << "\n";
+        return false;
+    }
+    if (!plan->Build(*schema, **store, &error)) {
+        err << "cpplink: " << error << "\n";
+        return false;
+    }
+    return true;
+}
+
+int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
+                       std::ostream& err) {
+    std::string schema_path;
+    std::string data_path;
+    bool count_union = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--count") {
+            count_union = true;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink explain-blocking: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else if (data_path.empty()) {
+            data_path = args[i];
+        } else {
+            err << "cpplink explain-blocking: unexpected argument '" << args[i] << "'\n";
+            return 1;
+        }
+    }
+    if (schema_path.empty() || data_path.empty()) {
+        err << "cpplink explain-blocking: --schema <schema.json> and a parquet file "
+               "are required\n";
+        return 1;
+    }
+
+    Schema schema;
+    std::unique_ptr<RecordStore> store;
+    BlockingPlan plan;
+    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+        return 1;
+    }
+    PrintBlockingReport(plan, *store, count_union, out);
+    return 0;
+}
+
+int RunRecall(const std::vector<std::string>& args, std::ostream& out,
+              std::ostream& err) {
+    std::string schema_path;
+    std::string data_path;
+    std::string truth_path;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--truth") {
+            if (!TakeValue(args, &i, &truth_path, err)) return 1;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink recall: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else if (data_path.empty()) {
+            data_path = args[i];
+        } else {
+            err << "cpplink recall: unexpected argument '" << args[i] << "'\n";
+            return 1;
+        }
+    }
+    if (schema_path.empty() || data_path.empty() || truth_path.empty()) {
+        err << "cpplink recall: --schema <schema.json>, --truth <truth.csv> and a "
+               "parquet file are required\n";
+        return 1;
+    }
+
+    Schema schema;
+    std::unique_ptr<RecordStore> store;
+    BlockingPlan plan;
+    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+        return 1;
+    }
+
+    TruthPairs truth;
+    std::string error;
+    if (!LoadTruthPairs(truth_path, *store, &truth, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    PrintRecallReport(plan, truth, out);
+    return 0;
+}
+
 int RunGenSample(const std::vector<std::string>& args, std::ostream& out,
                  std::ostream& err) {
     SampleOptions options;
@@ -257,6 +371,8 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     const std::vector<std::string> rest(args.begin() + 1, args.end());
     if (first == "inspect") return RunInspect(rest, out, err);
     if (first == "explain") return RunExplain(rest, out, err);
+    if (first == "explain-blocking") return RunExplainBlocking(rest, out, err);
+    if (first == "recall") return RunRecall(rest, out, err);
     if (first == "gen-sample") return RunGenSample(rest, out, err);
 
     err << "cpplink: unknown command '" << first << "'\n";

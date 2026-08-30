@@ -66,9 +66,11 @@ std::string ValueOf(const BoundComparison& comparison, uint64_t row) {
     return "?";
 }
 
+// Marked with an ASCII dot rather than an ellipsis: std::setw pads by bytes, and a
+// multi-byte marker silently costs the column its alignment.
 std::string Truncate(std::string text, size_t width) {
     if (text.size() <= width) return text;
-    return text.substr(0, width - 1) + "…";
+    return text.substr(0, width - 1) + ".";
 }
 
 }  // namespace
