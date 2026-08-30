@@ -1,0 +1,14 @@
+{
+  "unique_id": "id",
+  "columns": [
+    {"name": "first_name",     "type": "string"},
+    {"name": "last_name",      "type": "string"},
+    {"name": "dob",            "type": "date"},
+    {"name": "email",          "type": "string"},
+    {"name": "phone",          "type": "string"},
+    {"name": "postcode",       "type": "string"},
+    {"name": "latitude",       "type": "double"},
+    {"name": "longitude",      "type": "double"},
+    {"name": "address_tokens", "type": "string_list"}
+  ]
+}

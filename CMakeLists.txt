@@ -6,11 +6,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(BUILD_TESTING "Enable building of tests" OFF)
 
+find_package(Arrow REQUIRED)
+find_package(Parquet REQUIRED)
+find_package(nlohmann_json REQUIRED)
+
 # Core logic lives in a library so both the CLI and the tests can link against it.
 file(GLOB_RECURSE CPPLINK_SOURCES CONFIGURE_DEPENDS src/cpplink/*.cpp src/cpplink/*.hpp)
 
 add_library(cpplink_core ${CPPLINK_SOURCES})
 target_include_directories(cpplink_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cpplink_core PUBLIC
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    nlohmann_json::nlohmann_json
+)
 
 add_executable(cpplink src/main.cpp)
 target_link_libraries(cpplink PRIVATE cpplink_core)
@@ -25,7 +34,9 @@ if(BUILD_TESTING)
     add_executable(run_tests ${TEST_SOURCES})
     target_link_libraries(run_tests PRIVATE cpplink_core GTest::gtest_main)
 
-    gtest_discover_tests(run_tests)
+    # Arrow pulls in a large shared library graph; discovery needs longer than the
+    # 5 s default to load it.
+    gtest_discover_tests(run_tests DISCOVERY_TIMEOUT 120)
 endif()
 
 # clang-format target

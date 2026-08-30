@@ -3,6 +3,10 @@ build-*/
 .DS_Store
 compile_commands.json
 
+# Data, never source
+*.parquet
+*.truth.csv
+
 # Local working notes, not part of the repo
 CLAUDE.md
 DESIGN.md
