@@ -1,3 +1,12 @@
 BasedOnStyle: Google
 IndentWidth: 4
 ColumnLimit: 90
+# Match cpplint's build/include_order: the main header, then C++ standard headers,
+# then third-party (<arrow/...>, <nlohmann/...>), then this project's own headers.
+IncludeCategories:
+  - Regex:    '^<[^/.]+>$'
+    Priority: 1
+  - Regex:    '^<.*>$'
+    Priority: 2
+  - Regex:    '.*'
+    Priority: 3

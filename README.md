@@ -13,8 +13,8 @@ of millions of records. cpplink folds pairs into a histogram of agreement patter
 are generated and discards them, so peak memory is set by the number of *records*, not the
 number of *pairs*.
 
-> **Status: design complete, implementation not started.** The repository currently holds
-> the build skeleton and a CLI stub.
+> **Status: phase 0 complete.** The record store, parquet loader and `inspect` command
+> are in; comparisons, blocking, estimation and scoring are not.
 
 ## Approach
 
@@ -27,7 +27,7 @@ patterns rather than the number of pairs. On a 18M-record deduplication:
 |---|---:|---:|
 | Candidate pairs | 5×10⁹ | 5×10⁹ |
 | Stored rows | 5×10⁹ | ~10⁵ |
-| Resident memory | ~130 GB | ~2.6 GB |
+| Resident memory | ~130 GB | 3.1 GB *(measured)* |
 | Cost of one EM re-fit | re-read everything | < 0.1 s |
 
 Blocking is a lazy iterator rather than a join, candidate pairs are deduplicated across
@@ -42,14 +42,48 @@ MinHash LSH and sorted-neighbourhood passes. Sources that select on a whole reco
 than a column (an ANN index, for instance) are used for prediction only, because they break
 the conditional-independence argument that makes EM's parameter estimates unbiased.
 
+## Usage
+
+cpplink is told what is in the data with a JSON schema — see
+[examples/sample_schema.json](examples/sample_schema.json):
+
+```json
+{
+  "unique_id": "id",
+  "columns": [
+    {"name": "last_name",      "type": "string"},
+    {"name": "dob",            "type": "date"},
+    {"name": "latitude",       "type": "double"},
+    {"name": "address_tokens", "type": "string_list"}
+  ]
+}
+```
+
+`string` columns are interned to dense `uint32` ids, `string_list` columns are stored as
+CSR with each row sorted, `date` is days since the epoch, and `double` is stored as-is.
+Only the first three carry term frequencies: exact agreement between two doubles is not a
+discrete event worth counting, so a `double` column cannot drive rare-value blocking.
+
+```sh
+# Report cardinality, null rates and the memory each structure costs
+cpplink inspect --schema examples/sample_schema.json data.parquet
+
+# Write a sample file with realistic cardinalities and planted duplicates
+cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
+```
+
+`gen-sample` exists because the memory claims above are only worth making if they are
+measured. It plants corrupted copies of earlier rows and records them, so the file also
+serves as ground truth for the recall harness in a later phase.
+
 ## Planned features
 
+- Parquet input with a JSON schema, including list-valued columns *(done)*
 - Fellegi–Sunter model with configurable comparisons and ordered comparison levels
 - EM estimation of `m` and `λ`; exact closed-form `u` for exact-match levels
 - Term-frequency adjustments, with admissible bounds for pruning
 - Automatic blocking: rare-value inverted index, MinHash LSH, sorted neighbourhood,
   optional ANN — with exact candidate-count reporting and recall measurement before any run
-- Parquet input, including list-valued columns
 - Multicore, shared-memory parallelism
 - Connected-component clustering of the scored edges
 - Deduplication first; record linkage across datasets through the same interfaces
