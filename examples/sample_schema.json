@@ -228,5 +228,29 @@
         }
       ]
     }
+  ],
+  "blocking": [
+    {
+      "type": "exact_value",
+      "column": "email"
+    },
+    {
+      "type": "exact_value",
+      "column": "phone"
+    },
+    {
+      "type": "exact_value",
+      "column": "dob"
+    },
+    {
+      "type": "rare_value",
+      "column": "last_name",
+      "max_frequency": 100
+    },
+    {
+      "type": "sorted_neighbourhood",
+      "column": "last_name",
+      "window": 20
+    }
   ]
 }

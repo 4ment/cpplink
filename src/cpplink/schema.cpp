@@ -47,6 +47,18 @@ std::string Number(double value, int decimals) {
     return out.str();
 }
 
+struct KindName {
+    const char* name;
+    SourceKind kind;
+};
+
+constexpr KindName kKindNames[] = {
+    {"exact_value", SourceKind::kExactValue},
+    {"rare_value", SourceKind::kRareValue},
+    {"minhash", SourceKind::kMinHash},
+    {"sorted_neighbourhood", SourceKind::kSortedNeighbourhood},
+};
+
 constexpr TypeName kTypeNames[] = {
     {"string", ColumnType::kString},
     {"string_list", ColumnType::kStringList},
@@ -115,6 +127,39 @@ std::string LevelSpec::Describe() const {
             return "jaccard >= " + Number(threshold, 2);
         case LevelType::kElse:
             return "else";
+    }
+    return "unknown";
+}
+
+const char* SourceKindName(SourceKind kind) {
+    for (const KindName& entry : kKindNames) {
+        if (entry.kind == kind) return entry.name;
+    }
+    return "unknown";
+}
+
+bool ParseSourceKind(const std::string& name, SourceKind* kind) {
+    for (const KindName& entry : kKindNames) {
+        if (name == entry.name) {
+            *kind = entry.kind;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string BlockingSpec::Describe() const {
+    switch (kind) {
+        case SourceKind::kExactValue:
+            return "exact value";
+        case SourceKind::kRareValue:
+            return "value seen <= " + std::to_string(max_frequency) + " times";
+        case SourceKind::kMinHash:
+            return "minhash " + std::to_string(bands) + "x" +
+                   std::to_string(rows_per_band) + ", " + std::to_string(ngram) +
+                   "-grams";
+        case SourceKind::kSortedNeighbourhood:
+            return "window " + std::to_string(window);
     }
     return "unknown";
 }
@@ -322,6 +367,86 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
 
 }  // namespace
 
+namespace {
+
+uint32_t ReadUnsigned(const nlohmann::json& item, const char* key, uint32_t fallback) {
+    if (!item.contains(key) || !item[key].is_number()) return fallback;
+    const double value = item[key].get<double>();
+    return value < 0 ? 0 : static_cast<uint32_t>(value);
+}
+
+bool ParseBlocking(const nlohmann::json& root, Schema* schema, std::string* error) {
+    if (!root.contains("blocking")) return true;
+    if (!root["blocking"].is_array()) {
+        *error = "\"blocking\" must be an array";
+        return false;
+    }
+    for (const nlohmann::json& item : root["blocking"]) {
+        if (!item.is_object() || !item.contains("type") || !item["type"].is_string()) {
+            *error = "every blocking source needs a string \"type\"";
+            return false;
+        }
+        BlockingSpec spec;
+        const std::string kind_name = item["type"].get<std::string>();
+        if (!ParseSourceKind(kind_name, &spec.kind)) {
+            *error = "unknown blocking type \"" + kind_name +
+                     "\" (expected exact_value, rare_value, minhash or "
+                     "sorted_neighbourhood)";
+            return false;
+        }
+        if (!item.contains("column") || !item["column"].is_string()) {
+            *error = "blocking source \"" + kind_name + "\" needs a \"column\"";
+            return false;
+        }
+        spec.column = item["column"].get<std::string>();
+        const ColumnSpec* column = schema->Find(spec.column);
+        if (column == nullptr) {
+            *error = "blocking source names column \"" + spec.column +
+                     "\", which is not declared";
+            return false;
+        }
+        // Blocking needs discrete agreement, which a double never provides.
+        if (!HasTermFrequencies(column->type)) {
+            *error = "blocking source names column \"" + spec.column + "\", a " +
+                     ColumnTypeName(column->type) +
+                     " column; blocking needs discrete agreement on a value";
+            return false;
+        }
+        if (spec.kind == SourceKind::kMinHash && column->type != ColumnType::kString) {
+            *error = "minhash blocking needs a string column, but \"" + spec.column +
+                     "\" is " + ColumnTypeName(column->type);
+            return false;
+        }
+
+        spec.max_frequency = ReadUnsigned(item, "max_frequency", spec.max_frequency);
+        spec.window = ReadUnsigned(item, "window", spec.window);
+        spec.bands = ReadUnsigned(item, "bands", spec.bands);
+        spec.rows_per_band = ReadUnsigned(item, "rows_per_band", spec.rows_per_band);
+        spec.ngram = ReadUnsigned(item, "ngram", spec.ngram);
+        if (item.contains("seed") && item["seed"].is_number()) {
+            spec.seed = static_cast<uint64_t>(item["seed"].get<double>());
+        }
+        if (spec.kind == SourceKind::kMinHash &&
+            (spec.bands == 0 || spec.rows_per_band == 0 || spec.ngram == 0)) {
+            *error = "minhash blocking on \"" + spec.column +
+                     "\" needs non-zero bands, rows_per_band and ngram";
+            return false;
+        }
+        if (spec.kind == SourceKind::kSortedNeighbourhood && spec.window == 0) {
+            *error = "sorted_neighbourhood blocking on \"" + spec.column +
+                     "\" needs a non-zero window";
+            return false;
+        }
+        spec.name = item.contains("name") && item["name"].is_string()
+                        ? item["name"].get<std::string>()
+                        : spec.column + " " + SourceKindName(spec.kind);
+        schema->blocking.push_back(spec);
+    }
+    return true;
+}
+
+}  // namespace
+
 bool ParseSchema(const std::string& json_text, Schema* schema, std::string* error) {
     nlohmann::json root = nlohmann::json::parse(json_text, nullptr, false);
     if (root.is_discarded()) {
@@ -379,6 +504,7 @@ bool ParseSchema(const std::string& json_text, Schema* schema, std::string* erro
     }
 
     if (!ParseComparisons(root, &parsed, error)) return false;
+    if (!ParseBlocking(root, &parsed, error)) return false;
 
     *schema = std::move(parsed);
     return true;

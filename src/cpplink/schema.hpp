@@ -56,6 +56,35 @@ struct LevelSpec {
     std::string Describe() const;
 };
 
+// How a blocking source generates candidate pairs.
+enum class SourceKind {
+    kExactValue,           // every pair sharing a value
+    kRareValue,            // pairs sharing a value seen at most max_frequency times
+    kMinHash,              // MinHash LSH bands over character n-grams
+    kSortedNeighbourhood,  // pairs within a window of a sorted order
+};
+
+const char* SourceKindName(SourceKind kind);
+bool ParseSourceKind(const std::string& name, SourceKind* kind);
+
+// A blocking source. Every source here selects on a single column, which is what
+// makes it usable for estimating m: the selection event factors as a condition on
+// that column, so the column is held fixed for the session and every other
+// comparison stays identifiable. A source selecting on a whole record would not.
+struct BlockingSpec {
+    SourceKind kind = SourceKind::kExactValue;
+    std::string name;
+    std::string column;
+    uint32_t max_frequency = 100;  // kRareValue
+    uint32_t window = 8;           // kSortedNeighbourhood
+    uint32_t bands = 12;           // kMinHash
+    uint32_t rows_per_band = 4;
+    uint32_t ngram = 3;
+    uint64_t seed = 1;
+
+    std::string Describe() const;
+};
+
 // One comparison over one logical field, which may span more than one column:
 // a coordinate pair is a single comparison over latitude and longitude, not two
 // independent ones.
@@ -76,6 +105,7 @@ struct Schema {
     std::string unique_id;  // optional; empty means the row index is the id
     std::vector<ColumnSpec> columns;
     std::vector<ComparisonSpec> comparisons;  // optional until phase 1 is used
+    std::vector<BlockingSpec> blocking;       // optional until phase 2 is used
 
     const ColumnSpec* Find(const std::string& name) const;
     // Total packed width in bits. Must fit in a uint32.

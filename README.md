@@ -13,8 +13,8 @@ of millions of records. cpplink folds pairs into a histogram of agreement patter
 are generated and discards them, so peak memory is set by the number of *records*, not the
 number of *pairs*.
 
-> **Status: phases 0–1 complete.** The record store, parquet loader, comparison levels and
-> the `inspect` / `explain` commands are in; blocking, estimation and scoring are not.
+> **Status: phases 0–2 complete.** The record store, parquet loader, comparison levels,
+> blocking sources and the recall harness are in; estimation, scoring and clustering are not.
 
 ## Approach
 
@@ -81,12 +81,30 @@ Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_wit
 applies a level to a column type it cannot read, omits a trailing `else`, or overflows the
 32-bit packed pattern is rejected at parse time, before a file is opened.
 
+Blocking sources are declared in the same file and unioned in order. Every source here
+selects on a single column, which is what makes it usable for estimating `m`:
+
+```json
+"blocking": [
+  {"type": "exact_value", "column": "email"},
+  {"type": "rare_value", "column": "last_name", "max_frequency": 100},
+  {"type": "minhash", "column": "last_name", "bands": 10, "rows_per_band": 4},
+  {"type": "sorted_neighbourhood", "column": "last_name", "window": 20}
+]
+```
+
 ```sh
 # Report cardinality, null rates and the memory each structure costs
 cpplink inspect --schema examples/sample_schema.json data.parquet
 
 # Show which level each comparison assigns to one pair, and the packed pattern
 cpplink explain --schema examples/sample_schema.json --pair r17,r19 data.parquet
+
+# Price every blocking source exactly, without enumerating a single pair
+cpplink explain-blocking --schema examples/sample_schema.json data.parquet
+
+# Measure what fraction of known duplicate pairs blocking actually reaches
+cpplink recall --schema examples/sample_schema.json --truth truth.csv data.parquet
 
 # Write a sample file with realistic cardinalities and planted duplicates
 cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
@@ -103,8 +121,9 @@ serves as ground truth for the recall harness in a later phase.
 - Fellegi–Sunter model over the resulting agreement patterns
 - EM estimation of `m` and `λ`; exact closed-form `u` for exact-match levels
 - Term-frequency adjustments, with admissible bounds for pruning
-- Automatic blocking: rare-value inverted index, MinHash LSH, sorted neighbourhood,
-  optional ANN — with exact candidate-count reporting and recall measurement before any run
+- Automatic blocking: exact-value and rare-value inverted indexes, MinHash LSH and sorted
+  neighbourhood, with exact candidate-count reporting and recall measurement *(done)*
+- Optional ANN blocking for prediction
 - Multicore, shared-memory parallelism
 - Connected-component clustering of the scored edges
 - Deduplication first; record linkage across datasets through the same interfaces
