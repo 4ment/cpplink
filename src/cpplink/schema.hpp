@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -29,13 +30,56 @@ struct ColumnSpec {
     ColumnType type = ColumnType::kString;
 };
 
+// What a comparison level tests. Levels are evaluated top-down, first hit wins,
+// so ordering is the model: put the strongest evidence first.
+enum class LevelType {
+    kNull,           // any of the comparison's columns is missing on either side
+    kExact,          // interned id or value equality
+    kLevenshtein,    // edit distance <= threshold
+    kJaroWinkler,    // similarity >= threshold
+    kDateWithin,     // |difference| <= threshold days
+    kNumericWithin,  // |difference| <= threshold
+    kGeoWithin,      // great-circle distance <= threshold km
+    kListOverlap,    // intersection size >= threshold
+    kListJaccard,    // Jaccard similarity >= threshold
+    kElse,           // always fires; must be last
+};
+
+const char* LevelTypeName(LevelType type);
+bool ParseLevelType(const std::string& name, LevelType* type);
+
+struct LevelSpec {
+    LevelType type = LevelType::kElse;
+    double threshold = 0.0;
+    std::string label;  // defaults to a description of type and threshold
+
+    std::string Describe() const;
+};
+
+// One comparison over one logical field, which may span more than one column:
+// a coordinate pair is a single comparison over latitude and longitude, not two
+// independent ones.
+struct ComparisonSpec {
+    std::string name;
+    std::vector<std::string> columns;
+    std::vector<LevelSpec> levels;
+    bool term_frequency = false;  // read in a later phase; parsed here
+
+    // Bits needed to hold a level index, and the offset into the packed gamma.
+    uint8_t bits = 0;
+    uint8_t shift = 0;
+};
+
 // The data description: what the columns are and how they are stored. How to
 // compare them is a separate concern and is not read here.
 struct Schema {
     std::string unique_id;  // optional; empty means the row index is the id
     std::vector<ColumnSpec> columns;
+    std::vector<ComparisonSpec> comparisons;  // optional until phase 1 is used
 
     const ColumnSpec* Find(const std::string& name) const;
+    // Total packed width in bits. Must fit in a uint32.
+    uint8_t GammaWidth() const;
 };
 
 bool ParseSchema(const std::string& json_text, Schema* schema, std::string* error);
