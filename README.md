@@ -31,16 +31,24 @@ patterns rather than the number of pairs. On a 18M-record deduplication:
 | Cost of one EM re-fit | re-read everything | < 0.1 s |
 
 Blocking is a lazy iterator rather than a join, candidate pairs are deduplicated across
-rules by a key-inequality predicate instead of a global `DISTINCT`, and term-frequency
-adjustment is made affordable by admissible score bounds that let most patterns skip the
-TF tables entirely.
+sources by a cheap predicate instead of a global `DISTINCT`, and term-frequency adjustment
+is made affordable by admissible score bounds that let most patterns skip the TF tables
+entirely.
+
+Blocking is also **automatic**. Rather than hand-written rules, candidates come from the
+term-frequency tables the model already needs — pairs are generated from agreement on
+*rare* values, which is exactly the high-evidence event the model scores — supplemented by
+MinHash LSH and sorted-neighbourhood passes. Sources that select on a whole record rather
+than a column (an ANN index, for instance) are used for prediction only, because they break
+the conditional-independence argument that makes EM's parameter estimates unbiased.
 
 ## Planned features
 
 - Fellegi–Sunter model with configurable comparisons and ordered comparison levels
 - EM estimation of `m` and `λ`; exact closed-form `u` for exact-match levels
 - Term-frequency adjustments, with admissible bounds for pruning
-- Streaming blocking with exact candidate-count reporting before any run
+- Automatic blocking: rare-value inverted index, MinHash LSH, sorted neighbourhood,
+  optional ANN — with exact candidate-count reporting and recall measurement before any run
 - Parquet input, including list-valued columns
 - Multicore, shared-memory parallelism
 - Connected-component clustering of the scored edges
