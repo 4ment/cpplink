@@ -1,14 +1,232 @@
 {
   "unique_id": "id",
   "columns": [
-    {"name": "first_name",     "type": "string"},
-    {"name": "last_name",      "type": "string"},
-    {"name": "dob",            "type": "date"},
-    {"name": "email",          "type": "string"},
-    {"name": "phone",          "type": "string"},
-    {"name": "postcode",       "type": "string"},
-    {"name": "latitude",       "type": "double"},
-    {"name": "longitude",      "type": "double"},
-    {"name": "address_tokens", "type": "string_list"}
+    {
+      "name": "first_name",
+      "type": "string"
+    },
+    {
+      "name": "last_name",
+      "type": "string"
+    },
+    {
+      "name": "dob",
+      "type": "date"
+    },
+    {
+      "name": "email",
+      "type": "string"
+    },
+    {
+      "name": "phone",
+      "type": "string"
+    },
+    {
+      "name": "postcode",
+      "type": "string"
+    },
+    {
+      "name": "latitude",
+      "type": "double"
+    },
+    {
+      "name": "longitude",
+      "type": "double"
+    },
+    {
+      "name": "address_tokens",
+      "type": "string_list"
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "last_name",
+      "columns": [
+        "last_name"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.92
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.85
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "first_name",
+      "columns": [
+        "first_name"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 1
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.88
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "dob",
+      "columns": [
+        "dob"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "date_within",
+          "threshold": 2
+        },
+        {
+          "type": "date_within",
+          "threshold": 370,
+          "label": "within a year"
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "columns": [
+        "email"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.93
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "phone",
+      "columns": [
+        "phone"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 2
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "postcode",
+      "columns": [
+        "postcode"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "location",
+      "columns": [
+        "latitude",
+        "longitude"
+      ],
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "geo_within",
+          "threshold": 1
+        },
+        {
+          "type": "geo_within",
+          "threshold": 25
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "address",
+      "columns": [
+        "address_tokens"
+      ],
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "list_jaccard",
+          "threshold": 0.6
+        },
+        {
+          "type": "list_overlap",
+          "threshold": 2
+        },
+        {
+          "type": "else"
+        }
+      ]
+    }
   ]
 }

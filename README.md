@@ -13,8 +13,8 @@ of millions of records. cpplink folds pairs into a histogram of agreement patter
 are generated and discards them, so peak memory is set by the number of *records*, not the
 number of *pairs*.
 
-> **Status: phase 0 complete.** The record store, parquet loader and `inspect` command
-> are in; comparisons, blocking, estimation and scoring are not.
+> **Status: phases 0–1 complete.** The record store, parquet loader, comparison levels and
+> the `inspect` / `explain` commands are in; blocking, estimation and scoring are not.
 
 ## Approach
 
@@ -64,9 +64,29 @@ CSR with each row sorted, `date` is days since the epoch, and `double` is stored
 Only the first three carry term frequencies: exact agreement between two doubles is not a
 discrete event worth counting, so a `double` column cannot drive rare-value blocking.
 
+Comparisons are declared in the same file. Levels are evaluated top-down and the first hit
+wins, so their order is the model — put the strongest evidence first. A comparison can span
+more than one column: a coordinate pair is one comparison, not two.
+
+```json
+{"name": "location", "columns": ["latitude", "longitude"], "levels": [
+  {"type": "null"},
+  {"type": "geo_within", "threshold": 1},
+  {"type": "geo_within", "threshold": 25},
+  {"type": "else"}]}
+```
+
+Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`,
+`numeric_within`, `geo_within`, `list_overlap`, `list_jaccard`, `else`. A configuration that
+applies a level to a column type it cannot read, omits a trailing `else`, or overflows the
+32-bit packed pattern is rejected at parse time, before a file is opened.
+
 ```sh
 # Report cardinality, null rates and the memory each structure costs
 cpplink inspect --schema examples/sample_schema.json data.parquet
+
+# Show which level each comparison assigns to one pair, and the packed pattern
+cpplink explain --schema examples/sample_schema.json --pair r17,r19 data.parquet
 
 # Write a sample file with realistic cardinalities and planted duplicates
 cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
@@ -79,7 +99,8 @@ serves as ground truth for the recall harness in a later phase.
 ## Planned features
 
 - Parquet input with a JSON schema, including list-valued columns *(done)*
-- Fellegi–Sunter model with configurable comparisons and ordered comparison levels
+- Configurable comparisons and ordered comparison levels *(done)*
+- Fellegi–Sunter model over the resulting agreement patterns
 - EM estimation of `m` and `λ`; exact closed-form `u` for exact-match levels
 - Term-frequency adjustments, with admissible bounds for pruning
 - Automatic blocking: rare-value inverted index, MinHash LSH, sorted neighbourhood,

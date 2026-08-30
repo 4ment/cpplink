@@ -6,6 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(BUILD_TESTING "Enable building of tests" OFF)
 
+# Without this the default build has no -O flag at all, which costs roughly two
+# orders of magnitude in the pair-evaluation loop. Debug builds must be asked for.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
 find_package(nlohmann_json REQUIRED)
