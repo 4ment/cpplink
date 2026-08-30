@@ -1,0 +1,9 @@
+name: cpplink
+channels:
+  - conda-forge
+dependencies:
+  - clang-tools
+  - cmake >= 3.15
+  - cpplint
+  - gtest
+  - ninja
