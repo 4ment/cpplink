@@ -62,8 +62,9 @@ TEST(RunTest, UsageListsEveryCommand) {
     std::ostringstream out;
     std::ostringstream err;
     EXPECT_EQ(cpplink::Run({"--help"}, out, err), 0);
-    for (const char* command : {"inspect", "explain", "explain-blocking", "recall",
-                                "estimate", "predict", "cluster", "gen-sample"}) {
+    for (const char* command :
+         {"inspect", "explain", "explain-blocking", "recall", "estimate", "predict",
+          "rescore", "cluster", "gen-sample"}) {
         EXPECT_NE(out.str().find(command), std::string::npos) << command;
     }
 }
@@ -87,6 +88,20 @@ TEST(RunTest, PredictRejectsAnUnknownFormat) {
     std::ostringstream err;
     EXPECT_EQ(cpplink::Run({"predict", "--format", "parquet"}, out, err), 1);
     EXPECT_NE(err.str().find("bin or csv"), std::string::npos);
+}
+
+TEST(RunTest, RescoreNeedsASpillAndAModel) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"rescore"}, out, err), 1);
+    EXPECT_NE(err.str().find("--spill"), std::string::npos);
+}
+
+TEST(RunTest, PredictRejectsABadSpillSample) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"predict", "--spill-sample", "0"}, out, err), 1);
+    EXPECT_NE(err.str().find("(0, 1]"), std::string::npos);
 }
 
 TEST(RunTest, ClusterNeedsSchemaEdgesAndData) {

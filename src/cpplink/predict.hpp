@@ -4,8 +4,10 @@
 #pragma once
 
 #include <cstdint>
+#include <fstream>
 #include <iosfwd>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "cpplink/blocking.hpp"
@@ -25,11 +27,39 @@ enum class EdgeFormat {
     kCsv,     // record ids and the weight, for reading with your eyes.
 };
 
+// One thread's edge output buffer, flushed in bulk so no two threads ever contend
+// on the writer. Public because `rescore` writes the same shards from a spill.
+class EdgeShardWriter {
+   public:
+    bool Open(const std::string& path, EdgeFormat format);
+    void WriteBinary(uint32_t a, uint32_t b, uint32_t gamma, double weight);
+    void WriteCsv(std::string_view id_a, std::string_view id_b, uint32_t gamma,
+                  double weight);
+    bool Close();
+
+   private:
+    void Flush();
+
+    EdgeFormat format_ = EdgeFormat::kBinary;
+    std::ofstream file_;
+    std::string buffer_;
+};
+
+std::string EdgeShardName(unsigned thread);
+
 struct PredictOptions {
     std::string out_dir;
     EdgeFormat format = EdgeFormat::kBinary;
     unsigned threads = 0;
     uint64_t max_edges = 0;  // 0 is unlimited
+    // Where to spill (a, b, gamma) alongside the edges, so the run can be
+    // re-scored under a new model without paying for the comparison again.
+    std::string spill_dir;
+    // Additionally keep this fraction of every candidate, above threshold or not.
+    // Without it a spill holds only what cleared the threshold, which is enough to
+    // re-tune upward and not enough to see what a lower threshold would find.
+    double spill_sample = 0.0;
+    uint64_t spill_seed = 20260904;
 };
 
 struct PredictReport {
@@ -46,6 +76,7 @@ struct PredictReport {
     unsigned threads = 0;
     double seconds = 0.0;
     bool truncated = false;
+    uint64_t spilled = 0;
     std::vector<std::string> shards;
 };
 
