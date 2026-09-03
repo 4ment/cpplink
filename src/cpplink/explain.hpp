@@ -9,6 +9,7 @@
 
 #include "cpplink/comparison.hpp"
 #include "cpplink/record_store.hpp"
+#include "cpplink/score.hpp"
 
 namespace cpplink {
 
@@ -20,6 +21,15 @@ void PrintGammaLayout(const ComparisonSet& comparisons, std::ostream& out);
 // pointed at billions of pairs.
 void PrintPairExplanation(const RecordStore& store, const ComparisonSet& comparisons,
                           uint64_t a, uint64_t b, std::ostream& out);
+
+// Prints the match weight as a waterfall: the prior, then each comparison's
+// contribution in bits and its term-frequency move, with a running total.
+//
+// A pattern says which levels fired; it does not say why the pair scored what it
+// scored. Two exact surname matches carry the same gamma and can differ by ten
+// bits, because one of them is "Smith". This is the view that shows that.
+void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& comparisons,
+                        const Scorer& scorer, uint64_t a, uint64_t b, std::ostream& out);
 
 // Resolves a unique_id to a row by linear scan. There is no id index: ids are
 // almost all distinct, so an index would cost as much as the values and is only

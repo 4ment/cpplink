@@ -33,17 +33,22 @@ const char* ZoneName(Zone zone) {
     return "?";
 }
 
-double TermFrequencyAdjustment::Delta(uint64_t row) const {
-    uint32_t frequency = 0;
+uint32_t TermFrequencyAdjustment::Frequency(uint64_t row) const {
     if (strings != nullptr) {
         const uint32_t id = strings->ids[row];
-        if (id == kNullId) return 0.0;
-        frequency = strings->tf[id];
-    } else if (dates != nullptr) {
-        const int32_t value = dates->values[row];
-        if (value == kNullDate) return 0.0;
-        frequency = dates->tf[static_cast<size_t>(value - dates->tf_origin)];
+        if (id == kNullId) return 0;
+        return strings->tf[id];
     }
+    if (dates != nullptr) {
+        const int32_t value = dates->values[row];
+        if (value == kNullDate) return 0;
+        return dates->tf[static_cast<size_t>(value - dates->tf_origin)];
+    }
+    return 0;
+}
+
+double TermFrequencyAdjustment::Delta(uint64_t row) const {
+    const uint32_t frequency = Frequency(row);
     if (frequency == 0) return 0.0;
     // log2(u / p_v) with p_v = tf / records, folded so only one log is taken.
     return damping * (log_u_times_records - std::log2(static_cast<double>(frequency)));
@@ -256,6 +261,37 @@ double Scorer::Weight(uint32_t gamma, uint64_t a) const {
         }
     }
     return total;
+}
+
+double Scorer::LevelWeight(size_t comparison, uint8_t level) const {
+    if (comparison >= weight_.size()) return 0.0;
+    if (level >= weight_[comparison].size()) return 0.0;
+    return weight_[comparison][level];
+}
+
+bool Scorer::HasAdjustment(size_t comparison) const {
+    for (const TermFrequencyAdjustment& adjustment : adjustments_) {
+        if (adjustment.comparison == comparison) return true;
+    }
+    return false;
+}
+
+double Scorer::AdjustmentFor(size_t comparison, uint32_t gamma, uint64_t row) const {
+    for (const TermFrequencyAdjustment& adjustment : adjustments_) {
+        if (adjustment.comparison != comparison) continue;
+        if (comparisons_->LevelOf(gamma, comparison) != adjustment.exact_level) {
+            return 0.0;
+        }
+        return adjustment.Delta(row);
+    }
+    return 0.0;
+}
+
+uint32_t Scorer::FrequencyFor(size_t comparison, uint64_t row) const {
+    for (const TermFrequencyAdjustment& adjustment : adjustments_) {
+        if (adjustment.comparison == comparison) return adjustment.Frequency(row);
+    }
+    return 0;
 }
 
 uint64_t Scorer::PatternsIn(Zone zone) const {

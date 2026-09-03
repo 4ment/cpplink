@@ -135,4 +135,104 @@ void PrintPairExplanation(const RecordStore& store, const ComparisonSet& compari
         << "   (" << static_cast<int>(comparisons.Width()) << " bits)\n";
 }
 
+namespace {
+
+// Right-aligned bits with an explicit sign, so a column of contributions reads as
+// a ledger rather than as a list of numbers.
+std::string Signed(double bits, int precision = 2) {
+    std::ostringstream out;
+    out << std::showpos << std::fixed << std::setprecision(precision) << bits;
+    return out.str();
+}
+
+}  // namespace
+
+void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& comparisons,
+                        const Scorer& scorer, uint64_t a, uint64_t b, std::ostream& out) {
+    const uint32_t gamma = comparisons.Evaluate(a, b);
+    const double prior = scorer.PriorWeight();
+
+    out << "\n"
+        << std::left << std::setw(18) << "Comparison" << std::setw(22) << "Level"
+        << std::right << std::setw(10) << "bits" << std::setw(10) << "tf" << std::setw(12)
+        << "running" << "\n";
+    out << std::string(72, '-') << "\n";
+
+    double running = prior;
+    out << std::left << std::setw(18) << "(prior)" << std::setw(22) << "lambda"
+        << std::right << std::setw(10) << Signed(prior) << std::setw(10) << ""
+        << std::setw(12) << Signed(running) << "\n";
+
+    for (size_t i = 0; i < comparisons.Size(); ++i) {
+        const BoundComparison& bound = comparisons.at(i);
+        const uint8_t level = comparisons.LevelOf(gamma, i);
+        const double bits = scorer.LevelWeight(i, level);
+        const double move = scorer.AdjustmentFor(i, gamma, a);
+        running += bits + move;
+        out << std::left << std::setw(18) << Truncate(bound.spec->name, 17)
+            << std::setw(22) << Truncate(bound.spec->levels[level].Describe(), 21)
+            << std::right << std::setw(10) << Signed(bits) << std::setw(10)
+            << (move != 0.0 ? Signed(move) : std::string("")) << std::setw(12)
+            << Signed(running) << "\n";
+    }
+    out << std::string(72, '-') << "\n";
+
+    const double weight = scorer.Weight(gamma, a);
+    out << "Match weight   " << std::fixed << std::setprecision(3) << weight
+        << " bits    posterior " << std::setprecision(9) << ProbabilityForWeight(weight)
+        << "\n";
+
+    // Where the term-frequency moves came from. Without the counts the adjustment
+    // is an unexplained number, and this is the report whose job is to explain it.
+    bool any = false;
+    for (size_t i = 0; i < comparisons.Size(); ++i) {
+        if (!scorer.HasAdjustment(i)) continue;
+        const double move = scorer.AdjustmentFor(i, gamma, a);
+        if (move == 0.0) continue;
+        if (!any) {
+            out << "\nTerm frequency, for the comparisons that agreed exactly:\n";
+            any = true;
+        }
+        const uint32_t frequency = scorer.FrequencyFor(i, a);
+        const double share =
+            store.NumRecords() > 0
+                ? static_cast<double>(frequency) / static_cast<double>(store.NumRecords())
+                : 0.0;
+        out << "  " << std::left << std::setw(18)
+            << Truncate(comparisons.at(i).spec->name, 17) << std::setw(24)
+            << Truncate(ValueOf(comparisons.at(i), a), 23) << std::right << std::setw(12)
+            << frequency << " rows" << std::setw(12) << std::scientific
+            << std::setprecision(2) << share << std::setw(10) << std::defaultfloat
+            << Signed(move) << " bits\n";
+    }
+
+    // The same three-way decision `predict` makes, so a pair can be traced from
+    // here to whether it would have been emitted.
+    const Zone zone = scorer.Classify(gamma);
+    out << "\nPattern bracket  " << std::fixed << std::setprecision(3)
+        << scorer.BaseWeight(gamma) + scorer.DeltaMin(gamma) << " to "
+        << scorer.BaseWeight(gamma) + scorer.DeltaMax(gamma) << " bits, against a "
+        << "threshold of " << scorer.threshold() << "\n";
+    out << "Zone             " << ZoneName(zone) << " -- ";
+    switch (zone) {
+        case Zone::kDrop:
+            out << "no pair with this pattern can clear the threshold, whatever "
+                   "values it carries\n";
+            break;
+        case Zone::kEmit:
+            out << "every pair with this pattern clears it, so no term-frequency "
+                   "table is consulted\n";
+            break;
+        case Zone::kCheck:
+            out << "the bracket straddles the threshold, so this pattern is scored "
+                   "exactly\n";
+            break;
+        case Zone::kUnreachable:
+            out << "no evaluation can produce this pattern\n";
+            break;
+    }
+    out << (weight >= scorer.threshold() ? "This pair would be emitted.\n"
+                                         : "This pair would not be emitted.\n");
+}
+
 }  // namespace cpplink
