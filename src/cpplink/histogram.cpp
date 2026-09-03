@@ -4,21 +4,27 @@
 #include "cpplink/histogram.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <limits>
-#include <mutex>
-#include <thread>
+#include <memory>
 #include <utility>
 #include <vector>
+
+#include "cpplink/pair_stream.hpp"
 
 namespace cpplink {
 namespace {
 
 constexpr uint32_t kEmpty = std::numeric_limits<uint32_t>::max();
-// Roughly a million pairs per task: small enough that no thread is left holding
-// the tail alone, large enough that the atomic counter is never contended.
-constexpr uint64_t kPairsPerTask = 1u << 20;
+
+// Per-thread scratch, one cache line each. These are touched once per pair, so
+// packing them adjacently would put every thread's increment on the same line and
+// cost more than the work being counted.
+struct alignas(64) ThreadState {
+    uint64_t seen = 0;
+    uint64_t kept = 0;
+    uint64_t random = 0;
+};
 
 uint64_t Mix64(uint64_t value) {
     value += 0x9E3779B97F4A7C15ull;
@@ -28,69 +34,6 @@ uint64_t Mix64(uint64_t value) {
 }
 
 uint32_t Scatter(uint32_t gamma) { return static_cast<uint32_t>(Mix64(gamma) >> 32); }
-
-// One slice of one source's pair stream. Whole groups when row_end is zero,
-// otherwise rows [row_begin, row_end) of the single group at `begin`.
-struct PairTask {
-    uint64_t begin = 0;
-    uint64_t end = 0;
-    uint64_t row_begin = 0;
-    uint64_t row_end = 0;
-};
-
-uint64_t PairsIn(uint64_t group) { return group * (group - 1) / 2; }
-
-// Groups are batched until a task is worth taking, and an oversized group is cut
-// into row ranges of its own triangle -- otherwise one "Smith" block is a whole
-// thread's run while the others idle.
-void PlanGroupTasks(const SourceGroups& groups, std::vector<PairTask>* tasks) {
-    tasks->clear();
-    const uint64_t count = groups.GroupCount();
-    uint64_t batch = 0;
-    uint64_t pending = 0;
-    for (uint64_t g = 0; g < count; ++g) {
-        const uint64_t rows = groups.Size(g);
-        if (PairsIn(rows) > kPairsPerTask) {
-            if (g > batch) tasks->push_back({batch, g, 0, 0});
-            uint64_t low = 0;
-            uint64_t chunk = 0;
-            for (uint64_t i = 0; i < rows; ++i) {
-                chunk += rows - 1 - i;
-                if (chunk >= kPairsPerTask) {
-                    tasks->push_back({g, g + 1, low, i + 1});
-                    low = i + 1;
-                    chunk = 0;
-                }
-            }
-            if (low < rows) tasks->push_back({g, g + 1, low, rows});
-            batch = g + 1;
-            pending = 0;
-            continue;
-        }
-        pending += PairsIn(rows);
-        if (pending >= kPairsPerTask) {
-            tasks->push_back({batch, g + 1, 0, 0});
-            batch = g + 1;
-            pending = 0;
-        }
-    }
-    if (batch < count) tasks->push_back({batch, count, 0, 0});
-}
-
-void PlanWindowTasks(uint64_t starts, uint32_t window, std::vector<PairTask>* tasks) {
-    tasks->clear();
-    const uint64_t step =
-        std::max<uint64_t>(1, kPairsPerTask / std::max<uint32_t>(1, window));
-    for (uint64_t i = 0; i < starts; i += step) {
-        tasks->push_back({i, std::min(i + step, starts), 0, 0});
-    }
-}
-
-unsigned ThreadCount(unsigned requested) {
-    if (requested > 0) return requested;
-    const unsigned available = std::thread::hardware_concurrency();
-    return available > 0 ? available : 1;
-}
 
 }  // namespace
 
@@ -193,9 +136,9 @@ void BuildHistogram(const BlockingPlan& plan, const ComparisonSet& comparisons,
                     const std::vector<size_t>& selected, const HistogramOptions& options,
                     PatternHistogram* histogram, HistogramStats* stats) {
     const auto started = std::chrono::steady_clock::now();
-    const unsigned threads = ThreadCount(options.threads);
-    std::atomic<uint64_t> enumerated{0};
-    std::atomic<uint64_t> folded{0};
+    const unsigned threads = ResolveThreads(options.threads);
+    uint64_t enumerated = 0;
+    uint64_t folded = 0;
 
     // The acceptance rate is fixed before the run rather than adapted during it:
     // an adaptive rate would weight early groups differently from late ones, and
@@ -211,69 +154,40 @@ void BuildHistogram(const BlockingPlan& plan, const ComparisonSet& comparisons,
     const bool sampling = rate < 1.0;
     const uint64_t threshold =
         sampling ? static_cast<uint64_t>(rate * 18446744073709549568.0) : 0;
-
-    std::vector<PatternHistogram> partials(threads,
-                                           PatternHistogram(comparisons.Width()));
-    SourceGroups groups;
-    std::vector<PairTask> tasks;
-
-    for (size_t position = 0; position < selected.size(); ++position) {
-        const BoundSource& source = plan.at(selected[position]);
-        const bool window = source.kind == SourceKind::kSortedNeighbourhood;
-        if (window) {
-            PlanWindowTasks(source.order.size(), source.window, &tasks);
-        } else {
-            plan.BuildGroups(selected[position], &groups);
-            PlanGroupTasks(groups, &tasks);
-        }
-
-        std::atomic<size_t> next{0};
-        std::vector<std::thread> workers;
-        workers.reserve(threads);
-        for (unsigned t = 0; t < threads; ++t) {
-            workers.emplace_back([&, t] {
-                PatternHistogram& local = partials[t];
-                uint64_t seen = 0;
-                uint64_t kept = 0;
-                uint64_t state = Mix64(options.seed + t * 0x9E3779B97F4A7C15ull);
-                auto fold = [&](uint32_t a, uint32_t b) {
-                    ++seen;
-                    if (sampling) {
-                        state = Mix64(state);
-                        if (state >= threshold) return;
-                    }
-                    ++kept;
-                    local.Add(comparisons.Evaluate(a, b));
-                };
-                for (;;) {
-                    const size_t index = next.fetch_add(1);
-                    if (index >= tasks.size()) break;
-                    const PairTask& task = tasks[index];
-                    if (window) {
-                        plan.EnumerateWindowRange(selected, position, task.begin,
-                                                  task.end, fold);
-                    } else if (task.row_end != 0) {
-                        plan.EnumerateGroupRange(selected, position, groups, task.begin,
-                                                 task.row_begin, task.row_end, fold);
-                    } else {
-                        for (uint64_t g = task.begin; g < task.end; ++g) {
-                            plan.EnumerateGroupRange(selected, position, groups, g, 0,
-                                                     groups.Size(g), fold);
-                        }
-                    }
-                }
-                enumerated.fetch_add(seen);
-                folded.fetch_add(kept);
-            });
-        }
-        for (std::thread& worker : workers) worker.join();
+    // Each thread draws from its own stream, so the sample does not depend on how
+    // the tasks happened to be handed out.
+    std::vector<ThreadState> scratch(threads);
+    std::vector<std::unique_ptr<PatternHistogram>> partials;
+    partials.reserve(threads);
+    for (unsigned t = 0; t < threads; ++t) {
+        scratch[t].random = Mix64(options.seed + t * 0x9E3779B97F4A7C15ull);
+        partials.push_back(std::make_unique<PatternHistogram>(comparisons.Width()));
     }
 
-    for (const PatternHistogram& partial : partials) histogram->Merge(partial);
+    ForEachPairParallel(plan, selected, threads, [&](unsigned t) {
+        ThreadState* state = &scratch[t];
+        PatternHistogram* local = partials[t].get();
+        return [&, state, local](uint32_t a, uint32_t b) {
+            ++state->seen;
+            if (sampling) {
+                state->random = Mix64(state->random);
+                if (state->random >= threshold) return;
+            }
+            ++state->kept;
+            local->Add(comparisons.Evaluate(a, b));
+        };
+    });
+
+    for (unsigned t = 0; t < threads; ++t) {
+        enumerated += scratch[t].seen;
+        folded += scratch[t].kept;
+    }
+
+    for (const auto& partial : partials) histogram->Merge(*partial);
 
     if (stats != nullptr) {
-        stats->enumerated = enumerated.load();
-        stats->folded = folded.load();
+        stats->enumerated = enumerated;
+        stats->folded = folded;
         stats->rate = rate;
         stats->distinct = histogram->DistinctPatterns();
         stats->threads = threads;
