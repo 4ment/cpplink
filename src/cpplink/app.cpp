@@ -7,6 +7,7 @@
 #include <ostream>
 
 #include "cpplink/blocking.hpp"
+#include "cpplink/cluster.hpp"
 #include "cpplink/comparison.hpp"
 #include "cpplink/estimate.hpp"
 #include "cpplink/explain.hpp"
@@ -38,6 +39,7 @@ void PrintUsage(std::ostream& out) {
         << "  estimate    learn m, u and lambda and write the model\n"
         << "  predict     score the candidate pairs and write the edges above a "
            "threshold\n"
+        << "  cluster     join the scored edges into duplicate clusters\n"
         << "  gen-sample  write a sample parquet file with planted duplicates\n"
         << "\n"
         << "options:\n"
@@ -59,6 +61,9 @@ void PrintUsage(std::ostream& out) {
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--tf-damping F]\n"
         << "                <file.parquet>\n"
+        << "cpplink cluster --schema <schema.json> --edges <dir> [--out <file.csv>]\n"
+        << "                [--threshold BITS | --probability P] [--truth <file.csv>]\n"
+        << "                [--min-size N] <file.parquet>\n"
         << "cpplink gen-sample --out <file.parquet> [--rows N] [--seed N]\n"
         << "                   [--duplicate-rate F] [--truth <file.csv>]\n";
 }
@@ -518,6 +523,103 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
+// Clustering needs only the identifiers: the edges already carry every row index
+// and weight, so the comparison columns are left on disk rather than interned.
+bool LoadIdsOnly(const std::string& schema_path, const std::string& data_path,
+                 std::unique_ptr<RecordStore>* store, std::ostream& err) {
+    Schema schema;
+    std::string error;
+    if (!LoadSchema(schema_path, &schema, &error)) {
+        err << "cpplink: " << error << "\n";
+        return false;
+    }
+    schema.columns.clear();
+    schema.comparisons.clear();
+    schema.blocking.clear();
+    *store = std::make_unique<RecordStore>(schema);
+    if (!LoadParquet(data_path, schema, store->get(), nullptr, &error)) {
+        err << "cpplink: " << error << "\n";
+        return false;
+    }
+    return true;
+}
+
+int RunCluster(const std::vector<std::string>& args, std::ostream& out,
+               std::ostream& err) {
+    std::string schema_path;
+    std::string data_path;
+    std::string truth_path;
+    std::string value;
+    ClusterOptions options;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--edges") {
+            if (!TakeValue(args, &i, &options.edge_dir, err)) return 1;
+        } else if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &options.out_path, err)) return 1;
+        } else if (args[i] == "--truth") {
+            if (!TakeValue(args, &i, &truth_path, err)) return 1;
+        } else if (args[i] == "--threshold") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threshold = std::stod(value);
+        } else if (args[i] == "--probability") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            const double probability = std::stod(value);
+            if (probability <= 0.0 || probability >= 1.0) {
+                err << "cpplink cluster: --probability wants a value in (0, 1)\n";
+                return 1;
+            }
+            options.threshold = WeightForProbability(probability);
+        } else if (args[i] == "--min-size") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.min_size = std::stoull(value);
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink cluster: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else if (data_path.empty()) {
+            data_path = args[i];
+        } else {
+            err << "cpplink cluster: unexpected argument '" << args[i] << "'\n";
+            return 1;
+        }
+    }
+    if (schema_path.empty() || data_path.empty() || options.edge_dir.empty()) {
+        err << "cpplink cluster: --schema <schema.json>, --edges <dir> and a parquet "
+               "file are required\n";
+        return 1;
+    }
+
+    std::unique_ptr<RecordStore> store;
+    if (!LoadIdsOnly(schema_path, data_path, &store, err)) return 1;
+
+    std::string error;
+    ClusterAssignment assignment;
+    ClusterReport report;
+    if (!Cluster(store->NumRecords(), options, &assignment, &report, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    if (!WriteClusters(assignment, *store, options, &report.written, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    PrintClusterReport(report, out);
+
+    if (!truth_path.empty()) {
+        TruthPairs truth;
+        if (!LoadTruthPairs(truth_path, *store, &truth, &error)) {
+            err << "cpplink: " << error << "\n";
+            return 1;
+        }
+        PrintClusterQuality(MeasureClusters(assignment, truth), out);
+    }
+    if (!options.out_path.empty()) {
+        out << "\nWrote " << options.out_path << "\n";
+    }
+    return 0;
+}
+
 int RunGenSample(const std::vector<std::string>& args, std::ostream& out,
                  std::ostream& err) {
     SampleOptions options;
@@ -583,6 +685,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     if (first == "recall") return RunRecall(rest, out, err);
     if (first == "estimate") return RunEstimate(rest, out, err);
     if (first == "predict") return RunPredict(rest, out, err);
+    if (first == "cluster") return RunCluster(rest, out, err);
     if (first == "gen-sample") return RunGenSample(rest, out, err);
 
     err << "cpplink: unknown command '" << first << "'\n";

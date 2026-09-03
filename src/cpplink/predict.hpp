@@ -15,6 +15,11 @@
 
 namespace cpplink {
 
+// The binary shard format, shared with the reader in cluster.cpp so the writer
+// and the reader cannot drift apart.
+inline constexpr char kEdgeMagic[8] = {'C', 'P', 'P', 'L', 'N', 'K', 'E', '1'};
+inline constexpr size_t kEdgeBytes = 20;  // a, b, gamma as u32, then weight as f64
+
 enum class EdgeFormat {
     kBinary,  // 20 bytes a row: a, b, gamma, weight. What clustering reads back.
     kCsv,     // record ids and the weight, for reading with your eyes.

@@ -23,9 +23,6 @@
 namespace cpplink {
 namespace {
 
-// Written once at the head of every binary shard so a truncated or foreign file
-// is refused rather than read as garbage.
-constexpr char kMagic[8] = {'C', 'P', 'P', 'L', 'N', 'K', 'E', '1'};
 constexpr size_t kFlushBytes = 1u << 20;
 
 std::string ShardName(unsigned thread) {
@@ -66,7 +63,7 @@ class ShardWriter {
                                                        : std::ios::out);
         if (!file_) return false;
         if (format == EdgeFormat::kBinary) {
-            file_.write(kMagic, sizeof(kMagic));
+            file_.write(kEdgeMagic, sizeof(kEdgeMagic));
         } else {
             buffer_ = "id_a,id_b,gamma,match_weight,match_probability\n";
         }
@@ -75,7 +72,7 @@ class ShardWriter {
 
     void WriteBinary(uint32_t a, uint32_t b, uint32_t gamma, double weight) {
         const size_t at = buffer_.size();
-        buffer_.resize(at + 20);
+        buffer_.resize(at + kEdgeBytes);
         char* out = buffer_.data() + at;
         std::memcpy(out, &a, 4);
         std::memcpy(out + 4, &b, 4);

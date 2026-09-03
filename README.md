@@ -13,9 +13,9 @@ of millions of records. cpplink folds pairs into a histogram of agreement patter
 are generated and discards them, so peak memory is set by the number of *records*, not the
 number of *pairs*.
 
-> **Status: phases 0–4 complete.** The record store, parquet loader, comparison levels,
-> blocking sources, the recall harness, parameter estimation and scoring are in;
-> clustering is not.
+> **Status: phases 0–5 complete.** The record store, parquet loader, comparison levels,
+> blocking sources, the recall harness, parameter estimation, scoring and clustering are
+> in, so the pipeline runs end to end from parquet to duplicate clusters.
 
 ## Approach
 
@@ -114,6 +114,10 @@ cpplink estimate --schema examples/sample_schema.json --out model.json data.parq
 cpplink predict --schema examples/sample_schema.json --model model.json \
                 --out edges/ --threshold 20 data.parquet
 
+# Join those edges into duplicate clusters, and score the result against known pairs
+cpplink cluster --schema examples/sample_schema.json --edges edges/ \
+                --out clusters.csv --truth truth.csv data.parquet
+
 # Write a sample file with realistic cardinalities and planted duplicates
 cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
 ```
@@ -133,7 +137,7 @@ serves as ground truth for the recall harness in a later phase.
   neighbourhood, with exact candidate-count reporting and recall measurement *(done)*
 - Optional ANN blocking for prediction
 - Multicore, shared-memory parallelism *(estimation and scoring done)*
-- Connected-component clustering of the scored edges
+- Connected-component clustering of the scored edges *(done)*
 - Deduplication first; record linkage across datasets through the same interfaces
 
 ## Getting Started
