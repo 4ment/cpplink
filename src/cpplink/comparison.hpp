@@ -4,11 +4,13 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "cpplink/signature.hpp"
 
 namespace cpplink {
 
@@ -25,12 +27,20 @@ struct BoundComparison {
     const StringListColumn* lists = nullptr;
     const DoubleColumn* numbers = nullptr;   // also latitude for a geo comparison
     const DoubleColumn* numbers2 = nullptr;  // longitude
+    // Present only when this comparison has a fuzzy string level, which is the
+    // only place the signatures pay for themselves.
+    const SignatureTable* signatures = nullptr;
 };
 
 class ComparisonSet {
    public:
     // Resolves every comparison in the schema against the loaded store.
-    bool Bind(const Schema& schema, const RecordStore& store, std::string* error);
+    //
+    // `use_signatures` exists so a test can run the same data with the filter off
+    // and compare the patterns: the filter is only admissible if it changes
+    // nothing, and that has to be checked rather than argued.
+    bool Bind(const Schema& schema, const RecordStore& store, std::string* error,
+              bool use_signatures = true);
 
     // The packed agreement pattern for a pair. This is the hot path.
     uint32_t Evaluate(uint64_t a, uint64_t b) const;
@@ -49,6 +59,8 @@ class ComparisonSet {
     size_t Size() const { return bound_.size(); }
     const BoundComparison& at(size_t index) const { return bound_[index]; }
     uint8_t Width() const { return width_; }
+    // Resident bytes of the per-value signature tables.
+    uint64_t SignatureBytes() const;
 
    private:
     bool IsNull(const BoundComparison& comparison, uint64_t row) const;
@@ -56,6 +68,10 @@ class ComparisonSet {
                     uint64_t b) const;
 
     std::vector<BoundComparison> bound_;
+    // unique_ptr so the tables keep their address as the vector grows, and so a
+    // ComparisonSet cannot be copied into one whose comparisons point at another's
+    // tables.
+    std::vector<std::unique_ptr<SignatureTable>> tables_;
     uint8_t width_ = 0;
 };
 

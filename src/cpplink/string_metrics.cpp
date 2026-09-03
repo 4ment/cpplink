@@ -4,8 +4,10 @@
 #include "cpplink/string_metrics.hpp"
 
 #include <algorithm>
+#include <bitset>
 #include <cmath>
 #include <cstring>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,7 +17,57 @@ namespace {
 // Rows are indexed by the shorter string, so this bound is on the shorter side.
 constexpr size_t kStackRow = 256;
 
+// The longest pattern Myers' bit-vector algorithm handles in one word. Longer
+// values fall back to the banded DP below; on name and identifier columns they
+// essentially do not occur.
+constexpr size_t kMyersWidth = 64;
+
 double ToRadians(double degrees) { return degrees * 3.14159265358979323846 / 180.0; }
+
+int PopCount(uint64_t value) { return static_cast<int>(std::bitset<64>(value).count()); }
+
+// Myers' bit-vector edit distance (1999). The DP's column of vertical deltas is
+// carried in two words -- vp for +1, vn for -1 -- so a whole column costs a dozen
+// integer ops instead of one pass per cell. O(|text|) word operations against the
+// banded DP's O(|pattern| . |text|) cells.
+int MyersDistance(std::string_view pattern, std::string_view text, int max_distance) {
+    const size_t m = pattern.size();
+    // Cleared again at the end, only for the characters this call set, so the cost
+    // stays proportional to the pattern and not to the alphabet.
+    thread_local uint64_t peq[256] = {0};
+    for (size_t i = 0; i < m; ++i) {
+        peq[static_cast<unsigned char>(pattern[i])] |= uint64_t{1} << i;
+    }
+
+    uint64_t vp = ~uint64_t{0};
+    uint64_t vn = 0;
+    int score = static_cast<int>(m);
+    const uint64_t top = uint64_t{1} << (m - 1);
+    size_t remaining = text.size();
+    for (const char ch : text) {
+        const uint64_t eq = peq[static_cast<unsigned char>(ch)];
+        const uint64_t xv = eq | vn;
+        const uint64_t xh = (((eq & vp) + vp) ^ vp) | eq;
+        uint64_t ph = vn | ~(xh | vp);
+        uint64_t mh = vp & xh;
+        if (ph & top) ++score;
+        if (mh & top) --score;
+        ph = (ph << 1) | 1;
+        mh <<= 1;
+        vp = mh | ~(xv | ph);
+        vn = ph & xv;
+        --remaining;
+        // Each remaining column moves the score by at most one, so once the floor
+        // is past the bound the answer can only be "further than k".
+        if (score - static_cast<int>(remaining) > max_distance) {
+            score = max_distance + 1;
+            break;
+        }
+    }
+
+    for (size_t i = 0; i < m; ++i) peq[static_cast<unsigned char>(pattern[i])] = 0;
+    return score > max_distance ? max_distance + 1 : score;
+}
 
 }  // namespace
 
@@ -28,6 +80,10 @@ int BoundedLevenshtein(std::string_view a, std::string_view b, int max_distance)
     // A length gap alone already exceeds the bound: the commonest early exit.
     if (m - n > static_cast<size_t>(max_distance)) return max_distance + 1;
     if (n == 0) return static_cast<int>(m);
+    // The bit-parallel path carries a whole DP column in two words. It needs the
+    // shorter side to fit one word, which on the columns this runs against it
+    // always does; the banded DP stays for the values that do not.
+    if (n <= kMyersWidth) return MyersDistance(a, b, max_distance);
 
     int stack_prev[kStackRow + 1];
     int stack_cur[kStackRow + 1];
@@ -122,6 +178,30 @@ double JaroWinkler(std::string_view a, std::string_view b, double prefix_scale,
     const size_t limit = std::min<size_t>({a.size(), b.size(), 4});
     while (prefix < limit && a[prefix] == b[prefix]) ++prefix;
     return jaro + static_cast<double>(prefix) * prefix_scale * (1.0 - jaro);
+}
+
+double JaroWinklerUpperBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
+                             uint32_t len_b) {
+    if (len_a == 0 || len_b == 0) return len_a == len_b ? 1.0 : 0.0;
+    // Every bit set in one mask and clear in the other names at least one
+    // character of that string with no counterpart at all in the other.
+    const int deficit_a = PopCount(mask_a & ~mask_b);
+    const int deficit_b = PopCount(mask_b & ~mask_a);
+    const int reach_a = static_cast<int>(len_a) - deficit_a;
+    const int reach_b = static_cast<int>(len_b) - deficit_b;
+    const int matches = std::min(reach_a, reach_b);
+    if (matches <= 0) return 0.0;
+    const double m = static_cast<double>(matches);
+    const double jaro =
+        (m / static_cast<double>(len_a) + m / static_cast<double>(len_b) + 1.0) / 3.0;
+    return 0.4 + 0.6 * jaro;
+}
+
+int LevenshteinLowerBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
+                          uint32_t len_b) {
+    const int gap = std::abs(static_cast<int>(len_a) - static_cast<int>(len_b));
+    const int deficit = std::max(PopCount(mask_a & ~mask_b), PopCount(mask_b & ~mask_a));
+    return std::max(gap, deficit);
 }
 
 bool JaroWinklerAtLeast(std::string_view a, std::string_view b, double threshold) {
