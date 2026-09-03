@@ -67,3 +67,24 @@ TEST(RunTest, UsageListsEveryCommand) {
         EXPECT_NE(out.str().find(command), std::string::npos) << command;
     }
 }
+
+TEST(RunTest, PredictNeedsSchemaModelOutAndThreshold) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"predict"}, out, err), 1);
+    EXPECT_NE(err.str().find("--model"), std::string::npos);
+}
+
+TEST(RunTest, PredictRejectsABadProbability) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"predict", "--probability", "1.5"}, out, err), 1);
+    EXPECT_NE(err.str().find("(0, 1)"), std::string::npos);
+}
+
+TEST(RunTest, PredictRejectsAnUnknownFormat) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"predict", "--format", "parquet"}, out, err), 1);
+    EXPECT_NE(err.str().find("bin or csv"), std::string::npos);
+}

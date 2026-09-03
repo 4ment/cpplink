@@ -13,9 +13,9 @@ of millions of records. cpplink folds pairs into a histogram of agreement patter
 are generated and discards them, so peak memory is set by the number of *records*, not the
 number of *pairs*.
 
-> **Status: phases 0–3 complete.** The record store, parquet loader, comparison levels,
-> blocking sources, the recall harness and parameter estimation are in; scoring and
-> clustering are not.
+> **Status: phases 0–4 complete.** The record store, parquet loader, comparison levels,
+> blocking sources, the recall harness, parameter estimation and scoring are in;
+> clustering is not.
 
 ## Approach
 
@@ -110,6 +110,10 @@ cpplink recall --schema examples/sample_schema.json --truth truth.csv data.parqu
 # Learn m, u and lambda and write the model
 cpplink estimate --schema examples/sample_schema.json --out model.json data.parquet
 
+# Score every candidate pair and write the edges above a threshold
+cpplink predict --schema examples/sample_schema.json --model model.json \
+                --out edges/ --threshold 20 data.parquet
+
 # Write a sample file with realistic cardinalities and planted duplicates
 cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
 ```
@@ -124,11 +128,11 @@ serves as ground truth for the recall harness in a later phase.
 - Configurable comparisons and ordered comparison levels *(done)*
 - Fellegi–Sunter model over the resulting agreement patterns *(done)*
 - EM estimation of `m` and `λ`; exact closed-form `u` for exact-match levels *(done)*
-- Term-frequency adjustments, with admissible bounds for pruning
+- Term-frequency adjustments, with admissible bounds for pruning *(done)*
 - Automatic blocking: exact-value and rare-value inverted indexes, MinHash LSH and sorted
   neighbourhood, with exact candidate-count reporting and recall measurement *(done)*
 - Optional ANN blocking for prediction
-- Multicore, shared-memory parallelism *(estimation done; scoring to follow)*
+- Multicore, shared-memory parallelism *(estimation and scoring done)*
 - Connected-component clustering of the scored edges
 - Deduplication first; record linkage across datasets through the same interfaces
 

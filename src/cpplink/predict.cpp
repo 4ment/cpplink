@@ -1,0 +1,268 @@
+// Copyright 2026 Mathieu Fourment
+// SPDX-License-Identifier: MIT
+
+#include "cpplink/predict.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <memory>
+#include <ostream>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "cpplink/pair_stream.hpp"
+
+namespace cpplink {
+namespace {
+
+// Written once at the head of every binary shard so a truncated or foreign file
+// is refused rather than read as garbage.
+constexpr char kMagic[8] = {'C', 'P', 'P', 'L', 'N', 'K', 'E', '1'};
+constexpr size_t kFlushBytes = 1u << 20;
+
+std::string ShardName(unsigned thread) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "shard-%03u", thread);
+    return buffer;
+}
+
+std::string WithThousands(uint64_t value) {
+    std::string digits = std::to_string(value);
+    std::string out;
+    int count = 0;
+    for (auto it = digits.rbegin(); it != digits.rend(); ++it) {
+        if (count > 0 && count % 3 == 0) out.push_back(',');
+        out.push_back(*it);
+        ++count;
+    }
+    std::reverse(out.begin(), out.end());
+    return out;
+}
+
+std::string Percent(uint64_t part, uint64_t whole) {
+    if (whole == 0) return "-";
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.2f%%",
+                  100.0 * static_cast<double>(part) / static_cast<double>(whole));
+    return buffer;
+}
+
+// One thread's output buffer. Buffers are per-thread and flushed in bulk, so no
+// two threads ever contend on the writer, which is why there is no writer thread
+// and no ring buffer here.
+class ShardWriter {
+   public:
+    bool Open(const std::string& path, EdgeFormat format) {
+        format_ = format;
+        file_.open(path, format == EdgeFormat::kBinary ? std::ios::binary | std::ios::out
+                                                       : std::ios::out);
+        if (!file_) return false;
+        if (format == EdgeFormat::kBinary) {
+            file_.write(kMagic, sizeof(kMagic));
+        } else {
+            buffer_ = "id_a,id_b,gamma,match_weight,match_probability\n";
+        }
+        return static_cast<bool>(file_);
+    }
+
+    void WriteBinary(uint32_t a, uint32_t b, uint32_t gamma, double weight) {
+        const size_t at = buffer_.size();
+        buffer_.resize(at + 20);
+        char* out = buffer_.data() + at;
+        std::memcpy(out, &a, 4);
+        std::memcpy(out + 4, &b, 4);
+        std::memcpy(out + 8, &gamma, 4);
+        std::memcpy(out + 12, &weight, 8);
+        if (buffer_.size() >= kFlushBytes) Flush();
+    }
+
+    void WriteCsv(std::string_view id_a, std::string_view id_b, uint32_t gamma,
+                  double weight) {
+        char numbers[64];
+        std::snprintf(numbers, sizeof(numbers), ",%u,%.6f,%.9f", gamma, weight,
+                      ProbabilityForWeight(weight));
+        buffer_.append(id_a);
+        buffer_.push_back(',');
+        buffer_.append(id_b);
+        buffer_.append(numbers);
+        buffer_.push_back('\n');
+        if (buffer_.size() >= kFlushBytes) Flush();
+    }
+
+    void Flush() {
+        if (buffer_.empty()) return;
+        file_.write(buffer_.data(), static_cast<std::streamsize>(buffer_.size()));
+        buffer_.clear();
+    }
+
+    bool Close() {
+        Flush();
+        file_.close();
+        return !file_.fail();
+    }
+
+   private:
+    EdgeFormat format_ = EdgeFormat::kBinary;
+    std::ofstream file_;
+    std::string buffer_;
+};
+
+// Per-thread counters, one cache line each: they are touched once per candidate
+// pair, and packing them adjacently would put every thread's increment on the
+// same line and cost more than the scoring being counted.
+struct alignas(64) ThreadTally {
+    uint64_t enumerated = 0;
+    uint64_t dropped = 0;
+    uint64_t checked = 0;
+    uint64_t certain = 0;
+    uint64_t edges = 0;
+    uint64_t tf_lookups = 0;
+};
+
+}  // namespace
+
+bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
+             const BlockingPlan& plan, const Scorer& scorer,
+             const PredictOptions& options, PredictReport* report, std::string* error) {
+    const auto started = std::chrono::steady_clock::now();
+    const unsigned threads = ResolveThreads(options.threads);
+
+    std::error_code ec;
+    std::filesystem::create_directories(options.out_dir, ec);
+    if (ec) {
+        *error =
+            "cannot create output directory \"" + options.out_dir + "\": " + ec.message();
+        return false;
+    }
+
+    const char* suffix = options.format == EdgeFormat::kBinary ? ".bin" : ".csv";
+    std::vector<std::unique_ptr<ShardWriter>> writers;
+    writers.reserve(threads);
+    for (unsigned t = 0; t < threads; ++t) {
+        const std::string path =
+            (std::filesystem::path(options.out_dir) / (ShardName(t) + suffix)).string();
+        auto writer = std::make_unique<ShardWriter>();
+        if (!writer->Open(path, options.format)) {
+            *error = "cannot write \"" + path + "\"";
+            return false;
+        }
+        writers.push_back(std::move(writer));
+        report->shards.push_back(path);
+    }
+
+    std::vector<ThreadTally> tally(threads);
+    std::atomic<uint64_t> emitted{0};
+    const uint64_t limit = options.max_edges;
+    const bool csv = options.format == EdgeFormat::kCsv;
+    const IdColumn& ids = store.ids();
+
+    ForEachPairParallel(plan, plan.AllSources(), threads, [&](unsigned t) {
+        ThreadTally* counts = &tally[t];
+        ShardWriter* writer = writers[t].get();
+        return [&, counts, writer](uint32_t a, uint32_t b) {
+            ++counts->enumerated;
+            const uint32_t gamma = comparisons.Evaluate(a, b);
+            const Zone zone = scorer.Classify(gamma);
+            if (zone == Zone::kDrop) {
+                ++counts->dropped;
+                return;
+            }
+            // Drop is where the bracket pays: the pattern cannot clear the
+            // threshold however rare its values are, so no term-frequency table is
+            // touched. Check and certain both still need the exact weight, because
+            // the weight is part of the output.
+            if (zone == Zone::kCheck) {
+                ++counts->checked;
+            } else {
+                ++counts->certain;
+            }
+            const double weight = scorer.Weight(gamma, a);
+            ++counts->tf_lookups;
+            if (weight < scorer.threshold()) return;
+            if (limit > 0 && emitted.fetch_add(1) >= limit) return;
+            ++counts->edges;
+            if (csv) {
+                writer->WriteCsv(ids.Get(a), ids.Get(b), gamma, weight);
+            } else {
+                writer->WriteBinary(a, b, gamma, weight);
+            }
+        };
+    });
+
+    for (unsigned t = 0; t < threads; ++t) {
+        if (!writers[t]->Close()) {
+            *error = "failed while writing \"" + report->shards[t] + "\"";
+            return false;
+        }
+        report->enumerated += tally[t].enumerated;
+        report->dropped += tally[t].dropped;
+        report->checked += tally[t].checked;
+        report->certain += tally[t].certain;
+        report->edges += tally[t].edges;
+        report->tf_lookups += tally[t].tf_lookups;
+    }
+    report->threads = threads;
+    report->truncated = limit > 0 && emitted.load() > limit;
+    report->pattern_space = scorer.PatternSpace();
+    if (scorer.Dense()) {
+        report->patterns_drop = scorer.PatternsIn(Zone::kDrop);
+        report->patterns_check = scorer.PatternsIn(Zone::kCheck);
+        report->patterns_certain = scorer.PatternsIn(Zone::kEmit);
+    }
+    report->seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return true;
+}
+
+void PrintPredictReport(const PredictReport& report, const Scorer& scorer,
+                        std::ostream& out) {
+    out << "Threshold      " << std::fixed << std::setprecision(3) << scorer.threshold()
+        << " bits  (posterior " << std::setprecision(6)
+        << ProbabilityForWeight(scorer.threshold()) << ")\n"
+        << "Threads        " << report.threads << "\n"
+        << "Candidates     " << WithThousands(report.enumerated) << "\n"
+        << "Edges          " << WithThousands(report.edges) << "  ("
+        << Percent(report.edges, report.enumerated) << " of candidates)\n"
+        << "Elapsed        " << std::setprecision(1) << report.seconds << " s";
+    if (report.seconds > 0.0) {
+        out << "  (" << std::setprecision(0)
+            << static_cast<double>(report.enumerated) / report.seconds
+            << " candidates/s)";
+    }
+    out << "\n\n";
+
+    out << std::left << std::setw(10) << "Zone" << std::right << std::setw(20)
+        << "Candidate pairs" << std::setw(12) << "Share" << std::setw(16) << "Patterns"
+        << "\n";
+    out << std::string(58, '-') << "\n";
+    const uint64_t zones[3] = {report.dropped, report.checked, report.certain};
+    const uint64_t patterns[3] = {report.patterns_drop, report.patterns_check,
+                                  report.patterns_certain};
+    for (int i = 0; i < 3; ++i) {
+        out << std::left << std::setw(10) << ZoneName(static_cast<Zone>(i)) << std::right
+            << std::setw(20) << WithThousands(zones[i]) << std::setw(12)
+            << Percent(zones[i], report.enumerated) << std::setw(16)
+            << (scorer.Dense() ? WithThousands(patterns[i]) : std::string("-")) << "\n";
+    }
+    out << std::string(58, '-') << "\n";
+    out << "Term-frequency lookups " << WithThousands(report.tf_lookups) << ", avoided "
+        << WithThousands(report.dropped) << " ("
+        << Percent(report.dropped, report.enumerated) << ").\n"
+        << "The bracket is admissible, so dropping on it emits exactly the edges\n"
+        << "scoring every pair would have emitted.\n";
+    if (report.truncated) {
+        out << "\nWARNING: the edge limit was reached; the output is incomplete.\n";
+    }
+    out << "\nShards\n";
+    for (const std::string& shard : report.shards) out << "  " << shard << "\n";
+}
+
+}  // namespace cpplink
