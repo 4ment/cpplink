@@ -8,9 +8,11 @@
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
+#include "cpplink/estimate.hpp"
 #include "cpplink/explain.hpp"
 #include "cpplink/explain_blocking.hpp"
 #include "cpplink/inspect.hpp"
+#include "cpplink/model.hpp"
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
@@ -31,6 +33,7 @@ void PrintUsage(std::ostream& out) {
         << "  explain     show the comparison levels a single pair lands on\n"
         << "  explain-blocking  price every blocking source without enumerating\n"
         << "  recall      measure what fraction of known pairs blocking reaches\n"
+        << "  estimate    learn m, u and lambda and write the model\n"
         << "  gen-sample  write a sample parquet file with planted duplicates\n"
         << "\n"
         << "options:\n"
@@ -43,6 +46,10 @@ void PrintUsage(std::ostream& out) {
         << "cpplink explain-blocking --schema <schema.json> [--count] "
            "<file.parquet>\n"
         << "cpplink recall --schema <schema.json> --truth <truth.csv> "
+           "<file.parquet>\n"
+        << "cpplink estimate --schema <schema.json> [--out <model.json>]\n"
+        << "                 [--u-sample N] [--session-pairs N] [--threads N]\n"
+        << "                 [--iterations N] [--lambda F] [--seed N] "
            "<file.parquet>\n"
         << "cpplink gen-sample --out <file.parquet> [--rows N] [--seed N]\n"
         << "                   [--duplicate-rate F] [--truth <file.csv>]\n";
@@ -310,6 +317,89 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
+int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
+                std::ostream& err) {
+    std::string schema_path;
+    std::string data_path;
+    std::string model_path;
+    std::string value;
+    EstimateOptions options;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &model_path, err)) return 1;
+        } else if (args[i] == "--u-sample") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.u_sample = std::stoull(value);
+        } else if (args[i] == "--session-pairs") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.session_pairs = std::stoull(value);
+        } else if (args[i] == "--threads") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threads = static_cast<unsigned>(std::stoul(value));
+        } else if (args[i] == "--iterations") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.max_iterations = std::stoi(value);
+        } else if (args[i] == "--lambda") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.lambda = std::stod(value);
+        } else if (args[i] == "--seed") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.seed = std::stoull(value);
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink estimate: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else if (data_path.empty()) {
+            data_path = args[i];
+        } else {
+            err << "cpplink estimate: unexpected argument '" << args[i] << "'\n";
+            return 1;
+        }
+    }
+    if (schema_path.empty() || data_path.empty()) {
+        err << "cpplink estimate: --schema <schema.json> and a parquet file are "
+               "required\n";
+        return 1;
+    }
+
+    Schema schema;
+    std::unique_ptr<RecordStore> store;
+    BlockingPlan plan;
+    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+        return 1;
+    }
+    if (schema.comparisons.empty()) {
+        err << "cpplink estimate: the schema declares no \"comparisons\"\n";
+        return 1;
+    }
+
+    ComparisonSet comparisons;
+    std::string error;
+    if (!comparisons.Bind(schema, *store, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    Model model;
+    EstimateReport report;
+    if (!Estimate(*store, comparisons, plan, options, &model, &report, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    PrintEstimateReport(report, out);
+    PrintModel(model, out);
+    if (!model_path.empty()) {
+        if (!WriteModelJson(model, model_path, &error)) {
+            err << "cpplink: " << error << "\n";
+            return 1;
+        }
+        out << "\nWrote " << model_path << "\n";
+    }
+    return 0;
+}
+
 int RunGenSample(const std::vector<std::string>& args, std::ostream& out,
                  std::ostream& err) {
     SampleOptions options;
@@ -373,6 +463,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     if (first == "explain") return RunExplain(rest, out, err);
     if (first == "explain-blocking") return RunExplainBlocking(rest, out, err);
     if (first == "recall") return RunRecall(rest, out, err);
+    if (first == "estimate") return RunEstimate(rest, out, err);
     if (first == "gen-sample") return RunGenSample(rest, out, err);
 
     err << "cpplink: unknown command '" << first << "'\n";

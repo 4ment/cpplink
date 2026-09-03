@@ -43,6 +43,17 @@ struct BoundSource {
     uint32_t window = 0;
 };
 
+// One source's rows sorted by blocking key, with the group boundaries alongside.
+// Materialised once per source so that threads take whole groups from an atomic
+// counter instead of each rebuilding the sort.
+struct SourceGroups {
+    std::vector<std::pair<uint64_t, uint32_t>> keyed;  // (key, row), sorted
+    std::vector<uint64_t> starts;                      // groups + 1 offsets into keyed
+
+    uint64_t GroupCount() const { return starts.empty() ? 0 : starts.size() - 1; }
+    uint64_t Size(uint64_t group) const { return starts[group + 1] - starts[group]; }
+};
+
 // The ordered union of sources. Order matters: a pair is emitted by the first
 // source that produces it, so later sources pay a cheap predicate instead of the
 // pipeline paying for a global deduplication pass.
@@ -68,15 +79,71 @@ class BlockingPlan {
     // is quadratic and is the usual reason a run never finishes.
     uint64_t LargestGroup(size_t source) const;
 
-    // Enumerates the deduplicated union, calling emit(a, b) for each pair.
+    // Every source index in plan order: the union the prediction path enumerates.
+    std::vector<size_t> AllSources() const;
+    // Whether a source listed before `position` in `selected` produces the pair.
+    // An estimation session is a subset of the plan, so the earlier-source
+    // predicate has to be relative to the subset, not to the whole plan.
+    bool ProducedEarlierIn(const std::vector<size_t>& selected, size_t position,
+                           uint64_t a, uint64_t b) const;
+
+    // Sorts one source's rows by key and records the group boundaries.
+    void BuildGroups(size_t source, SourceGroups* groups) const;
+
+    // Enumerates the deduplicated union of `selected`, calling emit(a, b).
+    template <typename Emit>
+    void ForEachPairIn(const std::vector<size_t>& selected, Emit&& emit) const {
+        SourceGroups groups;
+        for (size_t position = 0; position < selected.size(); ++position) {
+            const BoundSource& source = sources_[selected[position]];
+            if (source.kind == SourceKind::kSortedNeighbourhood) {
+                EnumerateWindowRange(selected, position, 0, source.order.size(), emit);
+            } else {
+                BuildGroups(selected[position], &groups);
+                for (uint64_t g = 0; g < groups.GroupCount(); ++g) {
+                    EnumerateGroupRange(selected, position, groups, g, 0, groups.Size(g),
+                                        emit);
+                }
+            }
+        }
+    }
+
+    // Enumerates the deduplicated union of every source.
     template <typename Emit>
     void ForEachPair(Emit&& emit) const {
-        std::vector<std::pair<uint64_t, uint32_t>> keyed;
-        for (size_t s = 0; s < sources_.size(); ++s) {
-            if (sources_[s].kind == SourceKind::kSortedNeighbourhood) {
-                EnumerateWindow(s, emit);
-            } else {
-                EnumerateGroups(s, &keyed, emit);
+        ForEachPairIn(AllSources(), emit);
+    }
+
+    // Rows [begin, end) of one group, paired with everything after them in it.
+    // Splitting a group this way is what stops one thread holding "Smith" alone.
+    template <typename Emit>
+    void EnumerateGroupRange(const std::vector<size_t>& selected, size_t position,
+                             const SourceGroups& groups, uint64_t group, uint64_t begin,
+                             uint64_t end, Emit&& emit) const {
+        const uint64_t first = groups.starts[group];
+        const uint64_t last = groups.starts[group + 1];
+        for (uint64_t i = first + begin; i < first + end; ++i) {
+            const uint32_t a = groups.keyed[i].second;
+            for (uint64_t j = i + 1; j < last; ++j) {
+                const uint32_t b = groups.keyed[j].second;
+                if (!ProducedEarlierIn(selected, position, a, b)) emit(a, b);
+            }
+        }
+    }
+
+    // Window starts [begin, end) of a sorted-neighbourhood source.
+    template <typename Emit>
+    void EnumerateWindowRange(const std::vector<size_t>& selected, size_t position,
+                              uint64_t begin, uint64_t end, Emit&& emit) const {
+        const BoundSource& source = sources_[selected[position]];
+        const uint64_t count = source.order.size();
+        if (count == 0) return;
+        for (uint64_t i = begin; i < end; ++i) {
+            const uint64_t last = std::min(i + source.window, count - 1);
+            const uint32_t a = source.order[i];
+            for (uint64_t j = i + 1; j <= last; ++j) {
+                const uint32_t b = source.order[j];
+                if (!ProducedEarlierIn(selected, position, a, b)) emit(a, b);
             }
         }
     }
@@ -91,46 +158,6 @@ class BlockingPlan {
     bool BuildSortedNeighbourhood(const BlockingSpec& spec, const RecordStore& store,
                                   std::string* error);
     const std::vector<uint32_t>* Frequencies(const BoundSource& source) const;
-
-    template <typename Emit>
-    void EnumerateGroups(size_t s, std::vector<std::pair<uint64_t, uint32_t>>* keyed,
-                         Emit&& emit) const {
-        keyed->clear();
-        for (uint64_t row = 0; row < rows_; ++row) {
-            const uint64_t key = KeyOf(s, row);
-            if (key != kNoKey) keyed->emplace_back(key, static_cast<uint32_t>(row));
-        }
-        std::sort(keyed->begin(), keyed->end());
-        size_t begin = 0;
-        while (begin < keyed->size()) {
-            size_t end = begin + 1;
-            while (end < keyed->size() && (*keyed)[end].first == (*keyed)[begin].first) {
-                ++end;
-            }
-            for (size_t i = begin; i < end; ++i) {
-                for (size_t j = i + 1; j < end; ++j) {
-                    const uint32_t a = (*keyed)[i].second;
-                    const uint32_t b = (*keyed)[j].second;
-                    if (!ProducedEarlier(s, a, b)) emit(a, b);
-                }
-            }
-            begin = end;
-        }
-    }
-
-    template <typename Emit>
-    void EnumerateWindow(size_t s, Emit&& emit) const {
-        const BoundSource& source = sources_[s];
-        const size_t count = source.order.size();
-        for (size_t i = 0; i < count; ++i) {
-            const size_t last = std::min(i + source.window, count - 1);
-            for (size_t j = i + 1; j <= last; ++j) {
-                const uint32_t a = source.order[i];
-                const uint32_t b = source.order[j];
-                if (!ProducedEarlier(s, a, b)) emit(a, b);
-            }
-        }
-    }
 
     std::vector<BoundSource> sources_;
     uint64_t rows_ = 0;

@@ -43,3 +43,27 @@ TEST(RunTest, OptionsNeedValues) {
 }
 
 }  // namespace
+
+TEST(RunTest, EstimateNeedsSchemaAndFile) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"estimate"}, out, err), 1);
+    EXPECT_NE(err.str().find("--schema"), std::string::npos);
+}
+
+TEST(RunTest, EstimateRejectsUnknownOptions) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"estimate", "--u-samples", "10"}, out, err), 1);
+    EXPECT_NE(err.str().find("unknown option"), std::string::npos);
+}
+
+TEST(RunTest, UsageListsEveryCommand) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"--help"}, out, err), 0);
+    for (const char* command :
+         {"inspect", "explain", "explain-blocking", "recall", "estimate", "gen-sample"}) {
+        EXPECT_NE(out.str().find(command), std::string::npos) << command;
+    }
+}

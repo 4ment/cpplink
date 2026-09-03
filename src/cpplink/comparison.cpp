@@ -223,6 +223,10 @@ uint32_t ComparisonSet::Evaluate(uint64_t a, uint64_t b) const {
     return gamma;
 }
 
+bool ComparisonSet::IsNullValue(size_t comparison, uint64_t row) const {
+    return IsNull(bound_[comparison], row);
+}
+
 uint8_t ComparisonSet::LevelOf(uint32_t gamma, size_t comparison) const {
     const BoundComparison& bound = bound_[comparison];
     const uint32_t mask = (1u << bound.bits) - 1u;
