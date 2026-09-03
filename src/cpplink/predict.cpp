@@ -19,17 +19,12 @@
 #include <vector>
 
 #include "cpplink/pair_stream.hpp"
+#include "cpplink/spill.hpp"
 
 namespace cpplink {
 namespace {
 
 constexpr size_t kFlushBytes = 1u << 20;
-
-std::string ShardName(unsigned thread) {
-    char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "shard-%03u", thread);
-    return buffer;
-}
 
 std::string WithThousands(uint64_t value) {
     std::string digits = std::to_string(value);
@@ -52,65 +47,12 @@ std::string Percent(uint64_t part, uint64_t whole) {
     return buffer;
 }
 
-// One thread's output buffer. Buffers are per-thread and flushed in bulk, so no
-// two threads ever contend on the writer, which is why there is no writer thread
-// and no ring buffer here.
-class ShardWriter {
-   public:
-    bool Open(const std::string& path, EdgeFormat format) {
-        format_ = format;
-        file_.open(path, format == EdgeFormat::kBinary ? std::ios::binary | std::ios::out
-                                                       : std::ios::out);
-        if (!file_) return false;
-        if (format == EdgeFormat::kBinary) {
-            file_.write(kEdgeMagic, sizeof(kEdgeMagic));
-        } else {
-            buffer_ = "id_a,id_b,gamma,match_weight,match_probability\n";
-        }
-        return static_cast<bool>(file_);
-    }
-
-    void WriteBinary(uint32_t a, uint32_t b, uint32_t gamma, double weight) {
-        const size_t at = buffer_.size();
-        buffer_.resize(at + kEdgeBytes);
-        char* out = buffer_.data() + at;
-        std::memcpy(out, &a, 4);
-        std::memcpy(out + 4, &b, 4);
-        std::memcpy(out + 8, &gamma, 4);
-        std::memcpy(out + 12, &weight, 8);
-        if (buffer_.size() >= kFlushBytes) Flush();
-    }
-
-    void WriteCsv(std::string_view id_a, std::string_view id_b, uint32_t gamma,
-                  double weight) {
-        char numbers[64];
-        std::snprintf(numbers, sizeof(numbers), ",%u,%.6f,%.9f", gamma, weight,
-                      ProbabilityForWeight(weight));
-        buffer_.append(id_a);
-        buffer_.push_back(',');
-        buffer_.append(id_b);
-        buffer_.append(numbers);
-        buffer_.push_back('\n');
-        if (buffer_.size() >= kFlushBytes) Flush();
-    }
-
-    void Flush() {
-        if (buffer_.empty()) return;
-        file_.write(buffer_.data(), static_cast<std::streamsize>(buffer_.size()));
-        buffer_.clear();
-    }
-
-    bool Close() {
-        Flush();
-        file_.close();
-        return !file_.fail();
-    }
-
-   private:
-    EdgeFormat format_ = EdgeFormat::kBinary;
-    std::ofstream file_;
-    std::string buffer_;
-};
+uint64_t Mix64(uint64_t value) {
+    value += 0x9E3779B97F4A7C15ull;
+    value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
+    value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
+    return value ^ (value >> 31);
+}
 
 // Per-thread counters, one cache line each: they are touched once per candidate
 // pair, and packing them adjacently would put every thread's increment on the
@@ -121,10 +63,67 @@ struct alignas(64) ThreadTally {
     uint64_t checked = 0;
     uint64_t certain = 0;
     uint64_t edges = 0;
+    uint64_t spilled = 0;
+    uint64_t random = 0;
     uint64_t tf_lookups = 0;
 };
 
 }  // namespace
+
+std::string EdgeShardName(unsigned thread) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "shard-%03u", thread);
+    return buffer;
+}
+
+bool EdgeShardWriter::Open(const std::string& path, EdgeFormat format) {
+    format_ = format;
+    file_.open(path, format == EdgeFormat::kBinary ? std::ios::binary | std::ios::out
+                                                   : std::ios::out);
+    if (!file_) return false;
+    if (format == EdgeFormat::kBinary) {
+        file_.write(kEdgeMagic, sizeof(kEdgeMagic));
+    } else {
+        buffer_ = "id_a,id_b,gamma,match_weight,match_probability\n";
+    }
+    return static_cast<bool>(file_);
+}
+
+void EdgeShardWriter::WriteBinary(uint32_t a, uint32_t b, uint32_t gamma, double weight) {
+    const size_t at = buffer_.size();
+    buffer_.resize(at + kEdgeBytes);
+    char* out = buffer_.data() + at;
+    std::memcpy(out, &a, 4);
+    std::memcpy(out + 4, &b, 4);
+    std::memcpy(out + 8, &gamma, 4);
+    std::memcpy(out + 12, &weight, 8);
+    if (buffer_.size() >= kFlushBytes) Flush();
+}
+
+void EdgeShardWriter::WriteCsv(std::string_view id_a, std::string_view id_b,
+                               uint32_t gamma, double weight) {
+    char numbers[64];
+    std::snprintf(numbers, sizeof(numbers), ",%u,%.6f,%.9f", gamma, weight,
+                  ProbabilityForWeight(weight));
+    buffer_.append(id_a);
+    buffer_.push_back(',');
+    buffer_.append(id_b);
+    buffer_.append(numbers);
+    buffer_.push_back('\n');
+    if (buffer_.size() >= kFlushBytes) Flush();
+}
+
+void EdgeShardWriter::Flush() {
+    if (buffer_.empty()) return;
+    file_.write(buffer_.data(), static_cast<std::streamsize>(buffer_.size()));
+    buffer_.clear();
+}
+
+bool EdgeShardWriter::Close() {
+    Flush();
+    file_.close();
+    return !file_.fail();
+}
 
 bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
              const BlockingPlan& plan, const Scorer& scorer,
@@ -141,12 +140,13 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
     }
 
     const char* suffix = options.format == EdgeFormat::kBinary ? ".bin" : ".csv";
-    std::vector<std::unique_ptr<ShardWriter>> writers;
+    std::vector<std::unique_ptr<EdgeShardWriter>> writers;
     writers.reserve(threads);
     for (unsigned t = 0; t < threads; ++t) {
         const std::string path =
-            (std::filesystem::path(options.out_dir) / (ShardName(t) + suffix)).string();
-        auto writer = std::make_unique<ShardWriter>();
+            (std::filesystem::path(options.out_dir) / (EdgeShardName(t) + suffix))
+                .string();
+        auto writer = std::make_unique<EdgeShardWriter>();
         if (!writer->Open(path, options.format)) {
             *error = "cannot write \"" + path + "\"";
             return false;
@@ -155,7 +155,45 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         report->shards.push_back(path);
     }
 
+    // The spill is opened alongside the edges, one shard per thread, so a spilling
+    // run costs one more sequential write and no extra pass.
+    const bool spilling = !options.spill_dir.empty();
+    std::vector<std::unique_ptr<SpillWriter>> spills;
+    std::vector<std::string> spill_paths;
+    if (spilling) {
+        std::filesystem::create_directories(options.spill_dir, ec);
+        if (ec) {
+            *error = "cannot create spill directory \"" + options.spill_dir +
+                     "\": " + ec.message();
+            return false;
+        }
+        spills.reserve(threads);
+        for (unsigned t = 0; t < threads; ++t) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "spill-%03u.bin", t);
+            const std::string path =
+                (std::filesystem::path(options.spill_dir) / name).string();
+            auto writer = std::make_unique<SpillWriter>();
+            if (!writer->Open(path)) {
+                *error = "cannot write \"" + path + "\"";
+                return false;
+            }
+            spills.push_back(std::move(writer));
+            spill_paths.push_back(path);
+        }
+    }
+    const bool sampling = spilling && options.spill_sample > 0.0;
+    const uint64_t sample_cut =
+        sampling ? static_cast<uint64_t>(std::min(1.0, options.spill_sample) *
+                                         18446744073709549568.0)
+                 : 0;
+
     std::vector<ThreadTally> tally(threads);
+    // Each thread draws from its own stream, so the sample does not depend on how
+    // the tasks happened to be handed out.
+    for (unsigned t = 0; t < threads; ++t) {
+        tally[t].random = Mix64(options.spill_seed + t * 0x9E3779B97F4A7C15ull);
+    }
     std::atomic<uint64_t> emitted{0};
     const uint64_t limit = options.max_edges;
     const bool csv = options.format == EdgeFormat::kCsv;
@@ -163,13 +201,25 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
 
     ForEachPairParallel(plan, plan.AllSources(), threads, [&](unsigned t) {
         ThreadTally* counts = &tally[t];
-        ShardWriter* writer = writers[t].get();
-        return [&, counts, writer](uint32_t a, uint32_t b) {
+        EdgeShardWriter* writer = writers[t].get();
+        SpillWriter* spill = spilling ? spills[t].get() : nullptr;
+        return [&, counts, writer, spill](uint32_t a, uint32_t b) {
             ++counts->enumerated;
             const uint32_t gamma = comparisons.Evaluate(a, b);
+            // Drawn per candidate, before the pattern decides anything, so the
+            // sample is uniform over candidates rather than over survivors.
+            bool sampled = false;
+            if (sampling) {
+                counts->random = Mix64(counts->random);
+                sampled = counts->random < sample_cut;
+            }
             const Zone zone = scorer.Classify(gamma);
             if (zone == Zone::kDrop) {
                 ++counts->dropped;
+                if (sampled) {
+                    spill->Write(a, b, gamma);
+                    ++counts->spilled;
+                }
                 return;
             }
             // Drop is where the bracket pays: the pattern cannot clear the
@@ -183,9 +233,20 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
             }
             const double weight = scorer.Weight(gamma, a);
             ++counts->tf_lookups;
-            if (weight < scorer.threshold()) return;
+            if (weight < scorer.threshold()) {
+                if (sampled) {
+                    spill->Write(a, b, gamma);
+                    ++counts->spilled;
+                }
+                return;
+            }
             if (limit > 0 && emitted.fetch_add(1) >= limit) return;
             ++counts->edges;
+            // Above threshold: always spilled, and only once even if also sampled.
+            if (spilling) {
+                spill->Write(a, b, gamma);
+                ++counts->spilled;
+            }
             if (csv) {
                 writer->WriteCsv(ids.Get(a), ids.Get(b), gamma, weight);
             } else {
@@ -204,7 +265,14 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         report->checked += tally[t].checked;
         report->certain += tally[t].certain;
         report->edges += tally[t].edges;
+        report->spilled += tally[t].spilled;
         report->tf_lookups += tally[t].tf_lookups;
+    }
+    for (unsigned t = 0; t < threads; ++t) {
+        if (spilling && !spills[t]->Close()) {
+            *error = "failed while writing \"" + spill_paths[t] + "\"";
+            return false;
+        }
     }
     report->threads = threads;
     report->truncated = limit > 0 && emitted.load() > limit;
@@ -213,6 +281,18 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         report->patterns_drop = scorer.PatternsIn(Zone::kDrop);
         report->patterns_check = scorer.PatternsIn(Zone::kCheck);
         report->patterns_certain = scorer.PatternsIn(Zone::kEmit);
+    }
+    if (spilling) {
+        SpillManifest manifest;
+        manifest.threshold = scorer.threshold();
+        manifest.sample_rate = options.spill_sample;
+        manifest.records = store.NumRecords();
+        manifest.candidates = report->enumerated;
+        manifest.spilled = report->spilled;
+        manifest.above_threshold = report->edges;
+        manifest.gamma_width = comparisons.Width();
+        manifest.layout = GammaLayout(comparisons);
+        if (!WriteSpillManifest(options.spill_dir, manifest, error)) return false;
     }
     report->seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();

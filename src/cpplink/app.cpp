@@ -18,6 +18,7 @@
 #include "cpplink/predict.hpp"
 #include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
+#include "cpplink/rescore.hpp"
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
@@ -40,6 +41,8 @@ void PrintUsage(std::ostream& out) {
         << "  predict     score the candidate pairs and write the edges above a "
            "threshold\n"
         << "  cluster     join the scored edges into duplicate clusters\n"
+        << "  rescore     re-score a spilled run under a new model, without "
+           "comparing again\n"
         << "  gen-sample  write a sample parquet file with planted duplicates\n"
         << "\n"
         << "options:\n"
@@ -60,8 +63,12 @@ void PrintUsage(std::ostream& out) {
         << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--tf-damping F]\n"
-        << "                [--no-signatures]\n"
+        << "                [--no-signatures] [--spill <dir>] [--spill-sample R]\n"
         << "                <file.parquet>\n"
+        << "cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>\n"
+        << "                --out <dir> [--threshold BITS | --probability P]\n"
+        << "                [--format bin|csv] [--threads N] [--limit N] "
+           "<file.parquet>\n"
         << "cpplink cluster --schema <schema.json> --edges <dir> [--out <file.csv>]\n"
         << "                [--threshold BITS | --probability P] [--truth <file.csv>]\n"
         << "                [--min-size N] <file.parquet>\n"
@@ -465,6 +472,15 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             score.tf_damping = std::stod(value);
         } else if (args[i] == "--no-bounds") {
             score.use_bounds = false;
+        } else if (args[i] == "--spill") {
+            if (!TakeValue(args, &i, &options.spill_dir, err)) return 1;
+        } else if (args[i] == "--spill-sample") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.spill_sample = std::stod(value);
+            if (options.spill_sample <= 0.0 || options.spill_sample > 1.0) {
+                err << "cpplink predict: --spill-sample wants a rate in (0, 1]\n";
+                return 1;
+            }
         } else if (args[i] == "--no-signatures") {
             use_signatures = false;
         } else if (!args[i].empty() && args[i][0] == '-') {
@@ -624,6 +640,112 @@ int RunCluster(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
+int RunRescore(const std::vector<std::string>& args, std::ostream& out,
+               std::ostream& err) {
+    std::string schema_path;
+    std::string data_path;
+    std::string model_path;
+    std::string value;
+    RescoreOptions options;
+    ScoreOptions score;
+    bool have_threshold = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--model") {
+            if (!TakeValue(args, &i, &model_path, err)) return 1;
+        } else if (args[i] == "--spill") {
+            if (!TakeValue(args, &i, &options.spill_dir, err)) return 1;
+        } else if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &options.out_dir, err)) return 1;
+        } else if (args[i] == "--threshold") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.threshold = std::stod(value);
+            have_threshold = true;
+        } else if (args[i] == "--probability") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            const double probability = std::stod(value);
+            if (probability <= 0.0 || probability >= 1.0) {
+                err << "cpplink rescore: --probability wants a value in (0, 1)\n";
+                return 1;
+            }
+            score.threshold = WeightForProbability(probability);
+            have_threshold = true;
+        } else if (args[i] == "--format") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (value == "bin") {
+                options.format = EdgeFormat::kBinary;
+            } else if (value == "csv") {
+                options.format = EdgeFormat::kCsv;
+            } else {
+                err << "cpplink rescore: --format wants bin or csv\n";
+                return 1;
+            }
+        } else if (args[i] == "--threads") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threads = static_cast<unsigned>(std::stoul(value));
+        } else if (args[i] == "--limit") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.max_edges = std::stoull(value);
+        } else if (args[i] == "--tf-damping") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.tf_damping = std::stod(value);
+        } else if (args[i] == "--no-bounds") {
+            score.use_bounds = false;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink rescore: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else if (data_path.empty()) {
+            data_path = args[i];
+        } else {
+            err << "cpplink rescore: unexpected argument '" << args[i] << "'\n";
+            return 1;
+        }
+    }
+    if (schema_path.empty() || data_path.empty() || model_path.empty() ||
+        options.spill_dir.empty() || options.out_dir.empty()) {
+        err << "cpplink rescore: --schema <schema.json>, --model <model.json>, "
+               "--spill <dir>, --out <dir> and a parquet file are required\n";
+        return 1;
+    }
+    if (!have_threshold) {
+        err << "cpplink rescore: give a --threshold in bits or a --probability\n";
+        return 1;
+    }
+
+    Model model;
+    std::string error;
+    if (!LoadModel(model_path, &model, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    Schema schema;
+    std::unique_ptr<RecordStore> store;
+    BlockingPlan plan;
+    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+        return 1;
+    }
+    ComparisonSet comparisons;
+    if (!comparisons.Bind(schema, *store, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    Scorer scorer;
+    if (!scorer.Bind(model, comparisons, *store, score, &error)) {
+        err << "cpplink rescore: " << error << "\n";
+        return 1;
+    }
+
+    RescoreReport report;
+    if (!Rescore(*store, comparisons, scorer, options, &report, &error)) {
+        err << error << "\n";
+        return 1;
+    }
+    PrintRescoreReport(report, scorer, out);
+    return 0;
+}
+
 int RunGenSample(const std::vector<std::string>& args, std::ostream& out,
                  std::ostream& err) {
     SampleOptions options;
@@ -689,6 +811,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     if (first == "recall") return RunRecall(rest, out, err);
     if (first == "estimate") return RunEstimate(rest, out, err);
     if (first == "predict") return RunPredict(rest, out, err);
+    if (first == "rescore") return RunRescore(rest, out, err);
     if (first == "cluster") return RunCluster(rest, out, err);
     if (first == "gen-sample") return RunGenSample(rest, out, err);
 
