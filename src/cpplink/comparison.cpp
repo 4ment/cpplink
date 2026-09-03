@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <string>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "cpplink/string_metrics.hpp"
 
@@ -49,9 +52,13 @@ bool SameSet(const StringListColumn& column, uint64_t a, uint64_t b) {
 }  // namespace
 
 bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
-                         std::string* error) {
+                         std::string* error, bool use_signatures) {
     bound_.clear();
+    tables_.clear();
     width_ = 0;
+    // Several comparisons can read the same column, and the signatures belong to
+    // the column's values, so they are built once per dictionary and shared.
+    std::vector<std::pair<const Dictionary*, SignatureTable*>> built;
     for (const ComparisonSpec& spec : schema.comparisons) {
         BoundComparison bound;
         bound.spec = &spec;
@@ -88,10 +95,39 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
                 }
             }
         }
+        bool fuzzy = false;
+        for (const LevelSpec& level : spec.levels) {
+            if (level.type == LevelType::kLevenshtein ||
+                level.type == LevelType::kJaroWinkler) {
+                fuzzy = true;
+                break;
+            }
+        }
+        if (use_signatures && fuzzy && bound.strings != nullptr) {
+            const Dictionary* dict = &bound.strings->dict;
+            for (const auto& entry : built) {
+                if (entry.first == dict) {
+                    bound.signatures = entry.second;
+                    break;
+                }
+            }
+            if (bound.signatures == nullptr) {
+                tables_.push_back(std::make_unique<SignatureTable>());
+                tables_.back()->Build(*dict);
+                bound.signatures = tables_.back().get();
+                built.emplace_back(dict, tables_.back().get());
+            }
+        }
         bound_.push_back(bound);
         width_ = static_cast<uint8_t>(width_ + bound.bits);
     }
     return true;
+}
+
+uint64_t ComparisonSet::SignatureBytes() const {
+    uint64_t bytes = 0;
+    for (const auto& table : tables_) bytes += table->BytesUsed();
+    return bytes;
 }
 
 bool ComparisonSet::IsNull(const BoundComparison& comparison, uint64_t row) const {
@@ -143,6 +179,16 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
             if (left == kNullId || right == kNullId) return false;
             if (left == right) return true;  // identical ids, distance zero
             const int limit = static_cast<int>(level.threshold);
+            // Two loads and two popcounts, and the strings are never touched. On a
+            // candidate set this rejects the great majority of pairs, which is the
+            // only reason the fuzzy levels are affordable at all.
+            if (comparison.signatures != nullptr &&
+                LevenshteinLowerBound(comparison.signatures->Mask(left),
+                                      comparison.signatures->Length(left),
+                                      comparison.signatures->Mask(right),
+                                      comparison.signatures->Length(right)) > limit) {
+                return false;
+            }
             return BoundedLevenshtein(comparison.strings->dict.Value(left),
                                       comparison.strings->dict.Value(right),
                                       limit) <= limit;
@@ -153,6 +199,14 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
             const uint32_t right = comparison.strings->ids[b];
             if (left == kNullId || right == kNullId) return false;
             if (left == right) return true;
+            if (comparison.signatures != nullptr &&
+                JaroWinklerUpperBound(comparison.signatures->Mask(left),
+                                      comparison.signatures->Length(left),
+                                      comparison.signatures->Mask(right),
+                                      comparison.signatures->Length(right)) <
+                    level.threshold) {
+                return false;
+            }
             return JaroWinklerAtLeast(comparison.strings->dict.Value(left),
                                       comparison.strings->dict.Value(right),
                                       level.threshold);

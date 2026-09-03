@@ -3,11 +3,34 @@
 
 #include "cpplink/string_metrics.hpp"
 
+#include <algorithm>
+#include <random>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
+#include "cpplink/signature.hpp"
+
 namespace {
+
+// The textbook full-matrix edit distance, kept deliberately dumb: it is the thing
+// the bit-parallel implementation has to agree with, so it must not share a line
+// of code with it.
+int ReferenceLevenshtein(const std::string& a, const std::string& b) {
+    std::vector<int> previous(b.size() + 1);
+    std::vector<int> current(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); ++j) previous[j] = static_cast<int>(j);
+    for (size_t i = 1; i <= a.size(); ++i) {
+        current[0] = static_cast<int>(i);
+        for (size_t j = 1; j <= b.size(); ++j) {
+            current[j] = std::min({previous[j] + 1, current[j - 1] + 1,
+                                   previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1)});
+        }
+        previous = current;
+    }
+    return previous[b.size()];
+}
 
 TEST(LevenshteinTest, CountsSingleEdits) {
     EXPECT_EQ(cpplink::BoundedLevenshtein("smith", "smith", 3), 0);
@@ -72,6 +95,114 @@ TEST(HaversineTest, MeasuresKnownDistances) {
     // A degree of latitude is about 111 km anywhere.
     EXPECT_NEAR(cpplink::HaversineKm(0.0, 0.0, 1.0, 0.0), 111.2, 0.5);
     EXPECT_NEAR(cpplink::HaversineKm(-60.0, 30.0, -59.0, 30.0), 111.2, 0.5);
+}
+
+// Myers' algorithm is a rewrite of the inner loop, not a new definition of the
+// metric, so the only test that means anything is agreement with the reference on
+// a large number of pairs -- including the alphabet sizes where bit collisions and
+// the word boundary are most likely to bite.
+TEST(LevenshteinTest, BitParallelAgreesWithTheFullMatrix) {
+    std::mt19937_64 rng(20260903);
+    const std::string alphabets[] = {"ab", "abcde",
+                                     "abcdefghijklmnopqrstuvwxyz0123456789"};
+    for (const std::string& alphabet : alphabets) {
+        std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+        std::uniform_int_distribution<size_t> length(0, 70);
+        for (int trial = 0; trial < 4000; ++trial) {
+            std::string a;
+            std::string b;
+            for (size_t i = length(rng); i > 0; --i) a.push_back(alphabet[pick(rng)]);
+            for (size_t i = length(rng); i > 0; --i) b.push_back(alphabet[pick(rng)]);
+            const int expected = ReferenceLevenshtein(a, b);
+            for (const int bound : {0, 1, 2, 5, 100}) {
+                const int got = cpplink::BoundedLevenshtein(a, b, bound);
+                const int want = expected > bound ? bound + 1 : expected;
+                ASSERT_EQ(got, want) << "'" << a << "' vs '" << b << "' at k=" << bound;
+            }
+        }
+    }
+}
+
+TEST(LevenshteinTest, BitParallelHandlesTheWordBoundary) {
+    // 63, 64 and 65 characters: one below the word, exactly it, and one past it,
+    // which is where the shift-based recurrence stops being usable.
+    for (const size_t length : {63u, 64u, 65u}) {
+        const std::string a(length, 'a');
+        std::string b = a;
+        b[length / 2] = 'b';
+        EXPECT_EQ(cpplink::BoundedLevenshtein(a, b, 3), 1) << length;
+        EXPECT_EQ(cpplink::BoundedLevenshtein(a, a, 3), 0) << length;
+        EXPECT_EQ(cpplink::BoundedLevenshtein(a, a.substr(1), 3), 1) << length;
+    }
+}
+
+TEST(SignatureTest, MaskCarriesEveryCharacterPresent) {
+    const uint64_t mask = cpplink::CharacterMask("abc");
+    EXPECT_NE(mask & (uint64_t{1} << ('a' & 63)), 0u);
+    EXPECT_NE(mask & (uint64_t{1} << ('c' & 63)), 0u);
+    EXPECT_EQ(mask & (uint64_t{1} << ('z' & 63)), 0u);
+    EXPECT_EQ(cpplink::CharacterMask(""), 0u);
+    EXPECT_EQ(cpplink::CharacterMask("aaa"), cpplink::CharacterMask("a"));
+}
+
+// The whole value of the filter rests on this: it may reject only pairs the metric
+// itself would have rejected. A single counterexample makes it a bug rather than
+// an optimization, so it is checked over the same population the metric is.
+TEST(SignatureTest, JaroBoundNeverFallsBelowTheTrueSimilarity) {
+    std::mt19937_64 rng(11);
+    const std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    std::uniform_int_distribution<size_t> length(1, 14);
+    for (int trial = 0; trial < 40000; ++trial) {
+        std::string a;
+        std::string b;
+        for (size_t i = length(rng); i > 0; --i) a.push_back(alphabet[pick(rng)]);
+        for (size_t i = length(rng); i > 0; --i) b.push_back(alphabet[pick(rng)]);
+        const double bound = cpplink::JaroWinklerUpperBound(
+            cpplink::CharacterMask(a), static_cast<uint32_t>(a.size()),
+            cpplink::CharacterMask(b), static_cast<uint32_t>(b.size()));
+        ASSERT_GE(bound, cpplink::JaroWinkler(a, b) - 1e-12)
+            << "'" << a << "' vs '" << b << "'";
+    }
+}
+
+TEST(SignatureTest, EditBoundNeverExceedsTheTrueDistance) {
+    std::mt19937_64 rng(12);
+    const std::string alphabet = "abcdefgh";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    std::uniform_int_distribution<size_t> length(0, 12);
+    for (int trial = 0; trial < 40000; ++trial) {
+        std::string a;
+        std::string b;
+        for (size_t i = length(rng); i > 0; --i) a.push_back(alphabet[pick(rng)]);
+        for (size_t i = length(rng); i > 0; --i) b.push_back(alphabet[pick(rng)]);
+        const int bound = cpplink::LevenshteinLowerBound(
+            cpplink::CharacterMask(a), static_cast<uint32_t>(a.size()),
+            cpplink::CharacterMask(b), static_cast<uint32_t>(b.size()));
+        ASSERT_LE(bound, ReferenceLevenshtein(a, b)) << "'" << a << "' vs '" << b << "'";
+    }
+}
+
+TEST(SignatureTest, IdenticalValuesAreNeverRejected) {
+    for (const char* value : {"smith", "", "a", "Zolnerowich", "07700 900123"}) {
+        const uint64_t mask = cpplink::CharacterMask(value);
+        const uint32_t length = static_cast<uint32_t>(std::string(value).size());
+        EXPECT_GE(cpplink::JaroWinklerUpperBound(mask, length, mask, length), 1.0)
+            << value;
+        EXPECT_EQ(cpplink::LevenshteinLowerBound(mask, length, mask, length), 0) << value;
+    }
+}
+
+TEST(SignatureTest, TableIsIndexedByValueId) {
+    cpplink::Dictionary dict;
+    const uint32_t smith = dict.Intern("smith");
+    const uint32_t jones = dict.Intern("jones");
+    cpplink::SignatureTable table;
+    table.Build(dict);
+    EXPECT_EQ(table.Length(smith), 5u);
+    EXPECT_EQ(table.Mask(jones), cpplink::CharacterMask("jones"));
+    EXPECT_FALSE(table.Empty());
+    EXPECT_EQ(table.BytesUsed(), 2 * (sizeof(uint64_t) + sizeof(uint32_t)));
 }
 
 }  // namespace

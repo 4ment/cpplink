@@ -133,6 +133,8 @@ serves as ground truth for the recall harness in a later phase.
 - Fellegi–Sunter model over the resulting agreement patterns *(done)*
 - EM estimation of `m` and `λ`; exact closed-form `u` for exact-match levels *(done)*
 - Term-frequency adjustments, with admissible bounds for pruning *(done)*
+- Per-value character signatures bounding the string metrics, and Myers' bit-vector
+  edit distance *(done)*
 - Automatic blocking: exact-value and rare-value inverted indexes, MinHash LSH and sorted
   neighbourhood, with exact candidate-count reporting and recall measurement *(done)*
 - Optional ANN blocking for prediction

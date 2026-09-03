@@ -5,8 +5,11 @@
 
 #include <cmath>
 #include <limits>
+#include <memory>
+#include <random>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -158,6 +161,71 @@ TEST_F(Fixture, ComparisonsOccupyDisjointBitRanges) {
         const uint32_t mask = ((1u << bound.bits) - 1u) << bound.shift;
         EXPECT_EQ(seen & mask, 0u) << "comparison " << c << " overlaps an earlier one";
         seen |= mask;
+    }
+}
+
+// The signature filter may only skip work the metric would have rejected anyway.
+// Asserting that on a handful of hand-picked names proves nothing, so this rebuilds
+// the same store over a population wide enough for the masks to differ in every
+// interesting way and compares the packed patterns pair for pair.
+TEST(SignatureFilterTest, ChangesNoPattern) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(kConfig, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+
+    std::mt19937_64 rng(20260904);
+    const std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    std::uniform_int_distribution<size_t> length(3, 12);
+    std::uniform_int_distribution<int> corrupt(0, 3);
+    constexpr uint64_t kRows = 300;
+
+    auto& surname = std::get<cpplink::StringColumn>(store.mutable_column(0));
+    std::vector<std::string> values;
+    for (uint64_t row = 0; row < kRows; ++row) {
+        std::string value;
+        // Every fourth row is a corruption of an earlier one, so the population
+        // carries near misses as well as unrelated pairs -- the filter is only
+        // interesting where it has to decide between them.
+        if (!values.empty() && corrupt(rng) == 0) {
+            value = values[rng() % values.size()];
+            if (!value.empty()) value[rng() % value.size()] = alphabet[pick(rng)];
+        } else {
+            for (size_t i = length(rng); i > 0; --i) value.push_back(alphabet[pick(rng)]);
+        }
+        values.push_back(value);
+        surname.ids.push_back(surname.dict.Intern(value));
+    }
+
+    auto& dob = std::get<cpplink::DateColumn>(store.mutable_column(1));
+    auto& lat = std::get<cpplink::DoubleColumn>(store.mutable_column(2));
+    auto& lon = std::get<cpplink::DoubleColumn>(store.mutable_column(3));
+    auto& tokens = std::get<cpplink::StringListColumn>(store.mutable_column(4));
+    const uint32_t token = tokens.dict.Intern("king");
+    tokens.offsets.push_back(0);
+    for (uint64_t row = 0; row < kRows; ++row) {
+        dob.values.push_back(static_cast<int32_t>(10000 + row % 7));
+        lat.values.push_back(-33.8688);
+        lon.values.push_back(151.2093);
+        tokens.ids.push_back(token);
+        tokens.offsets.push_back(tokens.ids.size());
+    }
+    store.set_num_records(kRows);
+    store.Finalize();
+
+    cpplink::ComparisonSet filtered;
+    cpplink::ComparisonSet plain;
+    ASSERT_TRUE(filtered.Bind(schema, store, &error, true)) << error;
+    ASSERT_TRUE(plain.Bind(schema, store, &error, false)) << error;
+    EXPECT_GT(filtered.SignatureBytes(), 0u);
+    EXPECT_EQ(plain.SignatureBytes(), 0u);
+
+    for (uint64_t a = 0; a < kRows; ++a) {
+        for (uint64_t b = a + 1; b < kRows; ++b) {
+            ASSERT_EQ(filtered.Evaluate(a, b), plain.Evaluate(a, b))
+                << "'" << values[a] << "' vs '" << values[b] << "'";
+        }
     }
 }
 

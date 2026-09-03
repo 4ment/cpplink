@@ -60,6 +60,7 @@ void PrintUsage(std::ostream& out) {
         << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--tf-damping F]\n"
+        << "                [--no-signatures]\n"
         << "                <file.parquet>\n"
         << "cpplink cluster --schema <schema.json> --edges <dir> [--out <file.csv>]\n"
         << "                [--threshold BITS | --probability P] [--truth <file.csv>]\n"
@@ -422,6 +423,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     PredictOptions options;
     ScoreOptions score;
     bool have_threshold = false;
+    bool use_signatures = true;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
@@ -463,6 +465,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             score.tf_damping = std::stod(value);
         } else if (args[i] == "--no-bounds") {
             score.use_bounds = false;
+        } else if (args[i] == "--no-signatures") {
+            use_signatures = false;
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink predict: unknown option '" << args[i] << "'\n";
             return 1;
@@ -503,7 +507,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     }
 
     ComparisonSet comparisons;
-    if (!comparisons.Bind(schema, *store, &error)) {
+    if (!comparisons.Bind(schema, *store, &error, use_signatures)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
