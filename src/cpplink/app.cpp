@@ -34,7 +34,9 @@ void PrintUsage(std::ostream& out) {
         << "\n"
         << "commands:\n"
         << "  inspect     load a parquet file and report cardinality and memory\n"
-        << "  explain     show the comparison levels a single pair lands on\n"
+        << "  explain     show the levels a single pair lands on, and with a "
+           "model\n"
+        << "              the waterfall of bits behind its score\n"
         << "  explain-blocking  price every blocking source without enumerating\n"
         << "  recall      measure what fraction of known pairs blocking reaches\n"
         << "  estimate    learn m, u and lambda and write the model\n"
@@ -50,8 +52,10 @@ void PrintUsage(std::ostream& out) {
         << "  -v, --version    show the version and exit\n"
         << "\n"
         << "cpplink inspect --schema <schema.json> <file.parquet>\n"
-        << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b> "
-           "<file.parquet>\n"
+        << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b>\n"
+        << "                [--rows <i>,<j>] [--model <model.json>] "
+           "[--threshold BITS]\n"
+        << "                [--tf-damping F] <file.parquet>\n"
         << "cpplink explain-blocking --schema <schema.json> [--count] "
            "<file.parquet>\n"
         << "cpplink recall --schema <schema.json> --truth <truth.csv> "
@@ -146,9 +150,20 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
     std::string data_path;
     std::string pair;
     std::string rows;
+    std::string model_path;
+    std::string value;
+    ScoreOptions score;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--model") {
+            if (!TakeValue(args, &i, &model_path, err)) return 1;
+        } else if (args[i] == "--threshold") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.threshold = std::stod(value);
+        } else if (args[i] == "--tf-damping") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.tf_damping = std::stod(value);
         } else if (args[i] == "--pair") {
             if (!TakeValue(args, &i, &pair, err)) return 1;
         } else if (args[i] == "--rows") {
@@ -231,6 +246,22 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
     PrintGammaLayout(comparisons, out);
     out << "\n";
     PrintPairExplanation(store, comparisons, row_a, row_b, out);
+
+    // Without a model there is no weight to explain: the levels are the whole
+    // story, and the waterfall is simply not printed.
+    if (!model_path.empty()) {
+        Model model;
+        if (!LoadModel(model_path, &model, &error)) {
+            err << "cpplink: " << error << "\n";
+            return 1;
+        }
+        Scorer scorer;
+        if (!scorer.Bind(model, comparisons, store, score, &error)) {
+            err << "cpplink explain: " << error << "\n";
+            return 1;
+        }
+        PrintPairWaterfall(store, comparisons, scorer, row_a, row_b, out);
+    }
     return 0;
 }
 

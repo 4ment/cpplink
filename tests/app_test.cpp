@@ -90,6 +90,13 @@ TEST(RunTest, PredictRejectsAnUnknownFormat) {
     EXPECT_NE(err.str().find("bin or csv"), std::string::npos);
 }
 
+TEST(RunTest, ExplainRejectsAnUnknownOption) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"explain", "--waterfall"}, out, err), 1);
+    EXPECT_NE(err.str().find("unknown option"), std::string::npos);
+}
+
 TEST(RunTest, RescoreNeedsASpillAndAModel) {
     std::ostringstream out;
     std::ostringstream err;

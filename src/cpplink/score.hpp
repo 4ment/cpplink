@@ -48,6 +48,11 @@ struct TermFrequencyAdjustment {
 
     // log2(u / p_v) for the value row `row` carries, damped.
     double Delta(uint64_t row) const;
+    // How many records carry that value. Zero where the value is null or the
+    // column keeps no term frequencies; this is what Delta is computed from, and
+    // reporting it is what makes a term-frequency move explicable rather than
+    // magic.
+    uint32_t Frequency(uint64_t row) const;
 };
 
 struct ScoreOptions {
@@ -72,6 +77,16 @@ class Scorer {
     // The exact TF-adjusted weight. Both rows agree on every TF level by
     // construction, so the value is read from `a`.
     double Weight(uint32_t gamma, uint64_t a) const;
+
+    // The pieces the weight is made of, for explaining one pair rather than
+    // scoring billions.
+    double PriorWeight() const { return prior_; }
+    double LevelWeight(size_t comparison, uint8_t level) const;
+    bool HasAdjustment(size_t comparison) const;
+    // The term-frequency move this pair gets for one comparison: zero unless the
+    // pattern puts it on that comparison's exact level.
+    double AdjustmentFor(size_t comparison, uint32_t gamma, uint64_t row) const;
+    uint32_t FrequencyFor(size_t comparison, uint64_t row) const;
 
     double threshold() const { return options_.threshold; }
     bool Dense() const { return dense_; }
