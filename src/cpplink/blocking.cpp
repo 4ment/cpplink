@@ -158,6 +158,54 @@ uint64_t BlockingPlan::LargestGroup(size_t source_index) const {
     return largest;
 }
 
+std::vector<size_t> BlockingPlan::AllSources() const {
+    std::vector<size_t> selected(sources_.size());
+    for (size_t s = 0; s < sources_.size(); ++s) selected[s] = s;
+    return selected;
+}
+
+bool BlockingPlan::ProducedEarlierIn(const std::vector<size_t>& selected, size_t position,
+                                     uint64_t a, uint64_t b) const {
+    for (size_t p = 0; p < position; ++p) {
+        if (Produces(selected[p], a, b)) return true;
+    }
+    return false;
+}
+
+void BlockingPlan::BuildGroups(size_t source_index, SourceGroups* groups) const {
+    groups->keyed.clear();
+    groups->starts.clear();
+    for (uint64_t row = 0; row < rows_; ++row) {
+        const uint64_t key = KeyOf(source_index, row);
+        if (key != kNoKey) {
+            groups->keyed.emplace_back(key, static_cast<uint32_t>(row));
+        }
+    }
+    std::sort(groups->keyed.begin(), groups->keyed.end());
+
+    // Singletons are compacted out rather than recorded and skipped: a group of
+    // one produces no pair, and dropping them keeps the groups contiguous, so a
+    // group is a range of `keyed` and nothing else has to be carried alongside.
+    uint64_t write = 0;
+    uint64_t begin = 0;
+    while (begin < groups->keyed.size()) {
+        uint64_t end = begin + 1;
+        while (end < groups->keyed.size() &&
+               groups->keyed[end].first == groups->keyed[begin].first) {
+            ++end;
+        }
+        if (end - begin > 1) {
+            if (groups->starts.empty()) groups->starts.push_back(0);
+            for (uint64_t i = begin; i < end; ++i) {
+                groups->keyed[write++] = groups->keyed[i];
+            }
+            groups->starts.push_back(write);
+        }
+        begin = end;
+    }
+    groups->keyed.resize(write);
+}
+
 uint64_t BlockingPlan::CountUnion() const {
     uint64_t pairs = 0;
     ForEachPair([&pairs](uint32_t, uint32_t) { ++pairs; });

@@ -41,6 +41,11 @@ class ComparisonSet {
     // Reads a level index back out of a packed pattern.
     uint8_t LevelOf(uint32_t gamma, size_t comparison) const;
 
+    // Whether the comparison has no value to read on this row. Estimation counts
+    // these once over the data, which makes the null level's u exact rather than
+    // sampled.
+    bool IsNullValue(size_t comparison, uint64_t row) const;
+
     size_t Size() const { return bound_.size(); }
     const BoundComparison& at(size_t index) const { return bound_[index]; }
     uint8_t Width() const { return width_; }
