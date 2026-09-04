@@ -221,6 +221,29 @@ TEST_F(ClusterFixture, QualityIsMeasuredOverTheClosure) {
     EXPECT_DOUBLE_EQ(quality.recall, 0.75);
 }
 
+// Being a duplicate is transitive, so a truth file that lists (a,b) and (b,c) is
+// asserting (a,c) as well. Measuring a partition against the un-closed list counts
+// real pairs as false positives and flatters recall.
+TEST_F(ClusterFixture, TruthIsClosedBeforeItIsCompared) {
+    WriteShard("shard-000.bin", {{0, 1, 30.0}});
+    cpplink::ClusterAssignment assignment;
+    cpplink::ClusterReport report;
+    std::string error;
+    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error));
+
+    cpplink::TruthPairs truth;
+    truth.rows = {{0, 1}, {1, 2}};
+    const cpplink::ClusterQuality quality = cpplink::MeasureClusters(assignment, truth);
+    EXPECT_EQ(quality.listed_pairs, 2u);
+    EXPECT_EQ(quality.truth_pairs, 3u) << "0-1, 1-2 and the implied 0-2";
+    EXPECT_EQ(quality.truth_clusters, 1u);
+    EXPECT_EQ(quality.largest_truth_cluster, 3u);
+    EXPECT_EQ(quality.recovered, 1u) << "only 0-1 was clustered together";
+    EXPECT_EQ(quality.implied_pairs, 1u);
+    EXPECT_DOUBLE_EQ(quality.precision, 1.0);
+    EXPECT_NEAR(quality.recall, 1.0 / 3.0, 1e-12);
+}
+
 TEST_F(ClusterFixture, ChainingCostsPrecision) {
     // Two true pairs plus one wrong edge joining them: every cross pair the merged
     // cluster asserts is false, and only the closure shows it.

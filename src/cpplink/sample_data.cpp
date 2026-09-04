@@ -217,6 +217,14 @@ bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
     std::mt19937_64 planner = SeededFor(options.seed, 0xD1FFull);
     std::uniform_real_distribution<double> chance(0.0, 1.0);
 
+    // Which original record each row is ultimately a copy of. A duplicate may pick
+    // a row that is itself a duplicate, and corrupting *that row's index* would
+    // regenerate a record the file never contained -- the two rows would share
+    // nothing, and the truth file would still claim they were a pair. Following
+    // the chain to its base keeps every recorded pair genuinely similar and lets
+    // clusters larger than two arise honestly. Four bytes a row: 72 MB at 18M.
+    std::vector<uint32_t> base_of(options.rows);
+
     auto* pool = arrow::default_memory_pool();
     uint64_t written = 0;
     while (written < options.rows) {
@@ -235,11 +243,16 @@ bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
             SampleRecord record = generator.Make(index);
             std::string identifier = "r" + std::to_string(index);
 
-            // Duplicates copy an earlier row, which is regenerated from its index.
+            // Duplicates copy an earlier row by corrupting the record that row is
+            // itself a copy of, so a chain of duplicates stays a cluster of
+            // genuinely similar records rather than a chain of unrelated ones.
+            base_of[index] = static_cast<uint32_t>(index);
             if (index > 0 && chance(planner) < options.duplicate_rate) {
                 std::uniform_int_distribution<uint64_t> pick(0, index - 1);
                 const uint64_t original = pick(planner);
-                record = generator.Corrupt(generator.Make(original), &planner);
+                const uint64_t base = base_of[original];
+                base_of[index] = static_cast<uint32_t>(base);
+                record = generator.Corrupt(generator.Make(base), &planner);
                 if (truth.is_open()) {
                     truth << "r" << original << ",r" << index << "\n";
                 }
