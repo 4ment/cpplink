@@ -84,14 +84,22 @@ struct ClusterReport {
     double seconds = 0.0;
 };
 
-// Pairwise quality of the partition against known duplicates. This is the
-// transitive closure of the edges, not the edges themselves: a chain a-b-c puts
-// a and c together whether or not that pair was ever scored, so precision here
-// is a stricter number than edge precision and is the one that matters.
+// Pairwise quality of the partition against known duplicates, with **both sides
+// closed transitively**.
+//
+// The predicted side is a partition, so it already asserts every pair inside a
+// cluster. The truth side has to be closed to match: a truth file lists the pairs
+// something happened to generate, but being-a-duplicate is transitive, so if a and
+// b are both copies of the same record then (a, b) is a true pair whether or not
+// any file lists it. Scoring a transitive partition against a non-transitive list
+// counts real pairs as false positives and understates precision.
 struct ClusterQuality {
-    uint64_t truth_pairs = 0;
-    uint64_t recovered = 0;      // truth pairs whose rows share a cluster
+    uint64_t listed_pairs = 0;   // pairs as written in the truth file
+    uint64_t truth_pairs = 0;    // pairs after closing the truth transitively
+    uint64_t recovered = 0;      // true pairs whose rows share a predicted cluster
     uint64_t implied_pairs = 0;  // pairs the partition asserts
+    uint64_t truth_clusters = 0;
+    uint64_t largest_truth_cluster = 0;
     double precision = 0.0;
     double recall = 0.0;
     double f1 = 0.0;

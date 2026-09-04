@@ -38,7 +38,8 @@ void PrintUsage(std::ostream& out) {
            "model\n"
         << "              the waterfall of bits behind its score\n"
         << "  explain-blocking  price every blocking source without enumerating\n"
-        << "  recall      measure what fraction of known pairs blocking reaches\n"
+        << "  recall      measure what fraction of known pairs blocking reaches,\n"
+        << "              and with --why, diagnose the ones it does not\n"
         << "  estimate    learn m, u and lambda and write the model\n"
         << "  predict     score the candidate pairs and write the edges above a "
            "threshold\n"
@@ -58,8 +59,8 @@ void PrintUsage(std::ostream& out) {
         << "                [--tf-damping F] <file.parquet>\n"
         << "cpplink explain-blocking --schema <schema.json> [--count] "
            "<file.parquet>\n"
-        << "cpplink recall --schema <schema.json> --truth <truth.csv> "
-           "<file.parquet>\n"
+        << "cpplink recall --schema <schema.json> --truth <truth.csv> [--why]\n"
+        << "               [--show-misses N] <file.parquet>\n"
         << "cpplink estimate --schema <schema.json> [--out <model.json>]\n"
         << "                 [--u-sample N] [--session-pairs N] [--threads N]\n"
         << "                 [--iterations N] [--lambda F] [--seed N] "
@@ -331,11 +332,20 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
     std::string schema_path;
     std::string data_path;
     std::string truth_path;
+    std::string value;
+    bool why = false;
+    size_t show_misses = 0;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
         } else if (args[i] == "--truth") {
             if (!TakeValue(args, &i, &truth_path, err)) return 1;
+        } else if (args[i] == "--why") {
+            why = true;
+        } else if (args[i] == "--show-misses") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            show_misses = static_cast<size_t>(std::stoul(value));
+            why = true;
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink recall: unknown option '" << args[i] << "'\n";
             return 1;
@@ -366,6 +376,23 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
         return 1;
     }
     PrintRecallReport(plan, truth, out);
+
+    if (why) {
+        if (schema.comparisons.empty()) {
+            err << "cpplink recall: --why needs the schema to declare "
+                   "\"comparisons\", to say what still agrees on a missed pair\n";
+            return 1;
+        }
+        ComparisonSet comparisons;
+        if (!comparisons.Bind(schema, *store, &error)) {
+            err << "cpplink: " << error << "\n";
+            return 1;
+        }
+        MissReport report;
+        report.example_limit = show_misses;
+        DiagnoseMisses(plan, comparisons, truth, &report);
+        PrintMissReport(plan, report, out);
+    }
     return 0;
 }
 

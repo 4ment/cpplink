@@ -11,6 +11,7 @@
 #include <fstream>
 #include <ostream>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -288,10 +289,42 @@ bool WriteClusters(const ClusterAssignment& assignment, const RecordStore& store
 ClusterQuality MeasureClusters(const ClusterAssignment& assignment,
                                const TruthPairs& truth) {
     ClusterQuality quality;
-    quality.truth_pairs = truth.rows.size();
+    quality.listed_pairs = truth.rows.size();
     quality.implied_pairs = assignment.implied_pairs;
-    for (const auto& pair : truth.rows) {
-        if (assignment.SameCluster(pair.first, pair.second)) ++quality.recovered;
+
+    const uint64_t records = assignment.root.size();
+    UnionFind closure(records);
+    for (const auto& pair : truth.rows) closure.Union(pair.first, pair.second);
+
+    std::vector<uint32_t> truth_root(static_cast<size_t>(records));
+    std::vector<uint32_t> truth_size(static_cast<size_t>(records), 0);
+    for (uint64_t row = 0; row < records; ++row) {
+        const uint32_t root = closure.Find(static_cast<uint32_t>(row));
+        truth_root[static_cast<size_t>(row)] = root;
+        ++truth_size[root];
+    }
+    for (uint64_t row = 0; row < records; ++row) {
+        const uint64_t size = truth_size[static_cast<size_t>(row)];
+        if (size < 2) continue;
+        ++quality.truth_clusters;
+        quality.largest_truth_cluster = std::max(quality.largest_truth_cluster, size);
+        quality.truth_pairs += size * (size - 1) / 2;
+    }
+
+    // A pair is recovered when both rows share a predicted cluster *and* a truth
+    // cluster, so counting rows per (predicted, truth) cell and summing C(n, 2)
+    // gives the intersection exactly, without enumerating pairs.
+    std::unordered_map<uint64_t, uint32_t> cell;
+    cell.reserve(static_cast<size_t>(records));
+    for (uint64_t row = 0; row < records; ++row) {
+        const uint64_t key =
+            (static_cast<uint64_t>(assignment.root[static_cast<size_t>(row)]) << 32) |
+            truth_root[static_cast<size_t>(row)];
+        ++cell[key];
+    }
+    for (const auto& entry : cell) {
+        const uint64_t n = entry.second;
+        if (n >= 2) quality.recovered += n * (n - 1) / 2;
     }
     if (quality.implied_pairs > 0) {
         quality.precision = static_cast<double>(quality.recovered) /
@@ -349,8 +382,12 @@ void PrintClusterReport(const ClusterReport& report, std::ostream& out) {
 }
 
 void PrintClusterQuality(const ClusterQuality& quality, std::ostream& out) {
-    out << "\nAgainst " << WithThousands(quality.truth_pairs) << " known duplicate "
-        << "pairs, over the transitive closure:\n";
+    out << "\nAgainst the known duplicates, with both sides closed transitively:\n";
+    out << "  listed     " << WithThousands(quality.listed_pairs)
+        << " pairs in the truth file\n";
+    out << "  true       " << WithThousands(quality.truth_pairs) << " pairs across "
+        << WithThousands(quality.truth_clusters) << " clusters (largest "
+        << quality.largest_truth_cluster << ")\n";
     out << "  recovered  " << WithThousands(quality.recovered) << "\n";
     out << "  asserted   " << WithThousands(quality.implied_pairs) << "\n";
     char line[128];

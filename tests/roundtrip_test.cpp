@@ -9,8 +9,11 @@
 
 #include <gtest/gtest.h>
 
+#include "cpplink/blocking.hpp"
+#include "cpplink/comparison.hpp"
 #include "cpplink/inspect.hpp"
 #include "cpplink/parquet_loader.hpp"
+#include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
@@ -29,6 +32,29 @@ constexpr const char* kSampleSchema = R"({
     {"name": "latitude", "type": "double"},
     {"name": "longitude", "type": "double"},
     {"name": "address_tokens", "type": "string_list"}
+  ],
+  "comparisons": [
+    {"name": "last_name", "columns": ["last_name"], "levels": [
+      {"type": "null"}, {"type": "exact"},
+      {"type": "jaro_winkler", "threshold": 0.85}, {"type": "else"}]},
+    {"name": "first_name", "columns": ["first_name"], "levels": [
+      {"type": "null"}, {"type": "exact"},
+      {"type": "jaro_winkler", "threshold": 0.85}, {"type": "else"}]},
+    {"name": "dob", "columns": ["dob"], "levels": [
+      {"type": "null"}, {"type": "exact"},
+      {"type": "date_within", "threshold": 2}, {"type": "else"}]},
+    {"name": "postcode", "columns": ["postcode"], "levels": [
+      {"type": "null"}, {"type": "exact"}, {"type": "else"}]},
+    {"name": "location", "columns": ["latitude", "longitude"], "levels": [
+      {"type": "null"}, {"type": "geo_within", "threshold": 1.0},
+      {"type": "else"}]},
+    {"name": "address", "columns": ["address_tokens"], "levels": [
+      {"type": "null"}, {"type": "exact"},
+      {"type": "list_jaccard", "threshold": 0.6}, {"type": "else"}]}
+  ],
+  "blocking": [
+    {"type": "exact_value", "column": "email"},
+    {"type": "exact_value", "column": "dob"}
   ]
 })";
 
@@ -162,6 +188,89 @@ TEST_F(RoundTrip, WrongDeclaredTypeIsReportedByColumn) {
     EXPECT_FALSE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error));
     EXPECT_NE(error.find("latitude"), std::string::npos);
     EXPECT_NE(error.find("expected a string column"), std::string::npos);
+}
+
+// A planted duplicate is a corruption of another record, so the two rows must
+// still resemble each other. They did not: a duplicate could pick an original that
+// was itself a duplicate, and corrupting *that row's index* regenerated a record
+// the file never held, so the pair shared nothing and the truth file claimed it
+// anyway. That put roughly 8% unfindable pairs into the ground truth and made
+// blocking recall read almost eight points worse than it was.
+TEST_F(RoundTrip, EveryPlantedPairActuallyResemblesItself) {
+    cpplink::SampleOptions options;
+    options.rows = 4000;
+    options.duplicate_rate = 0.25;  // high, so chains of copies are common
+    options.truth_path = truth_;
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kSampleSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+    cpplink::TruthPairs truth;
+    ASSERT_TRUE(cpplink::LoadTruthPairs(truth_, store, &truth, &error)) << error;
+    ASSERT_GT(truth.rows.size(), 100u);
+
+    uint64_t share_nothing = 0;
+    for (const auto& pair : truth.rows) {
+        bool anything = false;
+        for (size_t c = 0; c < comparisons.Size() && !anything; ++c) {
+            const uint8_t level = comparisons.EvaluateOne(c, pair.first, pair.second);
+            const cpplink::LevelType type = comparisons.at(c).spec->levels[level].type;
+            anything =
+                type != cpplink::LevelType::kNull && type != cpplink::LevelType::kElse;
+        }
+        if (!anything) ++share_nothing;
+    }
+    EXPECT_EQ(share_nothing, 0u)
+        << share_nothing << " of " << truth.rows.size()
+        << " planted pairs share no column agreement at all, so they are not "
+           "duplicates of one another";
+}
+
+TEST_F(RoundTrip, MissDiagnosisAccountsForEveryMissedPair) {
+    cpplink::SampleOptions options;
+    options.rows = 3000;
+    options.duplicate_rate = 0.15;
+    options.truth_path = truth_;
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kSampleSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
+    cpplink::BlockingPlan plan;
+    ASSERT_TRUE(plan.Build(schema, store, &error)) << error;
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+    cpplink::TruthPairs truth;
+    ASSERT_TRUE(cpplink::LoadTruthPairs(truth_, store, &truth, &error)) << error;
+
+    cpplink::MissReport report;
+    cpplink::DiagnoseMisses(plan, comparisons, truth, &report);
+
+    // The three fixes are exclusive and cover every missed pair.
+    EXPECT_EQ(report.fixable_by_cap + report.fixable_by_window + report.unreachable,
+              report.missed);
+    // And every source has a reason recorded for every missed pair.
+    for (size_t index = 0; index < plan.Size(); ++index) {
+        uint64_t total = 0;
+        for (const uint64_t count : report.reasons[index]) total += count;
+        EXPECT_EQ(total, report.missed) << plan.at(index).name;
+        // A source that produced the pair would not have been a miss.
+        EXPECT_EQ(report.reasons[index][0], 0u) << plan.at(index).name;
+    }
+
+    uint64_t missed = 0;
+    for (const auto& pair : truth.rows) {
+        if (!plan.ProducedByAny(pair.first, pair.second)) ++missed;
+    }
+    EXPECT_EQ(report.missed, missed);
+    EXPECT_EQ(report.truth_pairs, truth.rows.size());
 }
 
 }  // namespace
