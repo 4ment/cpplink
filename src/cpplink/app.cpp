@@ -52,33 +52,43 @@ void PrintUsage(std::ostream& out) {
         << "  -h, --help       show this message and exit\n"
         << "  -v, --version    show the version and exit\n"
         << "\n"
-        << "cpplink inspect --schema <schema.json> <file.parquet>\n"
+        << "Every command taking data accepts more than one parquet file. Files\n"
+        << "are read in order into one store and each becomes a dataset, so two\n"
+        << "files mean linking: --mode link scores only pairs that cross the two,\n"
+        << "--mode dedup (or link-and-dedup) scores every pair of the whole store.\n"
+        << "One file is a deduplication and needs no --mode.\n"
+        << "\n"
+        << "cpplink inspect --schema <schema.json> <file.parquet>...\n"
         << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b>\n"
         << "                [--rows <i>,<j>] [--model <model.json>] "
            "[--threshold BITS]\n"
-        << "                [--tf-damping F] <file.parquet>\n"
+        << "                [--tf-damping F] <file.parquet>...\n"
         << "cpplink explain-blocking --schema <schema.json> [--count] "
-           "<file.parquet>\n"
+           "[--mode MODE]\n"
+        << "                <file.parquet>...\n"
         << "cpplink recall --schema <schema.json> --truth <truth.csv> [--why]\n"
-        << "               [--show-misses N] <file.parquet>\n"
+        << "               [--show-misses N] [--mode MODE] <file.parquet>...\n"
         << "cpplink estimate --schema <schema.json> [--out <model.json>]\n"
         << "                 [--u-sample N] [--session-pairs N] [--threads N]\n"
         << "                 [--iterations N] [--lambda F] [--seed N] "
-           "<file.parquet>\n"
+           "[--mode MODE]\n"
+        << "                 <file.parquet>...\n"
         << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--tf-damping F]\n"
         << "                [--no-signatures] [--spill <dir>] [--spill-sample R]\n"
-        << "                <file.parquet>\n"
+        << "                [--mode MODE] <file.parquet>...\n"
         << "cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>\n"
         << "                --out <dir> [--threshold BITS | --probability P]\n"
         << "                [--format bin|csv] [--threads N] [--limit N] "
-           "<file.parquet>\n"
+           "[--mode MODE]\n"
+        << "                <file.parquet>...\n"
         << "cpplink cluster --schema <schema.json> --edges <dir> [--out <file.csv>]\n"
         << "                [--threshold BITS | --probability P] [--truth <file.csv>]\n"
-        << "                [--min-size N] <file.parquet>\n"
+        << "                [--min-size N] <file.parquet>...\n"
         << "cpplink gen-sample --out <file.parquet> [--rows N] [--seed N]\n"
-        << "                   [--duplicate-rate F] [--truth <file.csv>]\n";
+        << "                   [--duplicate-rate F] [--truth <file.csv>]\n"
+        << "                   [--out-b <file.parquet>]\n";
 }
 
 // Reads "--name value" pairs. Returns false and reports on a missing value.
@@ -92,24 +102,45 @@ bool TakeValue(const std::vector<std::string>& args, size_t* index, std::string*
     return true;
 }
 
+// "dedup" is every pair the store holds, which over more than one input is
+// link-and-dedup; "link" is the cross-product of the inputs alone.
+bool ParseMode(const std::string& text, PairMode* mode, std::ostream& err) {
+    if (text == "dedup" || text == "link-and-dedup") {
+        *mode = PairMode::kAll;
+        return true;
+    }
+    if (text == "link") {
+        *mode = PairMode::kCrossDataset;
+        return true;
+    }
+    err << "cpplink: --mode must be dedup, link or link-and-dedup, not '" << text
+        << "'\n";
+    return false;
+}
+
+// A second file with nothing said about it means linking the two, which is what a
+// second file is for; asking for the within-file pairs as well is --mode
+// link-and-dedup.
+PairMode DefaultMode(bool given, PairMode mode, size_t inputs) {
+    if (given) return mode;
+    return inputs > 1 ? PairMode::kCrossDataset : PairMode::kAll;
+}
+
 int RunInspect(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
-    std::string data_path;
+    std::vector<std::string> data_paths;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink inspect: unknown option '" << args[i] << "'\n";
             return 1;
-        } else if (data_path.empty()) {
-            data_path = args[i];
         } else {
-            err << "cpplink inspect: unexpected argument '" << args[i] << "'\n";
-            return 1;
+            data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_path.empty()) {
+    if (schema_path.empty() || data_paths.empty()) {
         err << "cpplink inspect: --schema <schema.json> and a parquet file are "
                "required\n";
         return 1;
@@ -124,12 +155,18 @@ int RunInspect(const std::vector<std::string>& args, std::ostream& out,
 
     RecordStore store(schema);
     LoadStats stats;
-    if (!LoadParquet(data_path, schema, &store, &stats, &error)) {
+    if (!LoadParquetFiles(data_paths, schema, &store, &stats, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
 
-    out << "File         " << data_path << "\n";
+    for (size_t i = 0; i < data_paths.size(); ++i) {
+        out << (i == 0 ? "File         " : "             ") << data_paths[i];
+        if (data_paths.size() > 1) {
+            out << "  (dataset " << i << ", " << stats.dataset_rows[i] << " rows)";
+        }
+        out << "\n";
+    }
     PrintInspection(store, stats, out);
     return 0;
 }
@@ -148,7 +185,7 @@ bool SplitPair(const std::string& text, std::string* first, std::string* second)
 int RunExplain(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
-    std::string data_path;
+    std::vector<std::string> data_paths;
     std::string pair;
     std::string rows;
     std::string model_path;
@@ -172,14 +209,11 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink explain: unknown option '" << args[i] << "'\n";
             return 1;
-        } else if (data_path.empty()) {
-            data_path = args[i];
         } else {
-            err << "cpplink explain: unexpected argument '" << args[i] << "'\n";
-            return 1;
+            data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_path.empty()) {
+    if (schema_path.empty() || data_paths.empty()) {
         err << "cpplink explain: --schema <schema.json> and a parquet file are "
                "required\n";
         return 1;
@@ -202,7 +236,7 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
     }
 
     RecordStore store(schema);
-    if (!LoadParquet(data_path, schema, &store, nullptr, &error)) {
+    if (!LoadParquetFiles(data_paths, schema, &store, nullptr, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -267,7 +301,8 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
 }
 
 // Loads a schema and a parquet file, the opening move of every blocking command.
-bool LoadForBlocking(const std::string& schema_path, const std::string& data_path,
+bool LoadForBlocking(const std::string& schema_path,
+                     const std::vector<std::string>& data_paths, PairMode mode,
                      Schema* schema, std::unique_ptr<RecordStore>* store,
                      BlockingPlan* plan, std::ostream& err) {
     std::string error;
@@ -280,11 +315,11 @@ bool LoadForBlocking(const std::string& schema_path, const std::string& data_pat
         return false;
     }
     *store = std::make_unique<RecordStore>(*schema);
-    if (!LoadParquet(data_path, *schema, store->get(), nullptr, &error)) {
+    if (!LoadParquetFiles(data_paths, *schema, store->get(), nullptr, &error)) {
         err << "cpplink: " << error << "\n";
         return false;
     }
-    if (!plan->Build(*schema, **store, &error)) {
+    if (!plan->Build(*schema, **store, mode, &error)) {
         err << "cpplink: " << error << "\n";
         return false;
     }
@@ -294,24 +329,28 @@ bool LoadForBlocking(const std::string& schema_path, const std::string& data_pat
 int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
                        std::ostream& err) {
     std::string schema_path;
-    std::string data_path;
+    std::vector<std::string> data_paths;
+    std::string value;
     bool count_union = false;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
         } else if (args[i] == "--count") {
             count_union = true;
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink explain-blocking: unknown option '" << args[i] << "'\n";
             return 1;
-        } else if (data_path.empty()) {
-            data_path = args[i];
         } else {
-            err << "cpplink explain-blocking: unexpected argument '" << args[i] << "'\n";
-            return 1;
+            data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_path.empty()) {
+    if (schema_path.empty() || data_paths.empty()) {
         err << "cpplink explain-blocking: --schema <schema.json> and a parquet file "
                "are required\n";
         return 1;
@@ -320,7 +359,9 @@ int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
     Schema schema;
     std::unique_ptr<RecordStore> store;
     BlockingPlan plan;
-    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+    if (!LoadForBlocking(schema_path, data_paths,
+                         DefaultMode(mode_given, mode, data_paths.size()), &schema,
+                         &store, &plan, err)) {
         return 1;
     }
     PrintBlockingReport(plan, *store, count_union, out);
@@ -330,14 +371,20 @@ int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
 int RunRecall(const std::vector<std::string>& args, std::ostream& out,
               std::ostream& err) {
     std::string schema_path;
-    std::string data_path;
+    std::vector<std::string> data_paths;
     std::string truth_path;
     std::string value;
     bool why = false;
     size_t show_misses = 0;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
         } else if (args[i] == "--truth") {
             if (!TakeValue(args, &i, &truth_path, err)) return 1;
         } else if (args[i] == "--why") {
@@ -349,14 +396,11 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink recall: unknown option '" << args[i] << "'\n";
             return 1;
-        } else if (data_path.empty()) {
-            data_path = args[i];
         } else {
-            err << "cpplink recall: unexpected argument '" << args[i] << "'\n";
-            return 1;
+            data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_path.empty() || truth_path.empty()) {
+    if (schema_path.empty() || data_paths.empty() || truth_path.empty()) {
         err << "cpplink recall: --schema <schema.json>, --truth <truth.csv> and a "
                "parquet file are required\n";
         return 1;
@@ -365,7 +409,9 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
     Schema schema;
     std::unique_ptr<RecordStore> store;
     BlockingPlan plan;
-    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+    if (!LoadForBlocking(schema_path, data_paths,
+                         DefaultMode(mode_given, mode, data_paths.size()), &schema,
+                         &store, &plan, err)) {
         return 1;
     }
 
@@ -399,13 +445,19 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
 int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
                 std::ostream& err) {
     std::string schema_path;
-    std::string data_path;
+    std::vector<std::string> data_paths;
     std::string model_path;
     std::string value;
     EstimateOptions options;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
         } else if (args[i] == "--out") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
         } else if (args[i] == "--u-sample") {
@@ -429,14 +481,11 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink estimate: unknown option '" << args[i] << "'\n";
             return 1;
-        } else if (data_path.empty()) {
-            data_path = args[i];
         } else {
-            err << "cpplink estimate: unexpected argument '" << args[i] << "'\n";
-            return 1;
+            data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_path.empty()) {
+    if (schema_path.empty() || data_paths.empty()) {
         err << "cpplink estimate: --schema <schema.json> and a parquet file are "
                "required\n";
         return 1;
@@ -445,7 +494,9 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
     Schema schema;
     std::unique_ptr<RecordStore> store;
     BlockingPlan plan;
-    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+    if (!LoadForBlocking(schema_path, data_paths,
+                         DefaultMode(mode_given, mode, data_paths.size()), &schema,
+                         &store, &plan, err)) {
         return 1;
     }
     if (schema.comparisons.empty()) {
@@ -482,16 +533,22 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
 int RunPredict(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
-    std::string data_path;
+    std::vector<std::string> data_paths;
     std::string model_path;
     std::string value;
     PredictOptions options;
     ScoreOptions score;
     bool have_threshold = false;
     bool use_signatures = true;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
         } else if (args[i] == "--model") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
         } else if (args[i] == "--out") {
@@ -544,14 +601,11 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink predict: unknown option '" << args[i] << "'\n";
             return 1;
-        } else if (data_path.empty()) {
-            data_path = args[i];
         } else {
-            err << "cpplink predict: unexpected argument '" << args[i] << "'\n";
-            return 1;
+            data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_path.empty() || model_path.empty() ||
+    if (schema_path.empty() || data_paths.empty() || model_path.empty() ||
         options.out_dir.empty()) {
         err << "cpplink predict: --schema <schema.json>, --model <model.json>, "
                "--out <dir> and a parquet file are required\n";
@@ -572,7 +626,9 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     Schema schema;
     std::unique_ptr<RecordStore> store;
     BlockingPlan plan;
-    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+    if (!LoadForBlocking(schema_path, data_paths,
+                         DefaultMode(mode_given, mode, data_paths.size()), &schema,
+                         &store, &plan, err)) {
         return 1;
     }
     if (schema.comparisons.empty()) {
@@ -603,7 +659,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
 
 // Clustering needs only the identifiers: the edges already carry every row index
 // and weight, so the comparison columns are left on disk rather than interned.
-bool LoadIdsOnly(const std::string& schema_path, const std::string& data_path,
+bool LoadIdsOnly(const std::string& schema_path,
+                 const std::vector<std::string>& data_paths,
                  std::unique_ptr<RecordStore>* store, std::ostream& err) {
     Schema schema;
     std::string error;
@@ -615,7 +672,7 @@ bool LoadIdsOnly(const std::string& schema_path, const std::string& data_path,
     schema.comparisons.clear();
     schema.blocking.clear();
     *store = std::make_unique<RecordStore>(schema);
-    if (!LoadParquet(data_path, schema, store->get(), nullptr, &error)) {
+    if (!LoadParquetFiles(data_paths, schema, store->get(), nullptr, &error)) {
         err << "cpplink: " << error << "\n";
         return false;
     }
@@ -625,7 +682,7 @@ bool LoadIdsOnly(const std::string& schema_path, const std::string& data_path,
 int RunCluster(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
-    std::string data_path;
+    std::vector<std::string> data_paths;
     std::string truth_path;
     std::string value;
     ClusterOptions options;
@@ -655,21 +712,18 @@ int RunCluster(const std::vector<std::string>& args, std::ostream& out,
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink cluster: unknown option '" << args[i] << "'\n";
             return 1;
-        } else if (data_path.empty()) {
-            data_path = args[i];
         } else {
-            err << "cpplink cluster: unexpected argument '" << args[i] << "'\n";
-            return 1;
+            data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_path.empty() || options.edge_dir.empty()) {
+    if (schema_path.empty() || data_paths.empty() || options.edge_dir.empty()) {
         err << "cpplink cluster: --schema <schema.json>, --edges <dir> and a parquet "
                "file are required\n";
         return 1;
     }
 
     std::unique_ptr<RecordStore> store;
-    if (!LoadIdsOnly(schema_path, data_path, &store, err)) return 1;
+    if (!LoadIdsOnly(schema_path, data_paths, &store, err)) return 1;
 
     std::string error;
     ClusterAssignment assignment;
@@ -701,15 +755,21 @@ int RunCluster(const std::vector<std::string>& args, std::ostream& out,
 int RunRescore(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
-    std::string data_path;
+    std::vector<std::string> data_paths;
     std::string model_path;
     std::string value;
     RescoreOptions options;
     ScoreOptions score;
     bool have_threshold = false;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
         } else if (args[i] == "--model") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
         } else if (args[i] == "--spill") {
@@ -753,14 +813,11 @@ int RunRescore(const std::vector<std::string>& args, std::ostream& out,
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink rescore: unknown option '" << args[i] << "'\n";
             return 1;
-        } else if (data_path.empty()) {
-            data_path = args[i];
         } else {
-            err << "cpplink rescore: unexpected argument '" << args[i] << "'\n";
-            return 1;
+            data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_path.empty() || model_path.empty() ||
+    if (schema_path.empty() || data_paths.empty() || model_path.empty() ||
         options.spill_dir.empty() || options.out_dir.empty()) {
         err << "cpplink rescore: --schema <schema.json>, --model <model.json>, "
                "--spill <dir>, --out <dir> and a parquet file are required\n";
@@ -781,7 +838,9 @@ int RunRescore(const std::vector<std::string>& args, std::ostream& out,
     Schema schema;
     std::unique_ptr<RecordStore> store;
     BlockingPlan plan;
-    if (!LoadForBlocking(schema_path, data_path, &schema, &store, &plan, err)) {
+    if (!LoadForBlocking(schema_path, data_paths,
+                         DefaultMode(mode_given, mode, data_paths.size()), &schema,
+                         &store, &plan, err)) {
         return 1;
     }
     ComparisonSet comparisons;
@@ -821,6 +880,8 @@ int RunGenSample(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--duplicate-rate") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.duplicate_rate = std::stod(value);
+        } else if (args[i] == "--out-b") {
+            if (!TakeValue(args, &i, &options.link_path, err)) return 1;
         } else if (args[i] == "--truth") {
             if (!TakeValue(args, &i, &options.truth_path, err)) return 1;
         } else {

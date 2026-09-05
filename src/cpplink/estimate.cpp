@@ -87,17 +87,93 @@ std::string WithThousands(uint64_t value) {
 // a count over the data. An exact level on one interned column fires exactly when
 // two independent draws land on the same value, which is the term frequencies'
 // second moment. Nothing else is closed form.
+// Sum over values and inputs of the squared per-input count.
+//
+// Term frequencies pool the inputs -- they say a value occurs n times, not how
+// those n split between the files -- so this is the one quantity the closed form
+// for a link run's u cannot read off them. It costs one pass per input over one
+// column and one count array, which is nothing beside the sampling it replaces.
+bool WithinDatasetCollisions(const RecordStore& store, const BoundComparison& bound,
+                             double* total) {
+    const size_t datasets = store.NumDatasets();
+    size_t values = 0;
+    if (bound.strings != nullptr) {
+        values = bound.strings->tf.size();
+    } else if (bound.dates != nullptr) {
+        values = bound.dates->tf.size();
+    } else {
+        return false;
+    }
+
+    std::vector<uint32_t> counts;
+    Neumaier sum;
+    for (size_t d = 0; d < datasets; ++d) {
+        counts.assign(values, 0);
+        const uint64_t end = store.DatasetEnd(d);
+        for (uint64_t row = store.DatasetStart(d); row < end; ++row) {
+            if (bound.strings != nullptr) {
+                const uint32_t id = bound.strings->ids[row];
+                if (id != kNullId) ++counts[id];
+            } else {
+                const int32_t date = bound.dates->values[row];
+                if (date != kNullDate) {
+                    ++counts[static_cast<size_t>(date - bound.dates->tf_origin)];
+                }
+            }
+        }
+        for (const uint32_t count : counts) {
+            const double n = static_cast<double>(count);
+            sum.Add(n * n);
+        }
+    }
+    *total = sum.Total();
+    return true;
+}
+
 bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t index,
-            size_t level, uint64_t nulls, double* value) {
+            size_t level, const std::vector<uint64_t>& nulls, PairMode mode,
+            double* value) {
     const BoundComparison& bound = comparisons.at(index);
     const std::vector<LevelSpec>& levels = bound.spec->levels;
     const double records = static_cast<double>(store.NumRecords());
     if (records < 2.0) return false;
+    const size_t datasets = store.NumDatasets();
+    const bool cross = mode == PairMode::kCrossDataset;
+
+    // The denominator both closed forms are taken over: every ordered draw for a
+    // dedup run, and every ordered cross-input draw for a link one.
+    double space = records * records;
+    if (cross) {
+        double within = 0.0;
+        for (size_t d = 0; d < datasets; ++d) {
+            const double size =
+                static_cast<double>(store.DatasetEnd(d) - store.DatasetStart(d));
+            within += size * size;
+        }
+        space -= within;
+        if (space <= 0.0) return false;
+    }
 
     if (levels[level].type == LevelType::kNull) {
         if (level != 0) return false;  // an earlier level could pre-empt it
-        const double present = (records - static_cast<double>(nulls)) / records;
-        *value = 1.0 - present * present;
+        if (!cross) {
+            const double present = (records - static_cast<double>(nulls[0])) / records;
+            *value = 1.0 - present * present;
+            return true;
+        }
+        // Neither side null, over cross-input draws: the present counts of two
+        // different inputs multiplied, which is the square of their sum less the
+        // sum of their squares.
+        double present_total = 0.0;
+        double present_squares = 0.0;
+        for (size_t d = 0; d < datasets; ++d) {
+            const double size =
+                static_cast<double>(store.DatasetEnd(d) - store.DatasetStart(d));
+            const double present = size - static_cast<double>(nulls[d]);
+            present_total += present;
+            present_squares += present * present;
+        }
+        *value = 1.0 - (present_total * present_total - present_squares) / space;
         return true;
     }
     if (levels[level].type != LevelType::kExact) return false;
@@ -117,10 +193,19 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
 
     Neumaier collisions;
     for (const uint32_t frequency : *tf) {
-        const double share = static_cast<double>(frequency) / records;
-        collisions.Add(share * share);
+        const double count = static_cast<double>(frequency);
+        collisions.Add(count * count);
     }
-    *value = collisions.Total();
+    double agreeing = collisions.Total();
+    if (cross) {
+        // Two draws from the same input are not pairs this run can see, so their
+        // agreements come back out of the numerator exactly as they came out of
+        // the denominator.
+        double within = 0.0;
+        if (!WithinDatasetCollisions(store, bound, &within)) return false;
+        agreeing -= within;
+    }
+    *value = agreeing / space;
     return true;
 }
 
@@ -128,9 +213,10 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
 // It is the one place estimation touches pairs that blocking never proposed, and
 // it is deliberate: u must not know that blocking exists.
 void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparisons,
-                       const EstimateOptions& options,
+                       const EstimateOptions& options, PairMode mode,
                        std::vector<std::vector<uint64_t>>* counts, uint64_t* drawn) {
     const uint64_t records = store.NumRecords();
+    const bool cross = mode == PairMode::kCrossDataset;
     const unsigned threads = ThreadCount(options.threads);
     std::vector<std::vector<std::vector<uint64_t>>> partials(threads, *counts);
     std::vector<uint64_t> per_thread(threads, 0);
@@ -147,7 +233,21 @@ void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparison
                 state = Mix64(state);
                 const uint64_t a = state % records;
                 state = Mix64(state);
-                const uint64_t b = state % records;
+                uint64_t b = state % records;
+                if (cross) {
+                    // Draw the partner from the rows outside a's own input, by
+                    // picking a position in what is left once that input is taken
+                    // out and stepping over the hole. With two inputs -- the case
+                    // linking is about -- this is exactly uniform over cross pairs;
+                    // with more it favours the smaller inputs slightly, which is
+                    // why the number of inputs is reported beside u.
+                    const uint64_t start = store.DatasetStart(store.DatasetOf(a));
+                    const uint64_t end = store.DatasetEndFor(a);
+                    const uint64_t outside = records - (end - start);
+                    if (outside == 0) continue;
+                    b = state % outside;
+                    if (b >= start) b += end - start;
+                }
                 if (a == b) continue;  // a pair is two distinct records
                 const uint32_t gamma = comparisons.Evaluate(a, b);
                 for (size_t c = 0; c < comparisons.Size(); ++c) {
@@ -350,15 +450,22 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         sampled[c].assign(comparisons.at(c).spec->levels.size(), 0);
     }
     uint64_t drawn = 0;
-    SampleRandomPairs(store, comparisons, options, &sampled, &drawn);
+    SampleRandomPairs(store, comparisons, options, plan.mode(), &sampled, &drawn);
 
-    std::vector<uint64_t> nulls(count, 0);
+    // Nulls are counted per input, because in link mode the two sides of a pair are
+    // drawn from different ones and a column present in the first file and empty in
+    // the second is not the same event as one half-empty across a single file.
+    std::vector<std::vector<uint64_t>> nulls(count);
     for (size_t c = 0; c < count; ++c) {
-        uint64_t missing = 0;
-        for (uint64_t row = 0; row < store.NumRecords(); ++row) {
-            if (comparisons.IsNullValue(c, row)) ++missing;
+        nulls[c].assign(store.NumDatasets(), 0);
+        for (size_t d = 0; d < store.NumDatasets(); ++d) {
+            uint64_t missing = 0;
+            const uint64_t end = store.DatasetEnd(d);
+            for (uint64_t row = store.DatasetStart(d); row < end; ++row) {
+                if (comparisons.IsNullValue(c, row)) ++missing;
+            }
+            nulls[c][d] = missing;
         }
-        nulls[c] = missing;
     }
 
     std::vector<std::vector<double>> u(count);
@@ -370,7 +477,7 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         double exact_mass = 0.0;
         for (size_t l = 0; l < levels; ++l) {
             double value = 0.0;
-            if (ExactU(store, comparisons, c, l, nulls[c], &value)) {
+            if (ExactU(store, comparisons, c, l, nulls[c], plan.mode(), &value)) {
                 u[c][l] = value;
                 u_exact[c][l] = true;
                 exact_mass += value;
@@ -587,8 +694,9 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
     }
 
     // --- lambda --------------------------------------------------------------
-    const double records = static_cast<double>(store.NumRecords());
-    const double all_pairs = records * (records - 1.0) / 2.0;
+    // The pair space lambda is put back on is the one the run is over: the whole
+    // triangle for a dedup, the cross-product alone for a link.
+    const double all_pairs = store.PairSpace(plan.mode());
     if (options.lambda > 0.0) {
         model->lambda = options.lambda;
         model->lambda_basis = "given on the command line";

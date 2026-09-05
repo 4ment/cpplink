@@ -38,9 +38,21 @@ std::string Truncate(std::string text, size_t width) {
 void PrintBlockingReport(const BlockingPlan& plan, const RecordStore& store,
                          bool count_union, std::ostream& out) {
     const uint64_t rows = store.NumRecords();
-    const uint64_t all_pairs = rows * (rows - 1) / 2;
-    out << "Records          " << WithThousands(rows) << "\n"
-        << "Pairs unblocked  " << WithThousands(all_pairs) << "\n\n";
+    // The unblocked pair count is what the mode admits, not the whole triangle: in
+    // link mode the reduction is measured against the cross-product, so the number
+    // blocking is compared to is the number it is actually competing with.
+    const uint64_t all_pairs = static_cast<uint64_t>(store.PairSpace(plan.mode()));
+    out << "Records          " << WithThousands(rows) << "\n";
+    if (store.NumDatasets() > 1) {
+        out << "Inputs           " << store.NumDatasets() << "  (";
+        for (size_t d = 0; d < store.NumDatasets(); ++d) {
+            if (d > 0) out << " + ";
+            out << WithThousands(store.DatasetEnd(d) - store.DatasetStart(d));
+        }
+        out << " rows)\n"
+            << "Mode             " << PairModeName(plan.mode()) << "\n";
+    }
+    out << "Pairs unblocked  " << WithThousands(all_pairs) << "\n\n";
 
     out << std::left << std::setw(30) << "Source" << std::setw(11) << "EM-safe"
         << std::right << std::setw(20) << "Candidate pairs" << std::setw(16)
@@ -75,8 +87,16 @@ void PrintBlockingReport(const BlockingPlan& plan, const RecordStore& store,
 
     const double reduction =
         all_pairs > 0 ? static_cast<double>(sum) / static_cast<double>(all_pairs) : 0.0;
-    out << "\nCounts are exact and come from the term frequencies, with no pairs "
-           "enumerated.\nThe sum bounds the deduplicated union from above";
+    out << "\nCounts are exact";
+    if (plan.mode() == PairMode::kCrossDataset) {
+        out << " and come from the grouped rows -- the term frequencies\n"
+               "pool the inputs, so a cross-dataset count needs the split -- with no "
+               "pairs\nenumerated";
+    } else {
+        out << " and come from the term frequencies, with no pairs "
+               "enumerated";
+    }
+    out << ".\nThe sum bounds the deduplicated union from above";
     if (!count_union) out << "; pass --count for the union";
     out << ".\nBlocking keeps " << std::scientific << std::setprecision(2) << reduction
         << " of all possible pairs.\n";

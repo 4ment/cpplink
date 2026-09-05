@@ -50,6 +50,16 @@ uint64_t MemoryReport::Total() const {
     return total;
 }
 
+const char* PairModeName(PairMode mode) {
+    switch (mode) {
+        case PairMode::kAll:
+            return "all pairs";
+        case PairMode::kCrossDataset:
+            return "cross-dataset pairs";
+    }
+    return "unknown";
+}
+
 RecordStore::RecordStore(Schema schema) : schema_(std::move(schema)) {
     columns_.reserve(schema_.columns.size());
     for (const ColumnSpec& spec : schema_.columns) {
@@ -180,6 +190,24 @@ MemoryReport RecordStore::Memory() const {
         }
     }
     return report;
+}
+
+void RecordStore::set_datasets(std::vector<uint64_t> starts) {
+    dataset_starts_ = std::move(starts);
+}
+
+double RecordStore::PairSpace(PairMode mode) const {
+    const double records = static_cast<double>(num_records_);
+    const double all = records * (records - 1.0) / 2.0;
+    if (mode == PairMode::kAll) return all;
+    // Cross-dataset pairs are what is left of the triangle once each input's own
+    // triangle is taken out of it.
+    double within = 0.0;
+    for (size_t d = 0; d < NumDatasets(); ++d) {
+        const double size = static_cast<double>(DatasetEnd(d) - DatasetStart(d));
+        within += size * (size - 1.0) / 2.0;
+    }
+    return all - within;
 }
 
 }  // namespace cpplink
