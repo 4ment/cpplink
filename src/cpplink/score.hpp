@@ -59,6 +59,9 @@ struct ScoreOptions {
     double threshold = 0.0;  // bits of match weight
     double tf_damping = 1.0;
     bool use_bounds = true;  // false scores every pair exactly, for verification
+    // Bound the whole pair before comparing any of it. Admissible, so false
+    // changes nothing but the work done -- which is what a test compares.
+    bool use_ceiling = true;
 };
 
 // The scoring model bound to a store: base weight per pattern, the term-frequency
@@ -74,6 +77,15 @@ class Scorer {
     double DeltaMax(uint32_t gamma) const;
     double DeltaMin(uint32_t gamma) const;
     Zone Classify(uint32_t gamma) const;
+
+    // An upper bound on the match weight this pair can reach, from the cheap
+    // level bounds alone: no string metric is evaluated and no pattern is
+    // produced. Every comparison contributes the best it could still score, so
+    // the true weight can never exceed this.
+    double Ceiling(uint64_t a, uint64_t b) const;
+    // Whether the pair can clear the threshold at all. False means it cannot,
+    // whatever the metrics would have said, so the comparison never has to run.
+    bool CanReach(uint64_t a, uint64_t b) const;
     // The exact TF-adjusted weight. Both rows agree on every TF level by
     // construction, so the value is read from `a`.
     double Weight(uint32_t gamma, uint64_t a) const;
@@ -103,12 +115,22 @@ class Scorer {
     double ComputeBase(uint32_t gamma) const;
     bool Reachable(uint32_t gamma) const;
 
+    // One comparison's levels in decreasing order of what they could contribute:
+    // the level weight plus, on the term-frequency level, the largest adjustment
+    // the column's rarest value could earn. The first level in this order that
+    // the cheap bounds admit is that comparison's share of the ceiling.
+    struct OptimisticLevel {
+        uint8_t level = 0;
+        double value = 0.0;
+    };
+
     const ComparisonSet* comparisons_ = nullptr;
     ScoreOptions options_;
     double prior_ = 0.0;
     std::vector<std::vector<double>> weight_;  // by comparison, by level
     std::vector<TermFrequencyAdjustment> adjustments_;
 
+    std::vector<std::vector<OptimisticLevel>> optimistic_;
     bool dense_ = false;
     uint64_t reachable_ = 0;
     std::vector<double> base_;

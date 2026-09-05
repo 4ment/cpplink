@@ -149,6 +149,30 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
         adjustments_.push_back(adjustment);
     }
 
+    // The ceiling's table. A level is worth its own weight plus, where it is the
+    // term-frequency level, the most any value in that column could add; sorting
+    // by that lets the ceiling stop at the first level the cheap bounds admit.
+    optimistic_.assign(comparisons.Size(), {});
+    for (size_t c = 0; c < comparisons.Size(); ++c) {
+        const size_t levels = comparisons.at(c).spec->levels.size();
+        optimistic_[c].reserve(levels);
+        for (size_t l = 0; l < levels; ++l) {
+            OptimisticLevel entry;
+            entry.level = static_cast<uint8_t>(l);
+            entry.value = weight_[c][l];
+            for (const TermFrequencyAdjustment& adjustment : adjustments_) {
+                if (adjustment.comparison == c && adjustment.exact_level == l) {
+                    entry.value += adjustment.delta_max;
+                }
+            }
+            optimistic_[c].push_back(entry);
+        }
+        std::sort(optimistic_[c].begin(), optimistic_[c].end(),
+                  [](const OptimisticLevel& x, const OptimisticLevel& y) {
+                      return x.value > y.value;
+                  });
+    }
+
     reachable_ = 1;
     for (size_t c = 0; c < comparisons.Size(); ++c) {
         reachable_ *= comparisons.at(c).spec->levels.size();
@@ -250,6 +274,28 @@ Zone Scorer::Classify(uint32_t gamma) const {
     if (base + DeltaMax(gamma) < options_.threshold) return Zone::kDrop;
     if (base + DeltaMin(gamma) >= options_.threshold) return Zone::kEmit;
     return Zone::kCheck;
+}
+
+double Scorer::Ceiling(uint64_t a, uint64_t b) const {
+    double total = prior_;
+    for (size_t c = 0; c < optimistic_.size(); ++c) {
+        // Levels are in decreasing order of what they are worth, so the first one
+        // the bounds admit is the most this comparison can contribute. The last
+        // level of every comparison is "else", which is always possible, so this
+        // loop always finds one.
+        for (const OptimisticLevel& entry : optimistic_[c]) {
+            if (comparisons_->LevelPossible(c, entry.level, a, b)) {
+                total += entry.value;
+                break;
+            }
+        }
+    }
+    return total;
+}
+
+bool Scorer::CanReach(uint64_t a, uint64_t b) const {
+    if (!options_.use_ceiling) return true;
+    return Ceiling(a, b) >= options_.threshold;
 }
 
 double Scorer::Weight(uint32_t gamma, uint64_t a) const {

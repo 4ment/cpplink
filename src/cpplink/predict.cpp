@@ -59,6 +59,7 @@ uint64_t Mix64(uint64_t value) {
 // same line and cost more than the scoring being counted.
 struct alignas(64) ThreadTally {
     uint64_t enumerated = 0;
+    uint64_t skipped = 0;
     uint64_t dropped = 0;
     uint64_t checked = 0;
     uint64_t certain = 0;
@@ -205,14 +206,23 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         SpillWriter* spill = spilling ? spills[t].get() : nullptr;
         return [&, counts, writer, spill](uint32_t a, uint32_t b) {
             ++counts->enumerated;
-            const uint32_t gamma = comparisons.Evaluate(a, b);
-            // Drawn per candidate, before the pattern decides anything, so the
-            // sample is uniform over candidates rather than over survivors.
+            // Drawn per candidate, before anything decides the pair's fate, so
+            // the sample stays uniform over candidates.
             bool sampled = false;
             if (sampling) {
                 counts->random = Mix64(counts->random);
                 sampled = counts->random < sample_cut;
             }
+            // The ceiling, before the comparison rather than after it. Every
+            // level the cheap bounds still admit is granted, and if the best the
+            // pair could possibly score is under the threshold there is nothing
+            // a string metric could change. A sampled pair is exempt: the spill
+            // holds patterns, and a pattern is what this skips producing.
+            if (!sampled && !scorer.CanReach(a, b)) {
+                ++counts->skipped;
+                return;
+            }
+            const uint32_t gamma = comparisons.Evaluate(a, b);
             const Zone zone = scorer.Classify(gamma);
             if (zone == Zone::kDrop) {
                 ++counts->dropped;
@@ -261,6 +271,7 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
             return false;
         }
         report->enumerated += tally[t].enumerated;
+        report->skipped += tally[t].skipped;
         report->dropped += tally[t].dropped;
         report->checked += tally[t].checked;
         report->certain += tally[t].certain;
@@ -326,6 +337,10 @@ void PrintPredictReport(const PredictReport& report, const Scorer& scorer,
         << "Candidate pairs" << std::setw(12) << "Share" << std::setw(16) << "Patterns"
         << "\n";
     out << std::string(58, '-') << "\n";
+    out << std::left << std::setw(10) << "skipped" << std::right << std::setw(20)
+        << WithThousands(report.skipped) << std::setw(12)
+        << Percent(report.skipped, report.enumerated) << std::setw(16) << "-"
+        << "\n";
     const uint64_t zones[3] = {report.dropped, report.checked, report.certain};
     const uint64_t patterns[3] = {report.patterns_drop, report.patterns_check,
                                   report.patterns_certain};
@@ -336,11 +351,13 @@ void PrintPredictReport(const PredictReport& report, const Scorer& scorer,
             << (scorer.Dense() ? WithThousands(patterns[i]) : std::string("-")) << "\n";
     }
     out << std::string(58, '-') << "\n";
-    out << "Term-frequency lookups " << WithThousands(report.tf_lookups) << ", avoided "
+    out << "Comparisons avoided    " << WithThousands(report.skipped) << " ("
+        << Percent(report.skipped, report.enumerated) << " of candidates)\n"
+        << "Term-frequency lookups " << WithThousands(report.tf_lookups) << ", avoided "
         << WithThousands(report.dropped) << " ("
         << Percent(report.dropped, report.enumerated) << ").\n"
-        << "The bracket is admissible, so dropping on it emits exactly the edges\n"
-        << "scoring every pair would have emitted.\n";
+        << "The ceiling and the bracket are both admissible, so skipping and\n"
+        << "dropping on them emit exactly the edges scoring every pair would have.\n";
     if (report.truncated) {
         out << "\nWARNING: the edge limit was reached; the output is incomplete.\n";
     }
