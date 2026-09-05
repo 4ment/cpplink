@@ -9,6 +9,7 @@
 #include "cpplink/blocking.hpp"
 #include "cpplink/cluster.hpp"
 #include "cpplink/comparison.hpp"
+#include "cpplink/completeness.hpp"
 #include "cpplink/estimate.hpp"
 #include "cpplink/explain.hpp"
 #include "cpplink/explain_blocking.hpp"
@@ -41,6 +42,7 @@ void PrintUsage(std::ostream& out) {
         << "  recall      measure what fraction of known pairs blocking reaches,\n"
         << "              and with --why, diagnose the ones it does not\n"
         << "  estimate    learn m, u and lambda and write the model\n"
+        << "  completeness  estimate blocking recall with no known pairs at all\n"
         << "  predict     score the candidate pairs and write the edges above a "
            "threshold\n"
         << "  cluster     join the scored edges into duplicate clusters\n"
@@ -80,6 +82,10 @@ void PrintUsage(std::ostream& out) {
         << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
         << "                [--spill-sample R]\n"
         << "                [--mode MODE] <file.parquet>...\n"
+        << "cpplink completeness --schema <schema.json> --model <model.json>\n"
+        << "                [--truth <pairs.csv>] [--sample R] [--threads N]\n"
+        << "                [--value-weighting records|pairs] [--min-observed N]\n"
+        << "                [--bound-only] [--json] [--mode MODE] <file.parquet>...\n"
         << "cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>\n"
         << "                --out <dir> [--threshold BITS | --probability P]\n"
         << "                [--format bin|csv] [--threads N] [--limit N] "
@@ -451,6 +457,126 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
         report.example_limit = show_misses;
         DiagnoseMisses(plan, comparisons, truth, &report);
         PrintMissReport(plan, report, out);
+    }
+    return 0;
+}
+
+int RunCompleteness(const std::vector<std::string>& args, std::ostream& out,
+                    std::ostream& err) {
+    std::string schema_path;
+    std::string model_path;
+    std::string truth_path;
+    std::vector<std::string> data_paths;
+    std::string value;
+    CompletenessOptions options;
+    bool as_json = false;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--model") {
+            if (!TakeValue(args, &i, &model_path, err)) return 1;
+        } else if (args[i] == "--truth") {
+            if (!TakeValue(args, &i, &truth_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
+        } else if (args[i] == "--threads") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threads = static_cast<unsigned>(std::stoul(value));
+        } else if (args[i] == "--sample") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.sample = std::stod(value);
+            if (options.sample <= 0.0 || options.sample > 1.0) {
+                err << "cpplink completeness: --sample wants a rate in (0, 1]\n";
+                return 1;
+            }
+        } else if (args[i] == "--min-observed") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.min_observed = std::stoull(value);
+        } else if (args[i] == "--value-weighting") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (value == "pairs") {
+                options.pair_weighting = true;
+            } else if (value == "records") {
+                options.pair_weighting = false;
+            } else {
+                err << "cpplink completeness: --value-weighting wants "
+                       "\"records\" or \"pairs\"\n";
+                return 1;
+            }
+        } else if (args[i] == "--bound-only") {
+            options.skip_observed = true;
+        } else if (args[i] == "--json") {
+            as_json = true;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink completeness: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else {
+            data_paths.push_back(args[i]);
+        }
+    }
+    if (schema_path.empty() || data_paths.empty() || model_path.empty()) {
+        err << "cpplink completeness: --schema <schema.json>, --model <model.json> "
+               "and a parquet file are required\n";
+        return 1;
+    }
+
+    Model model;
+    std::string error;
+    if (!LoadModel(model_path, &model, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    Schema schema;
+    std::unique_ptr<RecordStore> store;
+    BlockingPlan plan;
+    if (!LoadForBlocking(schema_path, data_paths,
+                         DefaultMode(mode_given, mode, data_paths.size()), &schema,
+                         &store, &plan, err)) {
+        return 1;
+    }
+    if (schema.comparisons.empty()) {
+        err << "cpplink completeness: the schema declares no \"comparisons\"\n";
+        return 1;
+    }
+    ComparisonSet comparisons;
+    if (!comparisons.Bind(schema, *store, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    CompletenessReport report;
+    if (!EstimateCompleteness(*store, comparisons, plan, model, options, &report,
+                              &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    // With a truth file the estimator is scored against the thing it exists to
+    // replace, which is the only way to know whether to believe it without one.
+    if (!truth_path.empty()) {
+        TruthPairs truth;
+        if (!LoadTruthPairs(truth_path, *store, &truth, &error)) {
+            err << "cpplink: " << error << "\n";
+            return 1;
+        }
+        const RecallMetrics metrics = MeasureRecall(plan, *store, truth, false);
+        if (metrics.truth_pairs > 0) {
+            report.measured = true;
+            report.truth_pairs = metrics.truth_pairs;
+            report.pc_measured = static_cast<double>(metrics.union_found) /
+                                 static_cast<double>(metrics.truth_pairs);
+        }
+    }
+
+    if (as_json) {
+        WriteCompletenessJson(report, out);
+    } else {
+        PrintCompletenessReport(report, out);
     }
     return 0;
 }
@@ -944,6 +1070,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     if (first == "explain-blocking") return RunExplainBlocking(rest, out, err);
     if (first == "recall") return RunRecall(rest, out, err);
     if (first == "estimate") return RunEstimate(rest, out, err);
+    if (first == "completeness") return RunCompleteness(rest, out, err);
     if (first == "predict") return RunPredict(rest, out, err);
     if (first == "rescore") return RunRescore(rest, out, err);
     if (first == "cluster") return RunCluster(rest, out, err);
