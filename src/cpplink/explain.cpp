@@ -32,6 +32,16 @@ std::string Hex(uint32_t value) {
 
 // The stored value of one comparison's columns for one row, as text.
 std::string ValueOf(const BoundComparison& comparison, uint64_t row) {
+    if (comparison.strings != nullptr && comparison.lists != nullptr) {
+        // A list_contains comparison, whose evidence is one column against the
+        // other: printing either alone would leave the reader unable to check the
+        // level the waterfall then charges for.
+        BoundComparison scalar = comparison;
+        scalar.lists = nullptr;
+        BoundComparison list = comparison;
+        list.strings = nullptr;
+        return ValueOf(scalar, row) + " in " + ValueOf(list, row);
+    }
     if (comparison.strings != nullptr) {
         const uint32_t id = comparison.strings->ids[row];
         if (id == kNullId) return "<null>";

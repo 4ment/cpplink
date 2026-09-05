@@ -7,6 +7,8 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -38,6 +40,19 @@ uint32_t OverlapSize(const StringListColumn& column, uint64_t a, uint64_t b) {
         }
     }
     return shared;
+}
+
+// Whether one row of a list column holds this value id. The cells are sorted at
+// load, so the scan stops at the first id past the one sought and never runs the
+// whole list.
+bool ListContains(const StringListColumn& column, uint64_t row, uint32_t id) {
+    if (id == kNullId) return false;
+    const uint64_t end = column.offsets[row + 1];
+    for (uint64_t i = column.offsets[row]; i < end; ++i) {
+        if (column.ids[i] == id) return true;
+        if (column.ids[i] > id) return false;
+    }
+    return false;
 }
 
 bool SameSet(const StringListColumn& column, uint64_t a, uint64_t b) {
@@ -118,6 +133,35 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
                 built.emplace_back(dict, tables_.back().get());
             }
         }
+        bool contains = false;
+        for (const LevelSpec& level : spec.levels) {
+            if (level.type == LevelType::kListContains) {
+                contains = true;
+                break;
+            }
+        }
+        if (contains && bound.strings != nullptr && bound.lists != nullptr) {
+            // One pass over the list column's dictionary to index it, then one
+            // over the scalar column's to translate it. Both are dictionaries,
+            // not rows: aligning 150k surnames against 200k nicknames costs
+            // nothing beside the pairs the result is then asked about.
+            std::unordered_map<std::string_view, uint32_t> index;
+            const Dictionary& target = bound.lists->dict;
+            index.reserve(target.Size());
+            for (uint32_t id = 0; id < target.Size(); ++id) {
+                index.emplace(target.Value(id), id);
+            }
+            const Dictionary& source = bound.strings->dict;
+            auto map = std::make_unique<std::vector<uint32_t>>(source.Size(), kNullId);
+            for (uint32_t id = 0; id < source.Size(); ++id) {
+                const auto found = index.find(source.Value(id));
+                if (found != index.end()) (*map)[id] = found->second;
+            }
+            bound.alias_size = source.Size();
+            alias_maps_.push_back(std::move(map));
+            bound.alias_ids = alias_maps_.back()->data();
+        }
+
         bound_.push_back(bound);
         width_ = static_cast<uint8_t>(width_ + bound.bits);
     }
@@ -131,6 +175,15 @@ uint64_t ComparisonSet::SignatureBytes() const {
 }
 
 bool ComparisonSet::IsNull(const BoundComparison& comparison, uint64_t row) const {
+    if (comparison.strings != nullptr && comparison.lists != nullptr) {
+        // A list_contains comparison reads two columns and fires in either
+        // direction, so a row only makes it unevaluable when it holds neither
+        // part: with no value of its own and no list to be searched, no partner
+        // can produce a match. Requiring both would be wrong in the other
+        // direction -- it would let the null level pre-empt a level that fires.
+        return comparison.strings->ids[row] == kNullId &&
+               comparison.lists->offsets[row + 1] == comparison.lists->offsets[row];
+    }
     if (comparison.strings != nullptr) {
         return comparison.strings->ids[row] == kNullId;
     }
@@ -282,6 +335,23 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
             return static_cast<double>(shared) / static_cast<double>(together) >=
                    level.threshold;
         }
+
+        case LevelType::kListContains: {
+            // Both directions, because the relation is asymmetric: a nickname
+            // list is a property of the row that owns it, and "Bill is one of
+            // William's aliases" is evidence whichever row was drawn first.
+            // Intersecting the two lists instead would agree on two rows that
+            // share an alias without either being the other's name.
+            if (comparison.alias_ids == nullptr) return false;
+            const uint32_t left = comparison.strings->ids[a];
+            const uint32_t right = comparison.strings->ids[b];
+            if (left != kNullId && left < comparison.alias_size &&
+                ListContains(*comparison.lists, b, comparison.alias_ids[left])) {
+                return true;
+            }
+            return right != kNullId && right < comparison.alias_size &&
+                   ListContains(*comparison.lists, a, comparison.alias_ids[right]);
+        }
     }
     return false;
 }
@@ -297,7 +367,9 @@ bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, const LevelSpe
         case LevelType::kExact:
         case LevelType::kDateWithin:
         case LevelType::kNumericWithin:
-            // Exact already, and cheaper than any bound would be.
+        case LevelType::kListContains:
+            // Exact already, and cheaper than any bound would be: two integer
+            // lookups and a walk over a cell that holds a handful of ids.
             return LevelFires(comparison, level, a, b);
 
         case LevelType::kLevenshtein: {

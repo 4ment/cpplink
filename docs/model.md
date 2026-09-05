@@ -225,10 +225,13 @@ blocking problem, not a model problem.**
 | `geo_within` | great-circle distance ≤ `threshold` km | two doubles |
 | `list_overlap` | intersection size ≥ `threshold` | string_list |
 | `list_jaccard` | Jaccard similarity ≥ `threshold` | string_list |
+| `list_contains` | either row's value is an element of the other row's list | string + string_list |
 | `else` | always; must be last | — |
 
 A configuration that applies a level to a column type it cannot read is rejected at parse
-time. See [the schema reference](reference/schema.md) for the full file format.
+time. `list_contains` is the one level that reads two columns of *different* types, a scalar
+against a list of aliases; see [the schema reference](reference/schema.md#a-value-against-a-list-list_contains)
+for what that shape means and what it costs. The rest of the file format is there too.
 
 ## Why the comparison is fast
 

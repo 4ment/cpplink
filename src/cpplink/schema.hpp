@@ -42,6 +42,7 @@ enum class LevelType {
     kGeoWithin,      // great-circle distance <= threshold km
     kListOverlap,    // intersection size >= threshold
     kListJaccard,    // Jaccard similarity >= threshold
+    kListContains,   // one row's scalar value is an element of the other's list
     kElse,           // always fires; must be last
 };
 
