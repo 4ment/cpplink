@@ -4,6 +4,7 @@
 #include "cpplink/recall.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <ostream>
@@ -11,6 +12,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <nlohmann/json.hpp>
+
+#include "cpplink/format.hpp"
 
 namespace cpplink {
 namespace {
@@ -23,11 +28,26 @@ std::string Percent(uint64_t part, uint64_t whole) {
     return buffer;
 }
 
-// Marked with an ASCII dot rather than an ellipsis: std::setw pads by bytes, and a
-// multi-byte marker silently costs the column its alignment.
-std::string Truncate(std::string text, size_t width) {
-    if (text.size() <= width) return text;
-    return text.substr(0, width - 1) + ".";
+double Share(uint64_t part, double whole) {
+    return whole > 0.0 ? static_cast<double>(part) / whole : 0.0;
+}
+
+// Pair quality runs from a few percent down to parts per million across the
+// sources of one plan, so a fixed number of decimals either rounds the small
+// values to zero or pads the large ones. Three significant digits keeps both.
+std::string Significant(uint64_t part, double whole) {
+    if (whole <= 0.0) return "-";
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.3g%%", 100.0 * Share(part, whole));
+    return buffer;
+}
+
+std::string Reduction(uint64_t candidates, double space) {
+    if (space <= 0.0) return "-";
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.6f",
+                  1.0 - static_cast<double>(candidates) / space);
+    return buffer;
 }
 
 }  // namespace
@@ -86,68 +106,152 @@ bool LoadTruthPairs(const std::string& path, const RecordStore& store, TruthPair
     return true;
 }
 
-void PrintRecallReport(const BlockingPlan& plan, const TruthPairs& truth,
-                       std::ostream& out) {
-    uint64_t total = truth.rows.size();
-    out << "Known pairs  " << total << " resolved";
-    if (truth.unresolved > 0) {
-        out << ", " << truth.unresolved << " unresolved";
-    }
-    out << "\n";
-    // A link run scores only pairs that cross its inputs, so a truth pair inside
+RecallMetrics MeasureRecall(const BlockingPlan& plan, const RecordStore& store,
+                            const TruthPairs& truth, bool count_union) {
+    RecallMetrics metrics;
+    metrics.truth_pairs = truth.rows.size();
+    metrics.unresolved = truth.unresolved;
+    metrics.pair_space = store.PairSpace(plan.mode());
+
+    // A link run scores only pairs that cross its inputs, so a known pair inside
     // one of them is not a miss -- it is out of scope, and counting it as a miss
     // would understate recall by however much of the truth file belongs to a
-    // deduplication.
-    uint64_t within_one_input = 0;
+    // deduplication. `Produces` gates on the mode too, so such a pair is credited
+    // to no source and only the denominator has to be corrected.
     if (plan.mode() == PairMode::kCrossDataset) {
         for (const auto& pair : truth.rows) {
-            if (!plan.CrossDataset(pair.first, pair.second)) ++within_one_input;
+            if (!plan.CrossDataset(pair.first, pair.second)) ++metrics.out_of_scope;
         }
-        out << "Mode         " << PairModeName(plan.mode()) << " over "
-            << plan.NumDatasets() << " inputs\n";
-        if (within_one_input > 0) {
-            out << "             " << within_one_input
-                << " known pairs lie inside one input and are out of scope\n";
-        }
+        metrics.truth_pairs -= metrics.out_of_scope;
     }
-    out << "\n";
 
-    std::vector<uint64_t> found(plan.Size(), 0);
-    uint64_t union_found = 0;
+    metrics.sources.resize(plan.Size());
+    for (size_t s = 0; s < plan.Size(); ++s) {
+        metrics.sources[s].name = plan.at(s).name;
+        metrics.sources[s].candidate_pairs = plan.CountPairs(s);
+        metrics.candidate_sum += metrics.sources[s].candidate_pairs;
+    }
+
     // Attribution to the first source that produces a pair, which is also the
     // source that would emit it: later sources are only credited with what they
     // add, not with what they duplicate.
-    std::vector<uint64_t> unique_credit(plan.Size(), 0);
     for (const auto& pair : truth.rows) {
         bool any = false;
         for (size_t s = 0; s < plan.Size(); ++s) {
             if (!plan.Produces(s, pair.first, pair.second)) continue;
-            ++found[s];
-            if (!any) ++unique_credit[s];
+            ++metrics.sources[s].found;
+            if (!any) ++metrics.sources[s].first_to;
             any = true;
         }
-        if (any) ++union_found;
+        if (any) ++metrics.union_found;
     }
 
-    total -= within_one_input;
-    out << std::left << std::setw(30) << "Source" << std::right << std::setw(12)
-        << "Found" << std::setw(10) << "Recall" << std::setw(12) << "First to"
-        << "\n";
-    out << std::string(64, '-') << "\n";
-    for (size_t s = 0; s < plan.Size(); ++s) {
-        out << std::left << std::setw(30) << Truncate(plan.at(s).name, 29) << std::right
-            << std::setw(12) << found[s] << std::setw(10) << Percent(found[s], total)
-            << std::setw(12) << unique_credit[s] << "\n";
+    if (count_union) {
+        metrics.candidate_union = plan.CountUnion();
+        metrics.counted_union = true;
     }
-    out << std::string(64, '-') << "\n";
-    out << std::left << std::setw(30) << "Union" << std::right << std::setw(12)
-        << union_found << std::setw(10) << Percent(union_found, total) << "\n";
-    if (union_found < total) {
+    return metrics;
+}
+
+void PrintRecallReport(const RecallMetrics& metrics, std::ostream& out) {
+    const uint64_t total = metrics.truth_pairs;
+    out << "Known pairs  " << total << " resolved";
+    if (metrics.unresolved > 0) {
+        out << ", " << metrics.unresolved << " unresolved";
+    }
+    out << "\n";
+    if (metrics.out_of_scope > 0) {
+        out << "             " << metrics.out_of_scope
+            << " known pairs lie inside one input and are out of scope\n";
+    }
+    out << "Pairs unblocked  " << WithThousands(static_cast<uint64_t>(metrics.pair_space))
+        << "\n\n";
+
+    // Reduction ratio is a monotone function of the candidate count against a
+    // constant pair space, so per source it ranks nothing the candidate column
+    // does not already rank. It is reported once, for the plan.
+    out << std::left << std::setw(26) << "Source" << std::right << std::setw(12)
+        << "Found" << std::setw(8) << "PC" << std::setw(16) << "Candidates"
+        << std::setw(10) << "PQ" << std::setw(12) << "First to" << std::setw(10)
+        << "Marg PQ" << "\n";
+    out << std::string(94, '-') << "\n";
+    for (const SourceRecall& source : metrics.sources) {
+        const double cost = static_cast<double>(source.candidate_pairs);
+        out << std::left << std::setw(26) << Truncate(source.name, 25) << std::right
+            << std::setw(12) << WithThousands(source.found) << std::setw(8)
+            << Percent(source.found, total) << std::setw(16)
+            << WithThousands(source.candidate_pairs) << std::setw(10)
+            << Significant(source.found, cost) << std::setw(12)
+            << WithThousands(source.first_to) << std::setw(10)
+            << Significant(source.first_to, cost) << "\n";
+    }
+    const uint64_t candidates = metrics.UnionCandidates();
+    out << std::string(94, '-') << "\n";
+    out << std::left << std::setw(26) << "Union" << std::right << std::setw(12)
+        << WithThousands(metrics.union_found) << std::setw(8)
+        << Percent(metrics.union_found, total) << std::setw(16)
+        << WithThousands(candidates) << std::setw(10)
+        << Significant(metrics.union_found, static_cast<double>(candidates)) << "\n";
+    out << std::left << std::setw(26) << "Reduction ratio" << std::right << std::setw(12)
+        << Reduction(candidates, metrics.pair_space) << "\n";
+
+    out << "\nPC is pair completeness, the share of known pairs blocking reaches, and "
+           "it caps\nthe pipeline's recall. PQ is pair quality, known pairs per "
+           "candidate. RR is the\nshare of the unblocked pairs above that blocking "
+           "removes. Candidate counts are\nexact and come from the term frequencies, "
+           "so nothing here enumerates a pair.\n";
+    if (!metrics.counted_union) {
+        out << "\nThe union is priced by the sum over sources, which double-counts "
+               "pairs two\nsources both produce: its PQ and RR are therefore lower "
+               "bounds. Pass --count\nfor the deduplicated union, which enumerates.\n";
+    }
+    out << "\nMarg PQ prices a source by what it alone reaches, over what it costs. "
+           "That is\nthe number to drop a source on: a source with high PC and low "
+           "marginal PQ is\npaying for pairs an earlier source already produced. Its "
+           "denominator is the\nsource's whole candidate count rather than its "
+           "marginal one, so it too is a\nlower bound.\n";
+    if (metrics.union_found < total) {
         out << "\n"
-            << (total - union_found)
+            << (total - metrics.union_found)
             << " known pairs are reachable by no source. No amount of scoring "
                "recovers\nthem: they are never generated as candidates.\n";
     }
+}
+
+void WriteRecallJson(const RecallMetrics& metrics, std::ostream& out) {
+    nlohmann::json root;
+    root["truth_pairs"] = metrics.truth_pairs;
+    root["unresolved"] = metrics.unresolved;
+    root["out_of_scope"] = metrics.out_of_scope;
+    root["pair_space"] = metrics.pair_space;
+    root["union_found"] = metrics.union_found;
+    root["candidate_sum"] = metrics.candidate_sum;
+    root["counted_union"] = metrics.counted_union;
+    if (metrics.counted_union) root["candidate_union"] = metrics.candidate_union;
+    root["candidates"] = metrics.UnionCandidates();
+    root["pair_completeness"] = Share(metrics.union_found, metrics.truth_pairs);
+    root["pair_quality"] =
+        Share(metrics.union_found, static_cast<double>(metrics.UnionCandidates()));
+    root["reduction_ratio"] =
+        metrics.pair_space > 0.0
+            ? 1.0 - static_cast<double>(metrics.UnionCandidates()) / metrics.pair_space
+            : 0.0;
+
+    root["sources"] = nlohmann::json::array();
+    for (const SourceRecall& source : metrics.sources) {
+        nlohmann::json item;
+        item["name"] = source.name;
+        item["found"] = source.found;
+        item["first_to"] = source.first_to;
+        item["candidate_pairs"] = source.candidate_pairs;
+        item["pair_completeness"] = Share(source.found, metrics.truth_pairs);
+        item["pair_quality"] =
+            Share(source.found, static_cast<double>(source.candidate_pairs));
+        item["marginal_pair_quality"] =
+            Share(source.first_to, static_cast<double>(source.candidate_pairs));
+        root["sources"].push_back(std::move(item));
+    }
+    out << root.dump(2) << "\n";
 }
 
 namespace {

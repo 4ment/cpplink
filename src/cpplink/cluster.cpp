@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "cpplink/format.hpp"
 #include "cpplink/predict.hpp"
 
 namespace cpplink {
@@ -22,19 +23,6 @@ namespace {
 
 // A whole number of edge records, so a read never splits one across two buffers.
 constexpr size_t kReadEdges = 4096;
-
-std::string WithThousands(uint64_t value) {
-    std::string digits = std::to_string(value);
-    std::string out;
-    int count = 0;
-    for (auto it = digits.rbegin(); it != digits.rend(); ++it) {
-        if (count > 0 && count % 3 == 0) out.push_back(',');
-        out.push_back(*it);
-        ++count;
-    }
-    std::reverse(out.begin(), out.end());
-    return out;
-}
 
 std::string Percent(uint64_t part, uint64_t whole) {
     if (whole == 0) return "-";

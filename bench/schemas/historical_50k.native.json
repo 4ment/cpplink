@@ -1,0 +1,251 @@
+{
+  "unique_id": "unique_id",
+  "columns": [
+    {
+      "name": "first_name",
+      "type": "string"
+    },
+    {
+      "name": "surname",
+      "type": "string"
+    },
+    {
+      "name": "first_and_surname",
+      "type": "string"
+    },
+    {
+      "name": "dob",
+      "type": "string"
+    },
+    {
+      "name": "postcode_fake",
+      "type": "string"
+    },
+    {
+      "name": "birth_place",
+      "type": "string"
+    },
+    {
+      "name": "occupation",
+      "type": "string"
+    },
+    {
+      "name": "gender",
+      "type": "string"
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "first_name",
+      "columns": [
+        "first_name"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.8
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "surname",
+      "columns": [
+        "surname"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.8
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "first_and_surname",
+      "columns": [
+        "first_and_surname"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.8
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "dob",
+      "columns": [
+        "dob"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 1
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 2
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "postcode_fake",
+      "columns": [
+        "postcode_fake"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 1
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "birth_place",
+      "columns": [
+        "birth_place"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "occupation",
+      "columns": [
+        "occupation"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "gender",
+      "columns": [
+        "gender"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "else"
+        }
+      ]
+    }
+  ],
+  "blocking": [
+    {
+      "type": "exact_value",
+      "column": "dob"
+    },
+    {
+      "type": "exact_value",
+      "column": "surname"
+    },
+    {
+      "type": "exact_value",
+      "column": "postcode_fake"
+    },
+    {
+      "type": "exact_value",
+      "column": "first_name"
+    },
+    {
+      "type": "rare_value",
+      "column": "first_and_surname",
+      "max_frequency": 20
+    },
+    {
+      "type": "sorted_neighbourhood",
+      "column": "first_and_surname",
+      "window": 10
+    }
+  ]
+}

@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "cpplink/format.hpp"
 #include "cpplink/histogram.hpp"
 
 namespace cpplink {
@@ -65,19 +66,6 @@ std::string Join(const std::vector<std::string>& parts) {
         if (i > 0) out += ", ";
         out += parts[i];
     }
-    return out;
-}
-
-std::string WithThousands(uint64_t value) {
-    std::string digits = std::to_string(value);
-    std::string out;
-    int count = 0;
-    for (auto it = digits.rbegin(); it != digits.rend(); ++it) {
-        if (count > 0 && count % 3 == 0) out.push_back(',');
-        out.push_back(*it);
-        ++count;
-    }
-    std::reverse(out.begin(), out.end());
     return out;
 }
 

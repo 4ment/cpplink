@@ -1,0 +1,79 @@
+site_name: cpplink
+site_description: >-
+  A streaming Fellegi-Sunter record linker in C++ that never materializes a
+  candidate-pair table.
+site_url: https://4ment.github.io/cpplink/
+repo_url: https://github.com/4ment/cpplink
+repo_name: 4ment/cpplink
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Mathieu Fourment - MIT licensed
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Concepts:
+      - The model: model.md
+      - Estimation and EM: em.md
+      - Blocking: blocking.md
+      - Linking two files: linking.md
+  - Commands:
+      - Overview: commands/index.md
+      - inspect: commands/inspect.md
+      - explain: commands/explain.md
+      - explain-blocking: commands/explain-blocking.md
+      - recall: commands/recall.md
+      - estimate: commands/estimate.md
+      - predict: commands/predict.md
+      - rescore: commands/rescore.md
+      - cluster: commands/cluster.md
+      - gen-sample: commands/gen-sample.md
+  - Reference:
+      - Schema file: reference/schema.md
+      - Output formats: reference/output-formats.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

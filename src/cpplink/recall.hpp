@@ -27,12 +27,54 @@ struct TruthPairs {
 bool LoadTruthPairs(const std::string& path, const RecordStore& store, TruthPairs* truth,
                     std::string* error);
 
+// What one source reaches, what it costs, and what it alone reaches. Recall on
+// its own ranks nothing: every source can buy recall with candidates, so the
+// number that decides whether a source earns its place is the known pairs it is
+// the first to reach divided by the pairs it makes the pipeline evaluate.
+struct SourceRecall {
+    std::string name;
+    uint64_t found = 0;            // known pairs this source produces
+    uint64_t first_to = 0;         // known pairs no earlier source produces
+    uint64_t candidate_pairs = 0;  // exact, from the term frequencies
+};
+
+// The blocking literature's three numbers -- pair completeness, pair quality and
+// reduction ratio -- over one plan, plus the marginal split that says which
+// source is paying for itself.
+struct RecallMetrics {
+    uint64_t truth_pairs = 0;   // resolved, and in scope for the mode
+    uint64_t unresolved = 0;    // ids in the truth file the data does not hold
+    uint64_t out_of_scope = 0;  // link mode: known pairs inside a single input
+    uint64_t union_found = 0;
+    uint64_t candidate_sum = 0;    // over sources; bounds the union from above
+    uint64_t candidate_union = 0;  // deduplicated; only when `count_union`
+    bool counted_union = false;
+    double pair_space = 0.0;  // pairs the mode admits, before blocking
+    std::vector<SourceRecall> sources;
+
+    // What to price the union by: the deduplicated count when it was paid for,
+    // the sum otherwise. The sum is an upper bound, so pair quality and reduction
+    // ratio taken from it are lower bounds -- they understate the plan, which is
+    // the safe direction for a number used to justify keeping a source.
+    uint64_t UnionCandidates() const {
+        return counted_union ? candidate_union : candidate_sum;
+    }
+};
+
 // With hand-written rules you can reason about what they miss. With automatic
 // sources you cannot, so recall must be measured or the approach is unfalsifiable.
 // Asking `Produces` of each known pair costs O(pairs x sources) and enumerates
-// nothing.
-void PrintRecallReport(const BlockingPlan& plan, const TruthPairs& truth,
-                       std::ostream& out);
+// nothing; `count_union` additionally enumerates, and is the only part of this
+// that is not free.
+RecallMetrics MeasureRecall(const BlockingPlan& plan, const RecordStore& store,
+                            const TruthPairs& truth, bool count_union);
+
+void PrintRecallReport(const RecallMetrics& metrics, std::ostream& out);
+
+// The same numbers for a harness that sweeps a source's knob and plots the
+// frontier, so the sweep reads a parser-stable document rather than scraping a
+// fixed-width table.
+void WriteRecallJson(const RecallMetrics& metrics, std::ostream& out);
 
 // Why one source failed to produce a pair. A recall number says how many matches
 // blocking loses; it does not say whether the loss is a parameter that is set too
