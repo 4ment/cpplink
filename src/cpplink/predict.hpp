@@ -77,6 +77,8 @@ struct PredictReport {
     double seconds = 0.0;
     bool truncated = false;
     uint64_t spilled = 0;
+    PairMode mode = PairMode::kAll;
+    size_t datasets = 1;
     std::vector<std::string> shards;
 };
 

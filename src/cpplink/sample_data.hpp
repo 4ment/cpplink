@@ -14,6 +14,11 @@ struct SampleOptions {
     double duplicate_rate = 0.08;  // fraction of rows that are corrupted copies
     int64_t row_group_size = 200000;
     std::string truth_path;  // optional sidecar of planted duplicate pairs
+    // A second output. When set, originals go to the first file and every planted
+    // duplicate to this one, so each recorded pair crosses the two files and the
+    // link path has something to be measured against. `duplicate_rate` then sets
+    // how large the second file is relative to the first.
+    std::string link_path;
 };
 
 // Writes a parquet file with the column mix cpplink is aimed at: high-cardinality

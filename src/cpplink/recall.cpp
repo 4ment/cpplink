@@ -88,12 +88,29 @@ bool LoadTruthPairs(const std::string& path, const RecordStore& store, TruthPair
 
 void PrintRecallReport(const BlockingPlan& plan, const TruthPairs& truth,
                        std::ostream& out) {
-    const uint64_t total = truth.rows.size();
+    uint64_t total = truth.rows.size();
     out << "Known pairs  " << total << " resolved";
     if (truth.unresolved > 0) {
         out << ", " << truth.unresolved << " unresolved";
     }
-    out << "\n\n";
+    out << "\n";
+    // A link run scores only pairs that cross its inputs, so a truth pair inside
+    // one of them is not a miss -- it is out of scope, and counting it as a miss
+    // would understate recall by however much of the truth file belongs to a
+    // deduplication.
+    uint64_t within_one_input = 0;
+    if (plan.mode() == PairMode::kCrossDataset) {
+        for (const auto& pair : truth.rows) {
+            if (!plan.CrossDataset(pair.first, pair.second)) ++within_one_input;
+        }
+        out << "Mode         " << PairModeName(plan.mode()) << " over "
+            << plan.NumDatasets() << " inputs\n";
+        if (within_one_input > 0) {
+            out << "             " << within_one_input
+                << " known pairs lie inside one input and are out of scope\n";
+        }
+    }
+    out << "\n";
 
     std::vector<uint64_t> found(plan.Size(), 0);
     uint64_t union_found = 0;
@@ -112,6 +129,7 @@ void PrintRecallReport(const BlockingPlan& plan, const TruthPairs& truth,
         if (any) ++union_found;
     }
 
+    total -= within_one_input;
     out << std::left << std::setw(30) << "Source" << std::right << std::setw(12)
         << "Found" << std::setw(10) << "Recall" << std::setw(12) << "First to"
         << "\n";

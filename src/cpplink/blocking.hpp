@@ -60,6 +60,37 @@ struct SourceGroups {
 class BlockingPlan {
    public:
     bool Build(const Schema& schema, const RecordStore& store, std::string* error);
+    // The link seam. Dedup and link differ only in which pairs of a group the
+    // enumeration walks, so the mode is carried here and every stage downstream --
+    // comparisons, the histogram, EM, scoring, clustering -- is unchanged.
+    bool Build(const Schema& schema, const RecordStore& store, PairMode mode,
+               std::string* error);
+
+    PairMode mode() const { return mode_; }
+    size_t NumDatasets() const {
+        return dataset_starts_.empty() ? 1 : dataset_starts_.size() - 1;
+    }
+    // Whether the two rows came from different inputs. Two inputs is one
+    // comparison; more is a walk over a handful of boundaries.
+    bool CrossDataset(uint64_t a, uint64_t b) const {
+        if (dataset_starts_.size() < 3) return false;
+        return DatasetEndFor(a) != DatasetEndFor(b);
+    }
+    // Which input the row came from.
+    size_t DatasetOf(uint64_t row) const {
+        if (dataset_starts_.size() < 3) return 0;
+        size_t dataset = 0;
+        while (row >= dataset_starts_[dataset + 1]) ++dataset;
+        return dataset;
+    }
+    // Where the row's own input ends. Rows at or past it are in a later input, so
+    // in a group sorted by row the cross-dataset partners of a row are a single
+    // contiguous range -- which is what keeps link mode from paying for the
+    // within-input pairs it is going to discard.
+    uint64_t DatasetEndFor(uint64_t row) const {
+        if (dataset_starts_.size() < 3) return rows_;
+        return dataset_starts_[DatasetOf(row) + 1];
+    }
 
     size_t Size() const { return sources_.size(); }
     const BoundSource& at(size_t index) const { return sources_[index]; }
@@ -122,6 +153,29 @@ class BlockingPlan {
                              uint64_t end, Emit&& emit) const {
         const uint64_t first = groups.starts[group];
         const uint64_t last = groups.starts[group + 1];
+        if (mode_ == PairMode::kCrossDataset) {
+            // A group is sorted by row and inputs are contiguous row ranges, so
+            // every partner of row i sits at or after the end of i's own input --
+            // and that boundary only moves forward as i does. One cursor walks it,
+            // and the pairs link mode does not want are never enumerated.
+            //
+            // The cursor needs no lower guard against overtaking i: any row before
+            // i is in i's own input or an earlier one, so it is below the boundary
+            // and the same loop steps over it.
+            uint64_t partner = first + begin + 1;
+            for (uint64_t i = first + begin; i < first + end; ++i) {
+                const uint32_t a = groups.keyed[i].second;
+                const uint64_t boundary = DatasetEndFor(a);
+                while (partner < last && groups.keyed[partner].second < boundary) {
+                    ++partner;
+                }
+                for (uint64_t j = partner; j < last; ++j) {
+                    const uint32_t b = groups.keyed[j].second;
+                    if (!ProducedEarlierIn(selected, position, a, b)) emit(a, b);
+                }
+            }
+            return;
+        }
         for (uint64_t i = first + begin; i < first + end; ++i) {
             const uint32_t a = groups.keyed[i].second;
             for (uint64_t j = i + 1; j < last; ++j) {
@@ -143,6 +197,10 @@ class BlockingPlan {
             const uint32_t a = source.order[i];
             for (uint64_t j = i + 1; j <= last; ++j) {
                 const uint32_t b = source.order[j];
+                // A window is sorted by value, so the two inputs interleave inside
+                // it and there is no contiguous partner range to jump to: link mode
+                // pays a comparison per candidate here, unlike a keyed group.
+                if (mode_ == PairMode::kCrossDataset && !CrossDataset(a, b)) continue;
                 if (!ProducedEarlierIn(selected, position, a, b)) emit(a, b);
             }
         }
@@ -159,7 +217,15 @@ class BlockingPlan {
                                   std::string* error);
     const std::vector<uint32_t>* Frequencies(const BoundSource& source) const;
 
+    // Cross-dataset counting cannot come from the term frequencies, which pool the
+    // inputs: it needs the rows grouped, so this one sorts.
+    uint64_t CountCrossPairs(size_t source_index) const;
+
     std::vector<BoundSource> sources_;
+    // Empty for a single input, and otherwise NumDatasets() + 1 offsets copied from
+    // the store, so the plan keeps no reference to a store it may outlive.
+    std::vector<uint64_t> dataset_starts_;
+    PairMode mode_ = PairMode::kAll;
     uint64_t rows_ = 0;
 };
 

@@ -275,6 +275,8 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         }
     }
     report->threads = threads;
+    report->mode = plan.mode();
+    report->datasets = plan.NumDatasets();
     report->truncated = limit > 0 && emitted.load() > limit;
     report->pattern_space = scorer.PatternSpace();
     if (scorer.Dense()) {
@@ -304,8 +306,12 @@ void PrintPredictReport(const PredictReport& report, const Scorer& scorer,
     out << "Threshold      " << std::fixed << std::setprecision(3) << scorer.threshold()
         << " bits  (posterior " << std::setprecision(6)
         << ProbabilityForWeight(scorer.threshold()) << ")\n"
-        << "Threads        " << report.threads << "\n"
-        << "Candidates     " << WithThousands(report.enumerated) << "\n"
+        << "Threads        " << report.threads << "\n";
+    if (report.datasets > 1) {
+        out << "Mode           " << PairModeName(report.mode) << " over "
+            << report.datasets << " inputs\n";
+    }
+    out << "Candidates     " << WithThousands(report.enumerated) << "\n"
         << "Edges          " << WithThousands(report.edges) << "  ("
         << Percent(report.edges, report.enumerated) << " of candidates)\n"
         << "Elapsed        " << std::setprecision(1) << report.seconds << " s";

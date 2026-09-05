@@ -64,6 +64,7 @@ class RoundTrip : public ::testing::Test {
         dir_ = std::filesystem::temp_directory_path() / "cpplink_roundtrip";
         std::filesystem::create_directories(dir_);
         data_ = (dir_ / "sample.parquet").string();
+        link_ = (dir_ / "sample.b.parquet").string();
         truth_ = (dir_ / "sample.truth.csv").string();
     }
     void TearDown() override {
@@ -73,6 +74,7 @@ class RoundTrip : public ::testing::Test {
 
     std::filesystem::path dir_;
     std::string data_;
+    std::string link_;
     std::string truth_;
 };
 
@@ -271,6 +273,103 @@ TEST_F(RoundTrip, MissDiagnosisAccountsForEveryMissedPair) {
     }
     EXPECT_EQ(report.missed, missed);
     EXPECT_EQ(report.truth_pairs, truth.rows.size());
+}
+
+// The link fixture: originals in the first file, every planted duplicate in the
+// second. Without this there is nothing to measure the cross-dataset path
+// against, and a link run that silently produced no pairs would look like a run
+// that produced the right ones.
+TEST_F(RoundTrip, SplitSampleRecordsOnlyPairsThatCrossTheTwoFiles) {
+    cpplink::SampleOptions options;
+    options.rows = 4000;
+    options.duplicate_rate = 0.25;
+    options.truth_path = truth_;
+    options.link_path = link_;
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kSampleSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    cpplink::LoadStats stats;
+    ASSERT_TRUE(cpplink::LoadParquetFiles({data_, link_}, schema, &store, &stats, &error))
+        << error;
+
+    ASSERT_EQ(store.NumRecords(), 4000u);
+    ASSERT_EQ(store.NumDatasets(), 2u);
+    ASSERT_EQ(stats.dataset_rows.size(), 2u);
+    EXPECT_EQ(stats.dataset_rows[0] + stats.dataset_rows[1], 4000u);
+    // Roughly the duplicate rate, and in any case both files hold rows.
+    EXPECT_GT(stats.dataset_rows[1], 500u);
+
+    cpplink::TruthPairs truth;
+    ASSERT_TRUE(cpplink::LoadTruthPairs(truth_, store, &truth, &error)) << error;
+    ASSERT_GT(truth.rows.size(), 100u);
+    EXPECT_EQ(truth.unresolved, 0u);
+    for (const auto& pair : truth.rows) {
+        EXPECT_NE(store.DatasetOf(pair.first), store.DatasetOf(pair.second))
+            << store.ids().Get(pair.first) << "," << store.ids().Get(pair.second);
+    }
+
+    // And the pairs are still genuine duplicates: the split changes which row a
+    // pair is recorded against, not what the two rows hold.
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+    uint64_t share_nothing = 0;
+    for (const auto& pair : truth.rows) {
+        bool anything = false;
+        for (size_t c = 0; c < comparisons.Size() && !anything; ++c) {
+            const uint8_t level = comparisons.EvaluateOne(c, pair.first, pair.second);
+            const cpplink::LevelType type = comparisons.at(c).spec->levels[level].type;
+            anything =
+                type != cpplink::LevelType::kNull && type != cpplink::LevelType::kElse;
+        }
+        if (!anything) ++share_nothing;
+    }
+    EXPECT_EQ(share_nothing, 0u);
+}
+
+// Blocking has to reach the same pairs across two files that it reaches inside
+// one, or the link path is a different pipeline wearing the same name.
+TEST_F(RoundTrip, LinkModeReachesThePlantedPairsAcrossTheTwoFiles) {
+    cpplink::SampleOptions options;
+    options.rows = 4000;
+    options.duplicate_rate = 0.25;
+    options.truth_path = truth_;
+    options.link_path = link_;
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kSampleSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(
+        cpplink::LoadParquetFiles({data_, link_}, schema, &store, nullptr, &error))
+        << error;
+    cpplink::BlockingPlan plan;
+    ASSERT_TRUE(plan.Build(schema, store, cpplink::PairMode::kCrossDataset, &error))
+        << error;
+    cpplink::TruthPairs truth;
+    ASSERT_TRUE(cpplink::LoadTruthPairs(truth_, store, &truth, &error)) << error;
+
+    // The claim is not an absolute recall number -- that is a property of the
+    // schema's sources, and it is the recall harness's job to report it. The claim
+    // is that link mode loses nothing to the split: every planted pair crosses the
+    // two files, so cross-dataset blocking must reach exactly the pairs the same
+    // sources would have reached with both files read as one.
+    cpplink::BlockingPlan both;
+    ASSERT_TRUE(both.Build(schema, store, cpplink::PairMode::kAll, &error)) << error;
+    uint64_t reached = 0;
+    for (const auto& pair : truth.rows) {
+        const bool linked = plan.ProducedByAny(pair.first, pair.second);
+        EXPECT_EQ(linked, both.ProducedByAny(pair.first, pair.second))
+            << store.ids().Get(pair.first) << "," << store.ids().Get(pair.second);
+        if (linked) ++reached;
+    }
+    EXPECT_GT(reached * 10, truth.rows.size() * 9) << "blocking has stopped working";
+
+    // And it is cheaper, because the two inputs' own triangles are never walked.
+    EXPECT_LT(plan.CountUnion(), both.CountUnion());
 }
 
 }  // namespace

@@ -181,27 +181,133 @@ std::shared_ptr<arrow::Schema> MakeArrowSchema() {
     });
 }
 
+// The ten builders one output file accumulates rows into, and the writer they are
+// flushed to. Routing a row to one of two files is then a choice of sink rather
+// than a second copy of the append code.
+struct RowSink {
+    explicit RowSink(arrow::MemoryPool* pool)
+        : id(pool),
+          first(pool),
+          last(pool),
+          email(pool),
+          phone(pool),
+          postcode(pool),
+          dob(pool),
+          latitude(pool),
+          longitude(pool),
+          token_values(std::make_shared<arrow::StringBuilder>(pool)),
+          tokens(pool, token_values) {}
+
+    bool Open(const std::string& path, const arrow::Schema& schema, std::string* error) {
+        this->path = path;
+        auto sink_result = arrow::io::FileOutputStream::Open(path);
+        if (!sink_result.ok()) {
+            *error = "cannot create " + path + ": " + sink_result.status().message();
+            return false;
+        }
+        auto props = parquet::WriterProperties::Builder()
+                         .compression(parquet::Compression::SNAPPY)
+                         ->build();
+        auto writer_result = parquet::arrow::FileWriter::Open(
+            schema, arrow::default_memory_pool(), *sink_result, props);
+        if (!writer_result.ok()) {
+            *error = "cannot open parquet writer for " + path + ": " +
+                     writer_result.status().message();
+            return false;
+        }
+        writer = std::move(*writer_result);
+        return true;
+    }
+
+    bool Append(const SampleRecord& record, const std::string& identifier,
+                std::string* error) {
+        auto status = id.Append(identifier);
+        status &= first.Append(record.first_name);
+        status &= last.Append(record.last_name);
+        status &= dob.Append(record.dob);
+        status &= record.email.empty() ? email.AppendNull() : email.Append(record.email);
+        status &= record.phone.empty() ? phone.AppendNull() : phone.Append(record.phone);
+        status &= record.postcode.empty() ? postcode.AppendNull()
+                                          : postcode.Append(record.postcode);
+        status &= latitude.Append(record.latitude);
+        status &= longitude.Append(record.longitude);
+        status &= tokens.Append();
+        for (const std::string& token : record.address_tokens) {
+            status &= token_values->Append(token);
+        }
+        if (!status.ok()) {
+            *error = "building row " + identifier + ": " + status.message();
+            return false;
+        }
+        ++pending;
+        return true;
+    }
+
+    bool Flush(const std::shared_ptr<arrow::Schema>& schema, std::string* error) {
+        if (pending == 0) return true;
+        std::vector<std::shared_ptr<arrow::Array>> arrays(10);
+        arrow::Status status = id.Finish(&arrays[0]);
+        status &= first.Finish(&arrays[1]);
+        status &= last.Finish(&arrays[2]);
+        status &= dob.Finish(&arrays[3]);
+        status &= email.Finish(&arrays[4]);
+        status &= phone.Finish(&arrays[5]);
+        status &= postcode.Finish(&arrays[6]);
+        status &= latitude.Finish(&arrays[7]);
+        status &= longitude.Finish(&arrays[8]);
+        status &= tokens.Finish(&arrays[9]);
+        if (!status.ok()) {
+            *error = "finishing a batch: " + status.message();
+            return false;
+        }
+        const auto table =
+            arrow::Table::Make(schema, arrays, static_cast<int64_t>(pending));
+        status = writer->WriteTable(*table, static_cast<int64_t>(pending));
+        if (!status.ok()) {
+            *error = "writing a row group to " + path + ": " + status.message();
+            return false;
+        }
+        pending = 0;
+        return true;
+    }
+
+    bool Close(std::string* error) {
+        const arrow::Status closed = writer->Close();
+        if (!closed.ok()) {
+            *error = "closing " + path + ": " + closed.message();
+            return false;
+        }
+        return true;
+    }
+
+    arrow::StringBuilder id, first, last, email, phone, postcode;
+    arrow::Date32Builder dob;
+    arrow::DoubleBuilder latitude, longitude;
+    std::shared_ptr<arrow::StringBuilder> token_values;
+    arrow::ListBuilder tokens;
+    uint64_t pending = 0;
+    std::string path;
+    std::unique_ptr<parquet::arrow::FileWriter> writer;
+};
+
 }  // namespace
 
 bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
                         std::string* error) {
-    auto sink_result = arrow::io::FileOutputStream::Open(path);
-    if (!sink_result.ok()) {
-        *error = "cannot create " + path + ": " + sink_result.status().message();
-        return false;
-    }
-
     const auto schema = MakeArrowSchema();
-    auto props = parquet::WriterProperties::Builder()
-                     .compression(parquet::Compression::SNAPPY)
-                     ->build();
-    auto writer_result = parquet::arrow::FileWriter::Open(
-        *schema, arrow::default_memory_pool(), *sink_result, props);
-    if (!writer_result.ok()) {
-        *error = "cannot open parquet writer: " + writer_result.status().message();
-        return false;
+    auto* pool = arrow::default_memory_pool();
+
+    // One sink per output file. With a second file every planted duplicate is
+    // routed to it, so the two files are exactly the link fixture the cross-dataset
+    // path needs: every recorded pair crosses them.
+    std::vector<std::unique_ptr<RowSink>> sinks;
+    sinks.push_back(std::make_unique<RowSink>(pool));
+    if (!sinks.back()->Open(path, *schema, error)) return false;
+    const bool linking = !options.link_path.empty();
+    if (linking) {
+        sinks.push_back(std::make_unique<RowSink>(pool));
+        if (!sinks.back()->Open(options.link_path, *schema, error)) return false;
     }
-    std::unique_ptr<parquet::arrow::FileWriter> writer = std::move(*writer_result);
 
     std::ofstream truth;
     if (!options.truth_path.empty()) {
@@ -225,92 +331,46 @@ bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
     // clusters larger than two arise honestly. Four bytes a row: 72 MB at 18M.
     std::vector<uint32_t> base_of(options.rows);
 
-    auto* pool = arrow::default_memory_pool();
-    uint64_t written = 0;
-    while (written < options.rows) {
-        const uint64_t batch =
-            std::min<uint64_t>(options.row_group_size, options.rows - written);
+    for (uint64_t index = 0; index < options.rows; ++index) {
+        SampleRecord record = generator.Make(index);
+        const std::string identifier = "r" + std::to_string(index);
 
-        arrow::StringBuilder id(pool), first(pool), last(pool), email(pool), phone(pool),
-            postcode(pool);
-        arrow::Date32Builder dob(pool);
-        arrow::DoubleBuilder latitude(pool), longitude(pool);
-        auto token_values = std::make_shared<arrow::StringBuilder>(pool);
-        arrow::ListBuilder tokens(pool, token_values);
-
-        for (uint64_t i = 0; i < batch; ++i) {
-            const uint64_t index = written + i;
-            SampleRecord record = generator.Make(index);
-            std::string identifier = "r" + std::to_string(index);
-
-            // Duplicates copy an earlier row by corrupting the record that row is
-            // itself a copy of, so a chain of duplicates stays a cluster of
-            // genuinely similar records rather than a chain of unrelated ones.
-            base_of[index] = static_cast<uint32_t>(index);
-            if (index > 0 && chance(planner) < options.duplicate_rate) {
-                std::uniform_int_distribution<uint64_t> pick(0, index - 1);
-                const uint64_t original = pick(planner);
-                const uint64_t base = base_of[original];
-                base_of[index] = static_cast<uint32_t>(base);
-                record = generator.Corrupt(generator.Make(base), &planner);
-                if (truth.is_open()) {
-                    truth << "r" << original << ",r" << index << "\n";
-                }
-            }
-
-            auto status = id.Append(identifier);
-            status &= first.Append(record.first_name);
-            status &= last.Append(record.last_name);
-            status &= dob.Append(record.dob);
-            status &=
-                record.email.empty() ? email.AppendNull() : email.Append(record.email);
-            status &=
-                record.phone.empty() ? phone.AppendNull() : phone.Append(record.phone);
-            status &= record.postcode.empty() ? postcode.AppendNull()
-                                              : postcode.Append(record.postcode);
-            status &= latitude.Append(record.latitude);
-            status &= longitude.Append(record.longitude);
-            status &= tokens.Append();
-            for (const std::string& token : record.address_tokens) {
-                status &= token_values->Append(token);
-            }
-            if (!status.ok()) {
-                *error =
-                    "building row " + std::to_string(index) + ": " + status.message();
-                return false;
-            }
+        // Duplicates copy an earlier row by corrupting the record that row is
+        // itself a copy of, so a chain of duplicates stays a cluster of genuinely
+        // similar records rather than a chain of unrelated ones.
+        base_of[index] = static_cast<uint32_t>(index);
+        bool duplicate = false;
+        uint64_t original = 0;
+        uint64_t base = index;
+        if (index > 0 && chance(planner) < options.duplicate_rate) {
+            std::uniform_int_distribution<uint64_t> pick(0, index - 1);
+            original = pick(planner);
+            base = base_of[original];
+            base_of[index] = static_cast<uint32_t>(base);
+            record = generator.Corrupt(generator.Make(base), &planner);
+            duplicate = true;
+        }
+        if (duplicate && truth.is_open()) {
+            // Splitting the files puts every duplicate in the second one, so the
+            // pair is recorded against the chain's base -- which is always an
+            // original, and so always in the first file. Without the split the
+            // planted relationship is the one to record, and it is the row that was
+            // actually picked.
+            const uint64_t other = linking ? base : original;
+            truth << "r" << other << ",r" << index << "\n";
         }
 
-        std::vector<std::shared_ptr<arrow::Array>> arrays(10);
-        arrow::Status status = id.Finish(&arrays[0]);
-        status &= first.Finish(&arrays[1]);
-        status &= last.Finish(&arrays[2]);
-        status &= dob.Finish(&arrays[3]);
-        status &= email.Finish(&arrays[4]);
-        status &= phone.Finish(&arrays[5]);
-        status &= postcode.Finish(&arrays[6]);
-        status &= latitude.Finish(&arrays[7]);
-        status &= longitude.Finish(&arrays[8]);
-        status &= tokens.Finish(&arrays[9]);
-        if (!status.ok()) {
-            *error = "finishing a batch: " + status.message();
+        RowSink& sink = *sinks[linking && duplicate ? 1 : 0];
+        if (!sink.Append(record, identifier, error)) return false;
+        if (sink.pending >= static_cast<uint64_t>(options.row_group_size) &&
+            !sink.Flush(schema, error)) {
             return false;
         }
-
-        const auto table =
-            arrow::Table::Make(schema, arrays, static_cast<int64_t>(batch));
-        status = writer->WriteTable(*table, static_cast<int64_t>(batch));
-        if (!status.ok()) {
-            *error = "writing a row group: " + status.message();
-            return false;
-        }
-        written += batch;
     }
 
-    const arrow::Status closed = writer->Close();
-    if (!closed.ok()) {
-        *error = "closing " + path + ": " + closed.message();
-        return false;
+    for (const std::unique_ptr<RowSink>& sink : sinks) {
+        if (!sink->Flush(schema, error)) return false;
+        if (!sink->Close(error)) return false;
     }
     return true;
 }

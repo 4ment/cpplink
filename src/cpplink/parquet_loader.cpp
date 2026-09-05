@@ -180,12 +180,11 @@ bool AppendColumn(const arrow::ChunkedArray& chunked, ColumnType type, Column* c
     return true;
 }
 
-}  // namespace
-
-bool LoadParquet(const std::string& path, const Schema& schema, RecordStore* store,
-                 LoadStats* stats, std::string* error) {
-    const auto started = std::chrono::steady_clock::now();
-
+// Appends one file's rows to the store without finalizing it: several files may
+// still be coming, and the dictionaries and term frequencies are only correct once
+// every row that will ever be in the store has been read.
+bool AppendOneFile(const std::string& path, const Schema& schema, RecordStore* store,
+                   uint64_t* rows_read, int* row_groups_read, std::string* error) {
     auto input_result = arrow::io::ReadableFile::Open(path);
     if (!input_result.ok()) {
         *error = "cannot open " + path + ": " + input_result.status().message();
@@ -272,17 +271,58 @@ bool LoadParquet(const std::string& path, const Schema& schema, RecordStore* sto
         // The row group's Arrow buffers are released here, before the next read.
     }
 
-    store->set_num_records(rows);
+    *rows_read = rows;
+    *row_groups_read = row_groups;
+    return true;
+}
+
+}  // namespace
+
+bool LoadParquetFiles(const std::vector<std::string>& paths, const Schema& schema,
+                      RecordStore* store, LoadStats* stats, std::string* error) {
+    const auto started = std::chrono::steady_clock::now();
+    if (paths.empty()) {
+        *error = "no input file was given";
+        return false;
+    }
+
+    // Boundaries are recorded as they are crossed, so a dataset is the row range
+    // between two of them and nothing per row has to be stored.
+    std::vector<uint64_t> starts;
+    std::vector<uint64_t> per_file;
+    starts.push_back(0);
+    uint64_t total = 0;
+    int row_groups = 0;
+    for (const std::string& path : paths) {
+        uint64_t rows = 0;
+        int groups = 0;
+        if (!AppendOneFile(path, schema, store, &rows, &groups, error)) return false;
+        total += rows;
+        row_groups += groups;
+        per_file.push_back(rows);
+        starts.push_back(total);
+    }
+
+    store->set_num_records(total);
+    // One dataset is the absence of a boundary, not a boundary at each end: the
+    // dedup path then pays no lookup at all.
+    if (paths.size() > 1) store->set_datasets(std::move(starts));
     store->Finalize();
 
     if (stats != nullptr) {
-        stats->rows = rows;
+        stats->rows = total;
         stats->row_groups = row_groups;
+        stats->dataset_rows = std::move(per_file);
         stats->seconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - started)
                 .count();
     }
     return true;
+}
+
+bool LoadParquet(const std::string& path, const Schema& schema, RecordStore* store,
+                 LoadStats* stats, std::string* error) {
+    return LoadParquetFiles({path}, schema, store, stats, error);
 }
 
 }  // namespace cpplink
