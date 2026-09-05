@@ -87,9 +87,23 @@ more than one column: a coordinate pair is one comparison, not two.
 ```
 
 Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`,
-`numeric_within`, `geo_within`, `list_overlap`, `list_jaccard`, `else`. A configuration that
-applies a level to a column type it cannot read, omits a trailing `else`, or overflows the
-32-bit packed pattern is rejected at parse time, before a file is opened.
+`numeric_within`, `geo_within`, `list_overlap`, `list_jaccard`, `list_contains`, `else`. A
+configuration that applies a level to a column type it cannot read, omits a trailing `else`, or
+overflows the 32-bit packed pattern is rejected at parse time, before a file is opened.
+
+`list_contains` is the one level whose two columns have different types: a scalar string against
+a list of aliases, firing when either row's value is an element of the other row's list. It is
+how a `first_name` is checked against a `nicknames` column, and it sits in the same comparison as
+the name's own levels, ordered between them:
+
+```json
+{"name": "forename", "columns": ["first_name", "nicknames"], "levels": [
+  {"type": "null"},
+  {"type": "exact"},
+  {"type": "list_contains"},
+  {"type": "jaro_winkler", "threshold": 0.9},
+  {"type": "else"}]}
+```
 
 Blocking sources are declared in the same file and unioned in order. Every source here
 selects on a single column, which is what makes it usable for estimating `m`:

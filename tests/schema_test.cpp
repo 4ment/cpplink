@@ -82,7 +82,8 @@ class ComparisonConfig : public ::testing::Test {
             {"name":"surname","type":"string"},
             {"name":"dob","type":"date"},
             {"name":"lat","type":"double"},
-            {"name":"lon","type":"double"}],"comparisons":)" +
+            {"name":"lon","type":"double"},
+            {"name":"aliases","type":"string_list"}],"comparisons":)" +
                                  comparisons + "}";
         return cpplink::ParseSchema(json, &schema_, &error_);
     }
@@ -137,6 +138,36 @@ TEST_F(ComparisonConfig, GeoNeedsExactlyTwoColumns) {
         "levels":[{"type":"null"},{"type":"geo_within","threshold":5},
                   {"type":"else"}]}])"))
         << error_;
+}
+
+// The one level whose two columns have different types, so the check has to see
+// the whole signature rather than one type at a time.
+TEST_F(ComparisonConfig, ListContainsReadsAScalarAgainstAList) {
+    EXPECT_TRUE(Parse(R"([{"name":"nickname","columns":["surname","aliases"],
+        "levels":[{"type":"null"},{"type":"list_contains"},{"type":"else"}]}])"))
+        << error_;
+    // The scalar column comes first: reversed, the level would be asking whether
+    // a list is an element of a string.
+    EXPECT_FALSE(Parse(R"([{"columns":["aliases","surname"],
+        "levels":[{"type":"list_contains"},{"type":"else"}]}])"));
+    // Two strings is a different question -- equality -- and two lists is
+    // list_overlap. Neither is this level.
+    EXPECT_FALSE(Parse(R"([{"columns":["surname","surname"],
+        "levels":[{"type":"list_contains"},{"type":"else"}]}])"));
+    EXPECT_NE(error_.find("cannot read"), std::string::npos);
+    EXPECT_FALSE(Parse(R"([{"columns":["aliases"],
+        "levels":[{"type":"list_contains"},{"type":"else"}]}])"));
+    EXPECT_NE(error_.find("cannot read"), std::string::npos);
+}
+
+// Membership is a yes or no: there is no threshold to give it, and offering one
+// would suggest it could be tuned.
+TEST_F(ComparisonConfig, ListContainsTakesNoThreshold) {
+    ASSERT_TRUE(Parse(R"([{"columns":["surname","aliases"],
+        "levels":[{"type":"list_contains","threshold":2},{"type":"else"}]}])"))
+        << error_;
+    EXPECT_EQ(schema_.comparisons[0].levels[0].threshold, 0.0);
+    EXPECT_EQ(schema_.comparisons[0].levels[0].Describe(), "value in list");
 }
 
 TEST_F(ComparisonConfig, RejectsMixedColumnTypesInOneComparison) {

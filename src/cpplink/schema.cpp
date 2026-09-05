@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -36,6 +37,7 @@ constexpr LevelName kLevelNames[] = {
     {"geo_within", LevelType::kGeoWithin},
     {"list_overlap", LevelType::kListOverlap},
     {"list_jaccard", LevelType::kListJaccard},
+    {"list_contains", LevelType::kListContains},
     {"else", LevelType::kElse},
 };
 
@@ -125,6 +127,8 @@ std::string LevelSpec::Describe() const {
             return "overlap >= " + Number(threshold, 0);
         case LevelType::kListJaccard:
             return "jaccard >= " + Number(threshold, 2);
+        case LevelType::kListContains:
+            return "value in list";
         case LevelType::kElse:
             return "else";
     }
@@ -199,6 +203,11 @@ bool LevelAcceptsColumn(LevelType level, ColumnType column) {
         case LevelType::kListOverlap:
         case LevelType::kListJaccard:
             return column == ColumnType::kStringList;
+        case LevelType::kListContains:
+            // Answered by LevelAcceptsColumns, which sees both columns at once:
+            // this level is the one whose two columns have different types, so a
+            // type at a time cannot decide it.
+            return false;
     }
     return false;
 }
@@ -212,16 +221,62 @@ size_t LevelColumnCount(LevelType level) {
         case LevelType::kElse:
             return 0;
         case LevelType::kGeoWithin:
+        case LevelType::kListContains:
             return 2;
         default:
             return 1;
     }
 }
 
+// A comparison ordinarily spans one column type. This is the one shape that does
+// not: a scalar string beside a list of the aliases it may be known by, which is
+// what list_contains reads. Order is part of it -- the scalar first -- because
+// "is this name one of those nicknames" is not the question with the columns the
+// other way round.
+bool IsScalarAndList(const std::vector<ColumnType>& types) {
+    return types.size() == 2 && types[0] == ColumnType::kString &&
+           types[1] == ColumnType::kStringList;
+}
+
+// Whether a level can read the columns the comparison names, in order.
+//
+// Almost every level wants one type and every column of it. The exception is the
+// scalar-and-list shape, where a one-column level reads whichever of the two
+// columns has the type it understands: exact and the fuzzy string levels the
+// scalar one, list_overlap and list_jaccard the list one. That is deliberate and
+// is the reason to want the shape at all. Levels are ordered evidence, so the
+// alias bridge belongs in the same comparison as the name levels it ranks
+// against -- below an exact match and above a fuzzy one -- not in a second
+// comparison whose agreements would then be counted as independent of the
+// first's, which they are not.
+bool LevelAcceptsColumns(LevelType level, const std::vector<ColumnType>& types) {
+    if (level == LevelType::kListContains) return IsScalarAndList(types);
+    if (IsScalarAndList(types)) {
+        return LevelColumnCount(level) <= 1 && (LevelAcceptsColumn(level, types[0]) ||
+                                                LevelAcceptsColumn(level, types[1]));
+    }
+    for (const ColumnType type : types) {
+        if (!LevelAcceptsColumn(level, type)) return false;
+    }
+    return true;
+}
+
+// Checked before the levels are, so a comparison over columns no level could ever
+// read together is reported as that rather than as whichever level first tripped
+// over it.
+bool TypesCompatible(const std::vector<ColumnType>& types) {
+    if (IsScalarAndList(types)) return true;
+    for (const ColumnType type : types) {
+        if (type != types.front()) return false;
+    }
+    return true;
+}
+
 bool LevelNeedsThreshold(LevelType level) {
     switch (level) {
         case LevelType::kNull:
         case LevelType::kExact:
+        case LevelType::kListContains:
         case LevelType::kElse:
             return false;
         default:
@@ -263,22 +318,24 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                                     item["term_frequency"].is_boolean() &&
                                     item["term_frequency"].get<bool>();
 
-        // Every named column must exist, and a comparison spans one type only.
-        ColumnType column_type = ColumnType::kString;
-        for (size_t i = 0; i < comparison.columns.size(); ++i) {
-            const ColumnSpec* spec = schema->Find(comparison.columns[i]);
+        // Every named column must exist, and the types it spans must be a shape
+        // some level can read.
+        std::vector<ColumnType> column_types;
+        for (const std::string& name : comparison.columns) {
+            const ColumnSpec* spec = schema->Find(name);
             if (spec == nullptr) {
-                *error = "comparison \"" + comparison.name + "\" names column \"" +
-                         comparison.columns[i] + "\", which is not declared";
+                *error = "comparison \"" + comparison.name + "\" names column \"" + name +
+                         "\", which is not declared";
                 return false;
             }
-            if (i == 0) {
-                column_type = spec->type;
-            } else if (spec->type != column_type) {
-                *error = "comparison \"" + comparison.name +
-                         "\" mixes column types; all its columns must agree";
-                return false;
-            }
+            column_types.push_back(spec->type);
+        }
+        if (!TypesCompatible(column_types)) {
+            *error = "comparison \"" + comparison.name +
+                     "\" mixes column types; all its columns must agree, unless it "
+                     "is a string against a string_list, which is what "
+                     "\"list_contains\" reads";
+            return false;
         }
 
         if (!item.contains("levels") || !item["levels"].is_array() ||
@@ -301,14 +358,22 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                          "\" has unknown level type \"" + type_name + "\"";
                 return false;
             }
-            if (!LevelAcceptsColumn(level.type, column_type)) {
+            if (!LevelAcceptsColumns(level.type, column_types)) {
+                std::string types;
+                for (const ColumnType type : column_types) {
+                    if (!types.empty()) types += ", ";
+                    types += ColumnTypeName(type);
+                }
                 *error = "comparison \"" + comparison.name + "\" applies level \"" +
-                         type_name + "\" to a " + ColumnTypeName(column_type) +
-                         " column, which it cannot read";
+                         type_name + "\" to a " + types + " column, which it cannot read";
                 return false;
             }
+            // A one-column level in the scalar-and-list shape reads one of the
+            // two, which is the one place a level's arity may be under the
+            // comparison's without that being a mistake.
             const size_t needs = LevelColumnCount(level.type);
-            if (needs != 0 && needs != comparison.columns.size()) {
+            const bool reads_one_of_two = needs == 1 && IsScalarAndList(column_types);
+            if (needs != 0 && needs != comparison.columns.size() && !reads_one_of_two) {
                 *error = "comparison \"" + comparison.name + "\" level \"" + type_name +
                          "\" reads " + std::to_string(needs) +
                          " column(s) but the comparison names " +

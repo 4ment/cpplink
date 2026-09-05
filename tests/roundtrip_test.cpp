@@ -6,6 +6,8 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <variant>
 
 #include <gtest/gtest.h>
 
@@ -111,6 +113,75 @@ TEST_F(RoundTrip, GeneratedFileLoadsBackWithTheDeclaredShape) {
     EXPECT_GT(store.NullCount(3), 0u);  // email
     EXPECT_EQ(store.NullCount(6), 0u);  // latitude is never dropped
     EXPECT_GT(store.Memory().Total(), 0u);
+}
+
+// A schema whose one comparison bridges a scalar column and a list one. The two
+// dictionaries are interned independently by the loader, so the same text holds a
+// different id in each -- which is the thing the alias map exists to absorb and
+// the thing only a real load exercises.
+constexpr const char* kAliasSchema = R"({
+  "unique_id": "id",
+  "columns": [
+    {"name": "first_name", "type": "string"},
+    {"name": "address_tokens", "type": "string_list"}
+  ],
+  "comparisons": [
+    {"name": "alias", "columns": ["first_name", "address_tokens"], "levels": [
+      {"type": "null"}, {"type": "list_contains"}, {"type": "else"}]}
+  ]
+})";
+
+TEST_F(RoundTrip, ListContainsAlignsTwoDictionariesOverLoadedData) {
+    cpplink::SampleOptions options;
+    options.rows = 2000;
+    options.row_group_size = 500;
+    options.truth_path.clear();
+
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kAliasSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
+
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+
+    const auto& names = std::get<cpplink::StringColumn>(store.column(0));
+    const auto& tokens = std::get<cpplink::StringListColumn>(store.column(1));
+
+    // The same question answered from the text, which is what the interned form
+    // is supposed to be a faster spelling of.
+    const auto held = [&](uint64_t row, uint64_t other) {
+        const uint32_t id = names.ids[other];
+        if (id == cpplink::kNullId) return false;
+        const std::string_view name = names.dict.Value(id);
+        for (uint64_t i = tokens.offsets[row]; i < tokens.offsets[row + 1]; ++i) {
+            if (tokens.dict.Value(tokens.ids[i]) == name) return true;
+        }
+        return false;
+    };
+
+    uint64_t fired = 0;
+    for (uint64_t a = 0; a < 400; ++a) {
+        for (uint64_t b = a + 1; b < 400; ++b) {
+            const bool contains = held(a, b) || held(b, a);
+            const bool null = names.ids[a] == cpplink::kNullId &&
+                              tokens.offsets[a + 1] == tokens.offsets[a];
+            const uint8_t expected = null ? 0
+                                     : names.ids[b] == cpplink::kNullId &&
+                                             tokens.offsets[b + 1] == tokens.offsets[b]
+                                         ? 0
+                                     : contains ? 1
+                                                : 2;
+            ASSERT_EQ(comparisons.EvaluateOne(0, a, b), expected) << a << "," << b;
+            if (expected == 1) ++fired;
+        }
+    }
+    // The vocabularies are drawn from one syllable generator, so names and street
+    // words collide often enough for this to be testing something.
+    EXPECT_GT(fired, 0u);
 }
 
 TEST_F(RoundTrip, ListValuesAreSortedAndDeduplicatedPerRow) {

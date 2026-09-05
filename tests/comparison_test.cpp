@@ -229,4 +229,119 @@ TEST(SignatureFilterTest, ChangesNoPattern) {
     }
 }
 
+// The nickname shape: a forename compared against a forename, with the other
+// row's alias list as a bridge between them. Levels in order: null, exact,
+// list_contains, jaro_winkler, else -- which is the ordering that makes the
+// bridge worth having, since it ranks between a name that matches outright and
+// one that merely looks similar.
+constexpr const char* kNicknameConfig = R"({
+  "columns": [
+    {"name": "forename", "type": "string"},
+    {"name": "aliases", "type": "string_list"}
+  ],
+  "comparisons": [
+    {"name": "forename", "columns": ["forename", "aliases"], "levels": [
+      {"type": "null"},
+      {"type": "exact"},
+      {"type": "list_contains"},
+      {"type": "jaro_winkler", "threshold": 0.9},
+      {"type": "else"}]}
+  ]
+})";
+
+// Rows, in order:
+//   0 william, aliases {bill, will}    3 robert, aliases {bob, will}
+//   1 bill,    aliases {william}       4 no forename, no aliases
+//   2 willam,  no aliases              5 bill, no aliases
+class Nicknames : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        std::string error;
+        ASSERT_TRUE(cpplink::ParseSchema(kNicknameConfig, &schema_, &error)) << error;
+        store_ = std::make_unique<cpplink::RecordStore>(schema_);
+
+        auto& forename = std::get<cpplink::StringColumn>(store_->mutable_column(0));
+        const uint32_t william = forename.dict.Intern("william");
+        const uint32_t bill = forename.dict.Intern("bill");
+        const uint32_t willam = forename.dict.Intern("willam");
+        const uint32_t robert = forename.dict.Intern("robert");
+        forename.ids = {william, bill, willam, robert, cpplink::kNullId, bill};
+
+        auto& aliases = std::get<cpplink::StringListColumn>(store_->mutable_column(1));
+        // Interned in a different order from the forename column, and holding a
+        // value the forename column never sees: the two dictionaries share no ids,
+        // which is exactly what the alias map has to absorb.
+        const uint32_t a_bob = aliases.dict.Intern("bob");
+        const uint32_t a_bill = aliases.dict.Intern("bill");
+        const uint32_t a_will = aliases.dict.Intern("will");
+        const uint32_t a_william = aliases.dict.Intern("william");
+        // Sorted per row, as the loader guarantees.
+        aliases.ids = {a_bill, a_will, a_william, a_bob, a_will};
+        aliases.offsets = {0, 2, 3, 3, 5, 5, 5};
+
+        store_->set_num_records(6);
+        store_->Finalize();
+        ASSERT_TRUE(comparisons_.Bind(schema_, *store_, &error)) << error;
+    }
+
+    cpplink::Schema schema_;
+    std::unique_ptr<cpplink::RecordStore> store_;
+    cpplink::ComparisonSet comparisons_;
+};
+
+TEST_F(Nicknames, FiresInEitherDirection) {
+    // "bill" is one of william's aliases, and "william" is one of bill's. Either
+    // direction alone is enough, so the level does not care which row was drawn
+    // first -- and the pair evaluates the same both ways round.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 1), 2);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 1, 0), 2);
+    // Row 5 is "bill" with no aliases of its own, so only the direction that
+    // reads row 0's list can fire. It still does.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 5), 2);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 5, 0), 2);
+}
+
+// The reason this is not list_overlap over the two alias lists: rows 0 and 3 are
+// "william" and "robert", and both lists hold "will". Intersecting them would
+// agree; membership does not, because neither name is in the other's list.
+TEST_F(Nicknames, SharingAnAliasIsNotBeingOne) {
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 3), 4);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 1, 3), 4);
+}
+
+TEST_F(Nicknames, LevelsAboveAndBelowStillWin) {
+    // "bill" against "bill": exact, above the bridge.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 1, 5), 1);
+    // "william" against "willam": no alias link, so it falls to jaro_winkler.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 2), 3);
+    // "willam" against "robert": nothing at all.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 2, 3), 4);
+}
+
+// A row holding neither a name nor a list can produce no match with any partner,
+// which is what the null level means here. A row holding a name but no list can,
+// so it is not null -- marking it so would let the null level pre-empt a level
+// that fires.
+TEST_F(Nicknames, NullIsHoldingNeitherPart) {
+    EXPECT_TRUE(comparisons_.IsNullValue(0, 4));
+    EXPECT_FALSE(comparisons_.IsNullValue(0, 5));
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 4), 0);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 4, 5), 0);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 4, 4), 0);
+    // Two present names with no lists between them is a disagreement, not a null.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 2, 5), 4);
+}
+
+// LevelPossible is what Scorer::Ceiling prices a pair with, so it may never be
+// false where the level fires.
+TEST_F(Nicknames, LevelPossibleAgreesWithTheLevelItBounds) {
+    for (uint64_t a = 0; a < store_->NumRecords(); ++a) {
+        for (uint64_t b = 0; b < store_->NumRecords(); ++b) {
+            const uint8_t level = comparisons_.EvaluateOne(0, a, b);
+            EXPECT_TRUE(comparisons_.LevelPossible(0, level, a, b))
+                << "rows " << a << "," << b;
+        }
+    }
+}
+
 }  // namespace

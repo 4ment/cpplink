@@ -30,6 +30,14 @@ struct BoundComparison {
     // Present only when this comparison has a fuzzy string level, which is the
     // only place the signatures pay for themselves.
     const SignatureTable* signatures = nullptr;
+    // Present only when this comparison has a list_contains level. Indexed by a
+    // value id of `strings`, holding the id the same text has in `lists`'s own
+    // dictionary, or kNullId where the list column never saw that text. Dense
+    // ids are per column, so "is this first name one of those nicknames" is an
+    // integer question only once the two dictionaries have been aligned, and
+    // aligning them once at bind time is what keeps the pair path integer-only.
+    const uint32_t* alias_ids = nullptr;
+    uint32_t alias_size = 0;
 };
 
 class ComparisonSet {
@@ -93,6 +101,10 @@ class ComparisonSet {
     // ComparisonSet cannot be copied into one whose comparisons point at another's
     // tables.
     std::vector<std::unique_ptr<SignatureTable>> tables_;
+    // One per list_contains comparison, addressed through BoundComparison. Held
+    // by pointer for the same reason the signature tables are: the vector may
+    // grow, and a BoundComparison holds the data() of one of these.
+    std::vector<std::unique_ptr<std::vector<uint32_t>>> alias_maps_;
     uint8_t width_ = 0;
 };
 
