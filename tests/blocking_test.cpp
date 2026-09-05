@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include "cpplink/recall.hpp"
 #include "cpplink/schema.hpp"
 
 namespace {
@@ -209,3 +210,45 @@ TEST(BlockingConfigTest, RejectsAnUndeclaredColumnAndUnknownType) {
 }
 
 }  // namespace
+
+// The sweep in bench/sweep_blocking.py ranks methods by these numbers, so what
+// has to hold is that they describe the stream the pipeline would actually
+// evaluate -- not merely that they are self-consistent.
+TEST_F(BlockingFixture, RecallMetricsDescribeTheEmittedStream) {
+    Build(R"([{"type":"exact_value","column":"surname"},
+              {"type":"exact_value","column":"dob"},
+              {"type":"sorted_neighbourhood","column":"dob","window":2}])");
+
+    // Two pairs a source reaches, one it does not: row 6 is null on both columns
+    // and no source can produce it.
+    cpplink::TruthPairs truth;
+    truth.rows = {{0, 1}, {3, 4}, {5, 6}};
+
+    const cpplink::RecallMetrics metrics =
+        cpplink::MeasureRecall(plan_, *store_, truth, /*count_union=*/true);
+
+    EXPECT_EQ(metrics.truth_pairs, 3u);
+    EXPECT_EQ(metrics.union_found, 2u);
+    EXPECT_EQ(metrics.pair_space, store_->PairSpace(plan_.mode()));
+
+    // The deduplicated union is the metric the frontier is plotted against, so
+    // it has to equal what enumeration emits. Any drift here silently reprices
+    // every method in the sweep.
+    EXPECT_EQ(metrics.candidate_union, Emitted().size());
+    EXPECT_LE(metrics.candidate_union, metrics.candidate_sum);
+
+    // Marginal credit partitions the reached pairs: a pair is credited to the
+    // one source that would emit it, so the column sums to the union rather
+    // than over-counting the pairs two sources both reach.
+    uint64_t first_to = 0;
+    uint64_t candidate_sum = 0;
+    ASSERT_EQ(metrics.sources.size(), plan_.Size());
+    for (size_t s = 0; s < metrics.sources.size(); ++s) {
+        EXPECT_LE(metrics.sources[s].first_to, metrics.sources[s].found);
+        EXPECT_EQ(metrics.sources[s].candidate_pairs, plan_.CountPairs(s));
+        first_to += metrics.sources[s].first_to;
+        candidate_sum += metrics.sources[s].candidate_pairs;
+    }
+    EXPECT_EQ(first_to, metrics.union_found);
+    EXPECT_EQ(candidate_sum, metrics.candidate_sum);
+}

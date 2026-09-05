@@ -1,0 +1,245 @@
+{
+  "unique_id": "unique_id",
+  "columns": [
+    {
+      "name": "given_name",
+      "type": "string"
+    },
+    {
+      "name": "surname",
+      "type": "string"
+    },
+    {
+      "name": "date_of_birth",
+      "type": "string"
+    },
+    {
+      "name": "soc_sec_id",
+      "type": "string"
+    },
+    {
+      "name": "address_1",
+      "type": "string"
+    },
+    {
+      "name": "suburb",
+      "type": "string"
+    },
+    {
+      "name": "postcode",
+      "type": "string"
+    },
+    {
+      "name": "state",
+      "type": "string"
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "given_name",
+      "columns": [
+        "given_name"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.8
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "surname",
+      "columns": [
+        "surname"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.8
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "date_of_birth",
+      "columns": [
+        "date_of_birth"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 1
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 2
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "soc_sec_id",
+      "columns": [
+        "soc_sec_id"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 1
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "address_1",
+      "columns": [
+        "address_1"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.8
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "suburb",
+      "columns": [
+        "suburb"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "postcode",
+      "columns": [
+        "postcode"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 1
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "state",
+      "columns": [
+        "state"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "else"
+        }
+      ]
+    }
+  ],
+  "blocking": [
+    {
+      "type": "exact_value",
+      "column": "soc_sec_id"
+    },
+    {
+      "type": "exact_value",
+      "column": "date_of_birth"
+    },
+    {
+      "type": "exact_value",
+      "column": "surname"
+    },
+    {
+      "type": "exact_value",
+      "column": "given_name"
+    }
+  ]
+}

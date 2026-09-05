@@ -10,30 +10,10 @@
 #include <string>
 #include <vector>
 
+#include "cpplink/format.hpp"
+
 namespace cpplink {
-namespace {
-
-std::string WithThousands(uint64_t value) {
-    std::string digits = std::to_string(value);
-    std::string out;
-    int count = 0;
-    for (auto it = digits.rbegin(); it != digits.rend(); ++it) {
-        if (count > 0 && count % 3 == 0) out.push_back(',');
-        out.push_back(*it);
-        ++count;
-    }
-    std::reverse(out.begin(), out.end());
-    return out;
-}
-
-// Marked with an ASCII dot rather than an ellipsis: std::setw pads by bytes, and a
-// multi-byte marker silently costs the column its alignment.
-std::string Truncate(std::string text, size_t width) {
-    if (text.size() <= width) return text;
-    return text.substr(0, width - 1) + ".";
-}
-
-}  // namespace
+namespace {}  // namespace
 
 void PrintBlockingReport(const BlockingPlan& plan, const RecordStore& store,
                          bool count_union, std::ostream& out) {

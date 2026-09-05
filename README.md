@@ -13,9 +13,11 @@ of millions of records. cpplink folds pairs into a histogram of agreement patter
 are generated and discards them, so peak memory is set by the number of *records*, not the
 number of *pairs*.
 
-> **Status: phases 0–5 complete.** The record store, parquet loader, comparison levels,
-> blocking sources, the recall harness, parameter estimation, scoring and clustering are
-> in, so the pipeline runs end to end from parquet to duplicate clusters.
+> **Status: phases 0–6 complete.** The record store, parquet loader, comparison levels,
+> blocking sources, the recall harness, parameter estimation, scoring, clustering, the
+> signature filter, spill and re-scoring, and record linkage across two inputs are all in
+> and measured, so the pipeline runs end to end from parquet to duplicate clusters in both
+> dedup and link mode.
 
 ## Approach
 
@@ -42,6 +44,13 @@ term-frequency tables the model already needs — pairs are generated from agree
 MinHash LSH and sorted-neighbourhood passes. Sources that select on a whole record rather
 than a column (an ANN index, for instance) are used for prediction only, because they break
 the conditional-independence argument that makes EM's parameter estimates unbiased.
+
+None of those sources is a new idea — see [prior art](#prior-art) — so the useful question
+is not which to believe in but which earns its candidates, and that is measured rather than
+argued. `recall` reports pair completeness, pair quality and the reduction ratio per source
+and for the plan; [`bench/sweep_blocking.py`](bench/) sweeps each method over its own knob
+and reports the frontier, because every method can buy recall with candidates and a single
+operating point per method compares nothing.
 
 ## Usage
 
@@ -114,6 +123,12 @@ cpplink estimate --schema examples/sample_schema.json --out model.json data.parq
 cpplink predict --schema examples/sample_schema.json --model model.json \
                 --out edges/ --threshold 20 data.parquet
 
+# Re-score a spilled run under a new model, without comparing anything again
+cpplink predict --schema examples/sample_schema.json --model model.json \
+                --out edges/ --spill spill/ --threshold 20 data.parquet
+cpplink rescore --schema examples/sample_schema.json --model tuned.json \
+                --spill spill/ --out edges2/ --threshold 20 data.parquet
+
 # Join those edges into duplicate clusters, and score the result against known pairs
 cpplink cluster --schema examples/sample_schema.json --edges edges/ \
                 --out clusters.csv --truth truth.csv data.parquet
@@ -137,9 +152,14 @@ serves as ground truth for the recall harness in a later phase.
   edit distance *(done)*
 - Automatic blocking: exact-value and rare-value inverted indexes, MinHash LSH and sorted
   neighbourhood, with exact candidate-count reporting and recall measurement *(done)*
-- Optional ANN blocking for prediction
+- ~~Optional ANN blocking for prediction~~ — **retired by measurement, not built.** `recall
+  --why` shows no missed pair that fails to agree, exactly or fuzzily, on a column already
+  in the schema, so an ANN index would have nothing to find; the remaining misses are
+  columns that are simply not blocked on
 - Multicore, shared-memory parallelism *(estimation and scoring done)*
 - Connected-component clustering of the scored edges *(done)*
+- Spill of (a, b, γ) and re-scoring under a new model without a second comparison pass
+  *(done)*
 - Deduplication first; record linkage across datasets through the same interfaces
 
 ## Getting Started
@@ -170,6 +190,54 @@ cmake --build build
 cmake -S . -B build -DBUILD_TESTING=on -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 cmake --build build
 ctest --test-dir build
+```
+
+## Prior art
+
+The blocking methods here are drawn from the record linkage and entity resolution
+literature rather than invented for this tool, and it is worth being explicit about which
+is which.
+
+| Source | Prior art |
+|---|---|
+| sorted neighbourhood | Hernández & Stolfo 1995 |
+| rare-value inverted index | IDF-weighted canopies (McCallum, Nigam & Ungar 2000); rare-token ordering in prefix-filtering similarity joins (Bayardo, Ma & Srikant 2007; Xiao et al. 2008) |
+| MinHash LSH | Broder 1997; Indyk & Motwani 1998; benchmarked for record linkage by Steorts, Ventura, Sadinle & Fienberg 2014 |
+| ANN over embeddings | DeepER (2018), AutoBlock (2020), DeepBlocker (2021), Sparkly (2023) |
+| automatic blocking as such | Michelson & Knoblock 2006; Bilenko, Kamath & Mooney 2006; Kejriwal & Miranker 2013; the `dedupe` library; token blocking and meta-blocking (Papadakis et al.) |
+
+Christen's 2012 survey of indexing techniques covers most of these and is the reference for
+the pair-completeness, pair-quality and reduction-ratio metrics `recall` reports.
+
+What this project claims is narrower, and none of it is a blocking method:
+
+1. **The EM-safety criterion** — a pair source may feed estimation only if its selection
+   event factors as a condition on an excludable column subset. A whole-record source
+   biases *every* `m_c` with no column left to repair it, so estimation and prediction run
+   over different unions of sources.
+2. **Admissible per-pattern term-frequency brackets** that let most patterns be emitted or
+   dropped without touching the TF tables, emitting exactly the edges a full scoring pass
+   would.
+3. **Exact closed-form candidate pricing** from the term-frequency tables, which prices
+   8.25 billion pairs without enumerating one.
+4. **The streaming implementation.** γ's sufficiency is Fellegi & Sunter 1969; that a full
+   Fellegi–Sunter pipeline with TF adjustment fits in memory at 18M records, because
+   nothing in it holds a row per pair, is an engineering result rather than a statistical
+   one.
+
+[DESIGN.md](DESIGN.md) carries the measurements behind each, and [bench/](bench/) the
+comparison against splink and the blocking-method frontier.
+
+## Documentation
+
+The full documentation — the model and the EM algorithm, the blocking sources, and a page per
+command explaining its goal and how to read its output — is built with
+[MkDocs](https://www.mkdocs.org/) from [docs/](docs/):
+
+```sh
+conda activate cpplink
+mkdocs serve     # live preview on http://127.0.0.1:8000
+mkdocs build     # render to site/
 ```
 
 ## Code Style

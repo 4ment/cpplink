@@ -67,7 +67,8 @@ void PrintUsage(std::ostream& out) {
            "[--mode MODE]\n"
         << "                <file.parquet>...\n"
         << "cpplink recall --schema <schema.json> --truth <truth.csv> [--why]\n"
-        << "               [--show-misses N] [--mode MODE] <file.parquet>...\n"
+        << "               [--show-misses N] [--count] [--json] [--mode MODE]\n"
+        << "               <file.parquet>...\n"
         << "cpplink estimate --schema <schema.json> [--out <model.json>]\n"
         << "                 [--u-sample N] [--session-pairs N] [--threads N]\n"
         << "                 [--iterations N] [--lambda F] [--seed N] "
@@ -376,6 +377,8 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
     std::string value;
     bool why = false;
     size_t show_misses = 0;
+    bool count_union = false;
+    bool as_json = false;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -389,6 +392,10 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
             if (!TakeValue(args, &i, &truth_path, err)) return 1;
         } else if (args[i] == "--why") {
             why = true;
+        } else if (args[i] == "--count") {
+            count_union = true;
+        } else if (args[i] == "--json") {
+            as_json = true;
         } else if (args[i] == "--show-misses") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             show_misses = static_cast<size_t>(std::stoul(value));
@@ -421,7 +428,12 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
         err << "cpplink: " << error << "\n";
         return 1;
     }
-    PrintRecallReport(plan, truth, out);
+    const RecallMetrics metrics = MeasureRecall(plan, *store, truth, count_union);
+    if (as_json) {
+        WriteRecallJson(metrics, out);
+    } else {
+        PrintRecallReport(metrics, out);
+    }
 
     if (why) {
         if (schema.comparisons.empty()) {

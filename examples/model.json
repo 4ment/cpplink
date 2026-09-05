@@ -1,0 +1,403 @@
+{
+  "comparisons": [
+    {
+      "columns": [
+        "last_name"
+      ],
+      "levels": [
+        {
+          "label": "null",
+          "m": 1e-12,
+          "m_estimated": true,
+          "m_support": 0.0,
+          "u": 1e-12,
+          "u_exact": true,
+          "u_observed": 0
+        },
+        {
+          "label": "exact",
+          "m": 0.6072855867148481,
+          "m_estimated": true,
+          "m_support": 128881.0,
+          "u": 2.3818564197530862e-05,
+          "u_exact": true,
+          "u_observed": 22
+        },
+        {
+          "label": "jaro_winkler >= 0.92",
+          "m": 0.280394559867657,
+          "m_estimated": true,
+          "m_support": 59062.0,
+          "u": 5.99999508850185e-06,
+          "u_exact": false,
+          "u_observed": 6
+        },
+        {
+          "label": "jaro_winkler >= 0.85",
+          "m": 0.07978891965738431,
+          "m_estimated": true,
+          "m_support": 16685.0,
+          "u": 0.00020899982891614777,
+          "u_exact": false,
+          "u_observed": 209
+        },
+        {
+          "label": "else",
+          "m": 0.032530933760110625,
+          "m_estimated": true,
+          "m_support": 6793.999999999115,
+          "u": 0.9997611816117978,
+          "u_exact": false,
+          "u_observed": 999762
+        }
+      ],
+      "name": "last_name",
+      "sessions": 3,
+      "term_frequency": true
+    },
+    {
+      "columns": [
+        "first_name"
+      ],
+      "levels": [
+        {
+          "label": "null",
+          "m": 1e-12,
+          "m_estimated": true,
+          "m_support": 0.0,
+          "u": 1e-12,
+          "u_exact": true,
+          "u_observed": 0
+        },
+        {
+          "label": "exact",
+          "m": 0.751743732516315,
+          "m_estimated": true,
+          "m_support": 177836.7266448482,
+          "u": 0.001185163736419753,
+          "u_exact": true,
+          "u_observed": 1203
+        },
+        {
+          "label": "levenshtein <= 1",
+          "m": 0.013072922541479863,
+          "m_estimated": true,
+          "m_support": 1248.4381388081051,
+          "u": 0.001472027760403516,
+          "u_exact": false,
+          "u_observed": 1472
+        },
+        {
+          "label": "jaro_winkler >= 0.88",
+          "m": 0.14105125120748394,
+          "m_estimated": true,
+          "m_support": 33768.80076203724,
+          "u": 0.0005750108439076234,
+          "u_exact": false,
+          "u_observed": 575
+        },
+        {
+          "label": "else",
+          "m": 0.09413209373472117,
+          "m_estimated": true,
+          "m_support": 22442.537933670264,
+          "u": 0.9967677976592692,
+          "u_exact": false,
+          "u_observed": 996749
+        }
+      ],
+      "name": "first_name",
+      "sessions": 4,
+      "term_frequency": true
+    },
+    {
+      "columns": [
+        "dob"
+      ],
+      "levels": [
+        {
+          "label": "null",
+          "m": 1e-12,
+          "m_estimated": true,
+          "m_support": 0.0,
+          "u": 1e-12,
+          "u_exact": true,
+          "u_observed": 0
+        },
+        {
+          "label": "exact",
+          "m": 0.7578683724201069,
+          "m_estimated": true,
+          "m_support": 177570.2009262426,
+          "u": 4.8661451851851854e-05,
+          "u_exact": true,
+          "u_observed": 46
+        },
+        {
+          "label": "within 2 days",
+          "m": 0.15454895169204308,
+          "m_estimated": true,
+          "m_support": 36080.90771832091,
+          "u": 0.00020499965938636152,
+          "u_exact": false,
+          "u_observed": 205
+        },
+        {
+          "label": "within a year",
+          "m": 0.003502772632579792,
+          "m_estimated": true,
+          "m_support": 331.2970063634166,
+          "u": 0.03499994184645197,
+          "u_exact": false,
+          "u_observed": 35000
+        },
+        {
+          "label": "else",
+          "m": 0.08407990325527022,
+          "m_estimated": true,
+          "m_support": 6022.097828437791,
+          "u": 0.9647463970423098,
+          "u_exact": false,
+          "u_observed": 964748
+        }
+      ],
+      "name": "dob",
+      "sessions": 3,
+      "term_frequency": true
+    },
+    {
+      "columns": [
+        "email"
+      ],
+      "levels": [
+        {
+          "label": "null",
+          "m": 0.3370145528449151,
+          "m_estimated": true,
+          "m_support": 50795.565636901185,
+          "u": 0.0552149199996914,
+          "u_exact": true,
+          "u_observed": 55462
+        },
+        {
+          "label": "exact",
+          "m": 0.5768941067029681,
+          "m_estimated": true,
+          "m_support": 87741.0,
+          "u": 5.959262345679011e-07,
+          "u_exact": true,
+          "u_observed": 0
+        },
+        {
+          "label": "jaro_winkler >= 0.93",
+          "m": 0.0860878850988208,
+          "m_estimated": true,
+          "m_support": 6165.937842462472,
+          "u": 5.001307433924402e-07,
+          "u_exact": false,
+          "u_observed": 0
+        },
+        {
+          "label": "else",
+          "m": 3.4553532959065803e-06,
+          "m_estimated": true,
+          "m_support": 1.568198306105521e-10,
+          "u": 0.9447839839433306,
+          "u_exact": false,
+          "u_observed": 944537
+        }
+      ],
+      "name": "email",
+      "sessions": 3,
+      "term_frequency": true
+    },
+    {
+      "columns": [
+        "phone"
+      ],
+      "levels": [
+        {
+          "label": "null",
+          "m": 0.2428330036839169,
+          "m_estimated": true,
+          "m_support": 32476.490134022344,
+          "u": 0.03950526433055562,
+          "u_exact": true,
+          "u_observed": 39573
+        },
+        {
+          "label": "exact",
+          "m": 0.6727082751771293,
+          "m_estimated": true,
+          "m_support": 91235.0,
+          "u": 6.192830246913579e-07,
+          "u_exact": true,
+          "u_observed": 0
+        },
+        {
+          "label": "levenshtein <= 2",
+          "m": 3.85323988343682e-06,
+          "m_estimated": true,
+          "m_support": 0.039238564014993454,
+          "u": 3.6002553231494265e-05,
+          "u_exact": false,
+          "u_observed": 36
+        },
+        {
+          "label": "else",
+          "m": 0.08445486789907028,
+          "m_estimated": true,
+          "m_support": 6048.974106777461,
+          "u": 0.9604581138331882,
+          "u_exact": false,
+          "u_observed": 960390
+        }
+      ],
+      "name": "phone",
+      "sessions": 3,
+      "term_frequency": true
+    },
+    {
+      "columns": [
+        "postcode"
+      ],
+      "levels": [
+        {
+          "label": "null",
+          "m": 0.14915318299426336,
+          "m_estimated": true,
+          "m_support": 36169.216532819875,
+          "u": 0.023834044320987752,
+          "u_exact": true,
+          "u_observed": 23709
+        },
+        {
+          "label": "exact",
+          "m": 0.7867682523371597,
+          "m_estimated": true,
+          "m_support": 193007.9112860134,
+          "u": 0.00010908588703703703,
+          "u_exact": true,
+          "u_observed": 107
+        },
+        {
+          "label": "else",
+          "m": 0.06407856466857688,
+          "m_estimated": true,
+          "m_support": 6119.37566053054,
+          "u": 0.9760568697919753,
+          "u_exact": false,
+          "u_observed": 976183
+        }
+      ],
+      "name": "postcode",
+      "sessions": 4,
+      "term_frequency": true
+    },
+    {
+      "columns": [
+        "latitude",
+        "longitude"
+      ],
+      "levels": [
+        {
+          "label": "null",
+          "m": 1e-12,
+          "m_estimated": true,
+          "m_support": 0.0,
+          "u": 1e-12,
+          "u_exact": true,
+          "u_observed": 0
+        },
+        {
+          "label": "within 1.00 km",
+          "m": 0.9342686819135386,
+          "m_estimated": true,
+          "m_support": 228980.99999999904,
+          "u": 5.00000250000125e-07,
+          "u_exact": false,
+          "u_observed": 0
+        },
+        {
+          "label": "within 25.00 km",
+          "m": 0.000216986209093702,
+          "m_estimated": true,
+          "m_support": 59.014901946890916,
+          "u": 0.00013300006650003324,
+          "u_exact": false,
+          "u_observed": 133
+        },
+        {
+          "label": "else",
+          "m": 0.0655143318773677,
+          "m_estimated": true,
+          "m_support": 6256.488577417877,
+          "u": 0.9998664999332499,
+          "u_exact": false,
+          "u_observed": 999866
+        }
+      ],
+      "name": "location",
+      "sessions": 4,
+      "term_frequency": false
+    },
+    {
+      "columns": [
+        "address_tokens"
+      ],
+      "levels": [
+        {
+          "label": "null",
+          "m": 1e-12,
+          "m_estimated": true,
+          "m_support": 0.0,
+          "u": 1e-12,
+          "u_exact": true,
+          "u_observed": 0
+        },
+        {
+          "label": "exact",
+          "m": 0.5543550255662166,
+          "m_estimated": true,
+          "m_support": 135977.99999999945,
+          "u": 5e-07,
+          "u_exact": false,
+          "u_observed": 0
+        },
+        {
+          "label": "jaccard >= 0.60",
+          "m": 0.3801233723408146,
+          "m_estimated": true,
+          "m_support": 93059.99999999959,
+          "u": 5e-07,
+          "u_exact": false,
+          "u_observed": 0
+        },
+        {
+          "label": "overlap >= 2",
+          "m": 2.124973937646645e-06,
+          "m_estimated": true,
+          "m_support": 2.8248930386355536e-24,
+          "u": 1e-06,
+          "u_exact": false,
+          "u_observed": 1
+        },
+        {
+          "label": "else",
+          "m": 0.06551947711903107,
+          "m_estimated": true,
+          "m_support": 6258.503479364771,
+          "u": 0.999998,
+          "u_exact": false,
+          "u_observed": 999998
+        }
+      ],
+      "name": "address",
+      "sessions": 4,
+      "term_frequency": false
+    }
+  ],
+  "lambda": 7.765010293073493e-08,
+  "lambda_basis": "lower bound: session last_name implies 125,793 matches over 1,619,999,100,000 pairs",
+  "records": 1800000
+}

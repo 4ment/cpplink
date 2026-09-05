@@ -9,4 +9,5 @@ dependencies:
   - libarrow
   - libparquet
   - nlohmann_json
+  - mkdocs-material
   - ninja

@@ -7,6 +7,13 @@ compile_commands.json
 *.parquet
 *.truth.csv
 
+# Pipeline output
+edges/
+clusters.csv
+
 # Local working notes, not part of the repo
 CLAUDE.md
 DESIGN.md
+
+# Rendered documentation
+site/
