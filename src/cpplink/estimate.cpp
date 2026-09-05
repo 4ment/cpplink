@@ -456,6 +456,27 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         }
     }
 
+    // The dictionary self-join, which turns the fuzzy levels' u from a sampled
+    // number into an exact one. Term frequencies pool the inputs, so this is a
+    // dedup-only closed form for the same reason the exact level's is.
+    BallTables balls;
+    if (options.fuzzy_u && plan.mode() != PairMode::kCrossDataset) {
+        balls.Build(comparisons, store.NumRecords(), options.ball);
+        report->ball_seconds = balls.seconds;
+        for (size_t c = 0; c < count; ++c) {
+            BallReport entry;
+            entry.comparison = comparisons.at(c).spec->name;
+            entry.built = balls.Has(c);
+            entry.reason = balls.reasons[c];
+            if (entry.built) {
+                entry.values = balls.tables[c].Values();
+                entry.value_pairs = balls.tables[c].ValuePairs();
+                entry.seconds = balls.tables[c].Seconds();
+            }
+            report->balls.push_back(entry);
+        }
+    }
+
     std::vector<std::vector<double>> u(count);
     std::vector<std::vector<bool>> u_exact(count);
     for (size_t c = 0; c < count; ++c) {
@@ -470,7 +491,20 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
                 u_exact[c][l] = true;
                 exact_mass += value;
                 ++report->u_exact_levels;
+                continue;
             }
+            // A fuzzy level's u is what the self-join counted: the mass of value
+            // pairs landing on it, over the same denominator.
+            const LevelType type = comparisons.at(c).spec->levels[l].type;
+            if (!balls.Has(c) || !balls.tables[c].Covers(l)) continue;
+            if (type != LevelType::kLevenshtein && type != LevelType::kJaroWinkler) {
+                continue;
+            }
+            u[c][l] = balls.tables[c].LevelU(l);
+            u_exact[c][l] = true;
+            exact_mass += u[c][l];
+            ++report->u_ball_levels;
+            ++report->balls[c].levels;
         }
         // The sampled levels take what the exact ones leave, so the two sources
         // of truth cannot disagree about the total. A level the sample never hit
@@ -712,7 +746,23 @@ void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
     out << "u from " << WithThousands(report.u_pairs) << " random pairs in " << std::fixed
         << std::setprecision(1) << report.u_seconds << " s, plus "
         << report.u_exact_levels << " levels in closed form from the term "
-        << "frequencies\n\n";
+        << "frequencies\n";
+    if (!report.balls.empty()) {
+        out << "Dictionary self-join gave " << report.u_ball_levels
+            << " fuzzy levels an exact u in " << std::setprecision(1)
+            << report.ball_seconds << " s\n";
+        for (const BallReport& ball : report.balls) {
+            out << "  " << std::left << std::setw(16) << Truncate(ball.comparison, 15);
+            if (ball.built) {
+                out << WithThousands(ball.values) << " values, "
+                    << WithThousands(ball.value_pairs) << " value pairs, " << ball.levels
+                    << " levels, " << std::setprecision(2) << ball.seconds << " s\n";
+            } else {
+                out << ball.reason << "\n";
+            }
+        }
+    }
+    out << "\n";
 
     out << std::left << std::setw(14) << "Session" << std::right << std::setw(18)
         << "Enumerated" << std::setw(14) << "Compared" << std::setw(10) << "Patterns"

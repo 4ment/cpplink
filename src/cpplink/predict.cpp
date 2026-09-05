@@ -241,7 +241,7 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
             } else {
                 ++counts->certain;
             }
-            const double weight = scorer.Weight(gamma, a);
+            const double weight = scorer.Weight(gamma, a, b);
             ++counts->tf_lookups;
             if (weight < scorer.threshold()) {
                 if (sampled) {

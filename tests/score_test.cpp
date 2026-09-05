@@ -138,7 +138,7 @@ TEST_F(ScoreFixture, RareValuesScoreHigherThanCommonOnes) {
     const uint32_t common = comparisons_.Evaluate(0, 1);  // smith, both north
     const uint32_t rare = comparisons_.Evaluate(8, 9);    // zolnerowich, both north
     ASSERT_EQ(common, rare) << "the two pairs must share a pattern for this to test TF";
-    EXPECT_GT(scorer_.Weight(rare, 8), scorer_.Weight(common, 0));
+    EXPECT_GT(scorer_.Weight(rare, 8, 9), scorer_.Weight(common, 0, 1));
 }
 
 // Admissibility is the property the drop and emit decisions rest on. If the
@@ -149,7 +149,7 @@ TEST_F(ScoreFixture, TheBracketContainsEveryPairsTrueWeight) {
         for (uint64_t b = a + 1; b < store_->NumRecords(); ++b) {
             const uint32_t gamma = comparisons_.Evaluate(a, b);
             const double base = scorer_.BaseWeight(gamma);
-            const double exact = scorer_.Weight(gamma, a);
+            const double exact = scorer_.Weight(gamma, a, b);
             EXPECT_LE(base + scorer_.DeltaMin(gamma), exact + 1e-9)
                 << "pair " << a << "," << b;
             EXPECT_GE(base + scorer_.DeltaMax(gamma), exact - 1e-9)

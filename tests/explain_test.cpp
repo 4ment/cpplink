@@ -108,22 +108,22 @@ TEST_F(ExplainFixture, TheStepsSumToTheScore) {
             double running = scorer_.PriorWeight();
             for (size_t c = 0; c < comparisons_.Size(); ++c) {
                 running += scorer_.LevelWeight(c, comparisons_.LevelOf(gamma, c));
-                running += scorer_.AdjustmentFor(c, gamma, a);
+                running += scorer_.AdjustmentFor(c, gamma, a, b);
             }
-            ASSERT_NEAR(running, scorer_.Weight(gamma, a), 1e-9)
+            ASSERT_NEAR(running, scorer_.Weight(gamma, a, b), 1e-9)
                 << "rows " << a << " and " << b;
         }
     }
 }
 
-TEST_F(ExplainFixture, AdjustmentAppliesOnlyToTheExactLevel) {
+TEST_F(ExplainFixture, AdjustmentAppliesOnlyToAnAdjustedLevel) {
     // Any pair whose surnames disagree lands on `else`, where no term-frequency
     // move applies however rare either value is.
     bool checked = false;
     for (uint64_t b = 1; b < kRecords; ++b) {
         const uint32_t gamma = comparisons_.Evaluate(0, b);
         if (comparisons_.LevelOf(gamma, 0) == 1) continue;
-        EXPECT_DOUBLE_EQ(scorer_.AdjustmentFor(0, gamma, 0), 0.0) << b;
+        EXPECT_DOUBLE_EQ(scorer_.AdjustmentFor(0, gamma, 0, b), 0.0) << b;
         checked = true;
     }
     ASSERT_TRUE(checked) << "the fixture must contain a disagreeing pair";
@@ -131,7 +131,7 @@ TEST_F(ExplainFixture, AdjustmentAppliesOnlyToTheExactLevel) {
     // A comparison without term_frequency never moves, whatever level it hits.
     for (uint64_t b = 1; b < 40; ++b) {
         const uint32_t gamma = comparisons_.Evaluate(0, b);
-        EXPECT_DOUBLE_EQ(scorer_.AdjustmentFor(1, gamma, 0), 0.0) << b;
+        EXPECT_DOUBLE_EQ(scorer_.AdjustmentFor(1, gamma, 0, b), 0.0) << b;
     }
 }
 
@@ -144,7 +144,7 @@ TEST_F(ExplainFixture, RareValuesEarnMoreBitsThanCommonOnes) {
         for (uint64_t b = a + 1; b < kRecords; ++b) {
             const uint32_t gamma = comparisons_.Evaluate(a, b);
             if (comparisons_.LevelOf(gamma, 0) != 1) continue;
-            const double move = scorer_.AdjustmentFor(0, gamma, a);
+            const double move = scorer_.AdjustmentFor(0, gamma, a, b);
             rarest = std::max(rarest, move);
             commonest = std::min(commonest, move);
             ++rare_moves;
@@ -180,7 +180,7 @@ TEST_F(ExplainFixture, ReportShowsTheRunningTotalAndTheDecision) {
     EXPECT_NE(text.find("Pattern bracket"), std::string::npos);
 
     const uint32_t gamma = comparisons_.Evaluate(a, b);
-    const double weight = scorer_.Weight(gamma, a);
+    const double weight = scorer_.Weight(gamma, a, b);
     const bool emitted = weight >= scorer_.threshold();
     EXPECT_NE(text.find(emitted ? "This pair would be emitted."
                                 : "This pair would not be emitted."),

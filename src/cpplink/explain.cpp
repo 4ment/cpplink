@@ -167,7 +167,7 @@ void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& compariso
         const BoundComparison& bound = comparisons.at(i);
         const uint8_t level = comparisons.LevelOf(gamma, i);
         const double bits = scorer.LevelWeight(i, level);
-        const double move = scorer.AdjustmentFor(i, gamma, a);
+        const double move = scorer.AdjustmentFor(i, gamma, a, b);
         running += bits + move;
         out << std::left << std::setw(18) << Truncate(bound.spec->name, 17)
             << std::setw(22) << Truncate(bound.spec->levels[level].Describe(), 21)
@@ -177,7 +177,7 @@ void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& compariso
     }
     out << std::string(72, '-') << "\n";
 
-    const double weight = scorer.Weight(gamma, a);
+    const double weight = scorer.Weight(gamma, a, b);
     out << "Match weight   " << std::fixed << std::setprecision(3) << weight
         << " bits    posterior " << std::setprecision(9) << ProbabilityForWeight(weight)
         << "\n";
@@ -187,10 +187,10 @@ void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& compariso
     bool any = false;
     for (size_t i = 0; i < comparisons.Size(); ++i) {
         if (!scorer.HasAdjustment(i)) continue;
-        const double move = scorer.AdjustmentFor(i, gamma, a);
+        const double move = scorer.AdjustmentFor(i, gamma, a, b);
         if (move == 0.0) continue;
         if (!any) {
-            out << "\nTerm frequency, for the comparisons that agreed exactly:\n";
+            out << "\nTerm frequency, for the comparisons that moved the weight:\n";
             any = true;
         }
         const uint32_t frequency = scorer.FrequencyFor(i, a);
