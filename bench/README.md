@@ -130,12 +130,18 @@ Wall clock is the median of `--repeat` runs, split by stage. Peak resident set i
 `getrusage`: `RUSAGE_CHILDREN` for cpplink (whose driver only spawns `cpplink`) and
 `RUSAGE_SELF` for splink (duckdb runs in-process).
 
-Three honest caveats:
+Four honest caveats:
 
-1. **Memory does not extrapolate from here.** At 50k records splink's pair table is a few
-   hundred thousand rows and costs nothing. cpplink's memory advantage is asymptotic and
-   this benchmark is nowhere near the asymptote. A memory difference measured here is mostly
-   the Python interpreter and duckdb's fixed footprint.
+1. **Memory extrapolates only from the largest dataset here, and only for splink.** At
+   `fake_1000` and `febrl3` both tools' peak resident sets are dominated by fixed costs —
+   the Python interpreter and duckdb for splink, the binary and Arrow's shared-library graph
+   for cpplink — and a ratio between them measures startup, not the model. `historical_50k`
+   is the one row where the variable cost dominates: at the 222 B/pair marginal rate fitted
+   between it and `febrl3`, its 18.3M candidate pairs account for 4.07 GB of splink's 4.49 GB
+   peak — 91%, leaving a ~0.4 GB fixed cost that matches `febrl3`'s 448 MB total. There the
+   pair table *is* the memory. That consistency is what makes the extrapolation in [the scale
+   section](#the-scale-claim-and-where-it-is-still-unmeasured) worth writing down, and it is
+   still a line through two points.
 2. **Neither does time.** duckdb has a fixed startup cost that dominates at 1,000 records
    and is invisible at 18M. Per-stage timings are reported so the fixed and variable parts
    can be told apart, but a single speedup ratio from this benchmark would be meaningless.
@@ -435,10 +441,52 @@ python bench/score.py bench/data/febrl3.entities.csv <clusters.csv>
 quality number, and prints three markdown tables: quality at each tool's best threshold,
 cost, and the F1 sweep across thresholds.
 
-## Next, when phase 6 lands
+## The scale claim, and where it is still unmeasured
 
-This benchmark deliberately stops below 1M records. The comparison that would actually test
-cpplink's design claim needs an input where splink's pair table does not fit, and the honest
-way to get there is `cpplink gen-sample` at 1M–18M rows with planted duplicates, running
-splink until it fails and recording where. That is a separate harness with a separate
-failure mode to report, and it should be built once the phase-6 spill path exists.
+Phase 6 has landed — the spill path, link mode and the signature filter are all in — so the
+harness this section used to defer is no longer blocked on the pipeline. It is blocked on
+hardware: the machine these numbers were taken on has 16 GB of RAM and 2.4 GB of free disk,
+and an experiment that runs splink until it fails needs room for splink to fail *in*. Running
+duckdb to exhaustion against a nearly full filesystem risks the machine, not just the run.
+
+What can be said without that experiment is more than the caveats above admit, because the
+three datasets already bracket the shape. Peak resident set per candidate pair:
+
+| dataset | candidate pairs | cpplink | splink |
+|---|---:|---:|---:|
+| `fake_1000` | 2,538 | 14,086 B/pair | 94,463 B/pair |
+| `febrl3` | 76,509 | 3,490 B/pair | 5,858 B/pair |
+| `historical_50k` | 18,340,573 | **16 B/pair** | **245 B/pair** |
+
+**cpplink's cost per pair falls by three orders of magnitude across this range and splink's
+converges to a constant.** That is the design claim, visible in data already collected: for
+cpplink these are not per-pair costs at all — the memory is the record store and the pattern
+histogram, both set by the number of *records*, so dividing by pairs just measures how many
+pairs the same store produced. For splink the memory *is* the pair table, so the ratio
+converges to the width of a row in it.
+
+Fitting splink's marginal cost between the two larger datasets gives **222 bytes per
+candidate pair**, which turns the scale claim into an arithmetic prediction rather than an
+assertion:
+
+| candidate pairs | predicted splink peak RSS |
+|---:|---:|
+| 100M | 22 GB |
+| 1×10⁹ | 222 GB |
+| 5×10⁹ *(the 18M-record design target)* | ~1.1 TB |
+
+On this schema `historical_50k`'s 50,578 records yield 18.3M candidates, so 16 GB is
+exhausted at roughly 72M candidates — **somewhere near 100k records**. That is a falsifiable
+prediction on ordinary hardware, and it is the experiment to run first, on a machine with
+disk to spare: sweep `cpplink gen-sample` upward, run both tools at each size, and record the
+size at which splink stops finishing. Predicting where a tool breaks is not the same as
+watching it break, and the second is what this section will hold when the disk exists.
+
+Two limits stay honest about what even that would establish. The extrapolation is linear in
+candidates from two points and assumes duckdb's per-row width does not change with scale or
+spill strategy — splink spilling to disk does not fail, it slows, and "fails" would need
+defining as a wall-clock budget rather than an OOM. And the 18M-record claim is only
+partly measured: DESIGN.md's phase 2 priced and enumerated blocking at 18M synthetic rows
+(63.5×10⁹ candidates, 8.25×10⁹ enumerated in 142 s single-threaded), but **nothing from
+phase 6 has been validated at that size** — the signature filter, the spill path and link
+mode were all measured at 1–1.8M — and no end-to-end run at 18M has been done at all.
