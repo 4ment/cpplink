@@ -46,6 +46,7 @@ nav:
       - explain: commands/explain.md
       - explain-blocking: commands/explain-blocking.md
       - recall: commands/recall.md
+      - completeness: commands/completeness.md
       - estimate: commands/estimate.md
       - predict: commands/predict.md
       - rescore: commands/rescore.md
