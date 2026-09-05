@@ -51,6 +51,13 @@ class ComparisonSet {
     // Reads a level index back out of a packed pattern.
     uint8_t LevelOf(uint32_t gamma, size_t comparison) const;
 
+    // The level two *values* of a single-column string comparison land on,
+    // counting only the levels a pair of present values can reach: the null level
+    // is not one of them. This is the same predicate the pair path runs, reached
+    // through value ids rather than rows, which is what lets the dictionary be
+    // self-joined once instead of the pair stream being walked again.
+    uint8_t LevelForValues(size_t comparison, uint32_t left, uint32_t right) const;
+
     // Whether a level could fire for this pair, decided without evaluating one
     // string metric: exact for the cheap level types, and the signature bounds
     // for the fuzzy ones. False means "certainly not"; true means "maybe".
@@ -76,6 +83,10 @@ class ComparisonSet {
                     uint64_t b) const;
     bool LevelMaybe(const BoundComparison& comparison, const LevelSpec& level, uint64_t a,
                     uint64_t b) const;
+    // The string levels, over value ids. LevelFires routes its string cases here
+    // so that the pair path and the dictionary self-join cannot drift apart.
+    bool StringLevelFires(const BoundComparison& comparison, const LevelSpec& level,
+                          uint32_t left, uint32_t right) const;
 
     std::vector<BoundComparison> bound_;
     // unique_ptr so the tables keep their address as the vector grows, and so a

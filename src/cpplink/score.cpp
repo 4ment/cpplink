@@ -47,11 +47,29 @@ uint32_t TermFrequencyAdjustment::Frequency(uint64_t row) const {
     return 0;
 }
 
-double TermFrequencyAdjustment::Delta(uint64_t row) const {
-    const uint32_t frequency = Frequency(row);
-    if (frequency == 0) return 0.0;
-    // log2(u / p_v) with p_v = tf / records, folded so only one log is taken.
-    return damping * (log_u_times_records - std::log2(static_cast<double>(frequency)));
+double TermFrequencyAdjustment::Mass(uint64_t row) const {
+    if (ball == nullptr || strings == nullptr) return 0.0;
+    const uint32_t id = strings->ids[row];
+    if (id == kNullId) return 0.0;
+    return ball->Mass(level, id);
+}
+
+double TermFrequencyAdjustment::Delta(uint64_t a, uint64_t b) const {
+    if (!fuzzy) {
+        const uint32_t frequency = Frequency(a);
+        if (frequency == 0) return 0.0;
+        // log2(u / p_v) with p_v = tf / records, folded so only one log is taken.
+        return damping *
+               (log_u_times_records - std::log2(static_cast<double>(frequency)));
+    }
+    // The two sides sit in different neighbourhoods, and the geometric mean is
+    // the symmetric reading: it is p_v again when the values are equal, and it
+    // moves half as far as either side would on its own.
+    const double mass_a = Mass(a);
+    const double mass_b = Mass(b);
+    if (mass_a <= 0.0 || mass_b <= 0.0) return 0.0;
+    const double log_records = log_u_times_records;
+    return damping * (log_records - 0.5 * (std::log2(mass_a) + std::log2(mass_b)));
 }
 
 double WeightForProbability(double probability) {
@@ -64,7 +82,7 @@ double ProbabilityForWeight(double weight) { return 1.0 / (1.0 + std::exp2(-weig
 
 bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
                   const RecordStore& store, const ScoreOptions& options,
-                  std::string* error) {
+                  std::string* error, const BallTables* balls) {
     comparisons_ = &comparisons;
     options_ = options;
     prior_ = model.PriorWeight();
@@ -99,13 +117,45 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
         }
 
         if (!spec.term_frequency) continue;
+        // The fuzzy levels first, where a neighbourhood mass exists for them.
+        // Their u is log2(u) alone rather than log2(u * records), because the mass
+        // is already a probability where a term frequency is a count.
+        if (balls != nullptr && balls->Has(c)) {
+            const BallMassTable& table = balls->tables[c];
+            for (size_t l = 0; l < spec.levels.size(); ++l) {
+                const LevelType type = spec.levels[l].type;
+                if (type != LevelType::kLevenshtein && type != LevelType::kJaroWinkler) {
+                    continue;
+                }
+                if (!table.Covers(l)) continue;
+                const double min_mass = table.MinMass(l);
+                const double max_mass = table.MaxMass(l);
+                if (min_mass <= 0.0 || max_mass <= 0.0) continue;
+                if (learned.levels[l].u <= 0.0) continue;
+                TermFrequencyAdjustment fuzzy;
+                fuzzy.comparison = c;
+                fuzzy.level = static_cast<uint8_t>(l);
+                fuzzy.fuzzy = true;
+                fuzzy.damping = options.tf_damping;
+                fuzzy.log_u_times_records = std::log2(learned.levels[l].u);
+                fuzzy.strings = comparisons.at(c).strings;
+                fuzzy.ball = &table;
+                fuzzy.delta_max =
+                    fuzzy.damping * (fuzzy.log_u_times_records - std::log2(min_mass));
+                fuzzy.delta_min =
+                    fuzzy.damping * (fuzzy.log_u_times_records - std::log2(max_mass));
+                fuzzy.active = true;
+                adjustments_.push_back(fuzzy);
+            }
+        }
+
         TermFrequencyAdjustment adjustment;
         adjustment.comparison = c;
         adjustment.damping = options.tf_damping;
         bool has_exact = false;
         for (size_t l = 0; l < spec.levels.size(); ++l) {
             if (spec.levels[l].type == LevelType::kExact) {
-                adjustment.exact_level = static_cast<uint8_t>(l);
+                adjustment.level = static_cast<uint8_t>(l);
                 adjustment.log_u_times_records = std::log2(learned.levels[l].u * records);
                 has_exact = true;
                 break;
@@ -161,7 +211,7 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
             entry.level = static_cast<uint8_t>(l);
             entry.value = weight_[c][l];
             for (const TermFrequencyAdjustment& adjustment : adjustments_) {
-                if (adjustment.comparison == c && adjustment.exact_level == l) {
+                if (adjustment.comparison == c && adjustment.level == l) {
                     entry.value += adjustment.delta_max;
                 }
             }
@@ -199,8 +249,7 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
         double high = 0.0;
         double low = 0.0;
         for (const TermFrequencyAdjustment& adjustment : adjustments_) {
-            if (comparisons.LevelOf(packed, adjustment.comparison) !=
-                adjustment.exact_level) {
+            if (comparisons.LevelOf(packed, adjustment.comparison) != adjustment.level) {
                 continue;
             }
             high += adjustment.delta_max;
@@ -242,8 +291,7 @@ double Scorer::DeltaMax(uint32_t gamma) const {
     if (dense_) return delta_max_[gamma];
     double high = 0.0;
     for (const TermFrequencyAdjustment& adjustment : adjustments_) {
-        if (comparisons_->LevelOf(gamma, adjustment.comparison) ==
-            adjustment.exact_level) {
+        if (comparisons_->LevelOf(gamma, adjustment.comparison) == adjustment.level) {
             high += adjustment.delta_max;
         }
     }
@@ -254,8 +302,7 @@ double Scorer::DeltaMin(uint32_t gamma) const {
     if (dense_) return delta_min_[gamma];
     double low = 0.0;
     for (const TermFrequencyAdjustment& adjustment : adjustments_) {
-        if (comparisons_->LevelOf(gamma, adjustment.comparison) ==
-            adjustment.exact_level) {
+        if (comparisons_->LevelOf(gamma, adjustment.comparison) == adjustment.level) {
             low += adjustment.delta_min;
         }
     }
@@ -298,12 +345,11 @@ bool Scorer::CanReach(uint64_t a, uint64_t b) const {
     return Ceiling(a, b) >= options_.threshold;
 }
 
-double Scorer::Weight(uint32_t gamma, uint64_t a) const {
+double Scorer::Weight(uint32_t gamma, uint64_t a, uint64_t b) const {
     double total = BaseWeight(gamma);
     for (const TermFrequencyAdjustment& adjustment : adjustments_) {
-        if (comparisons_->LevelOf(gamma, adjustment.comparison) ==
-            adjustment.exact_level) {
-            total += adjustment.Delta(a);
+        if (comparisons_->LevelOf(gamma, adjustment.comparison) == adjustment.level) {
+            total += adjustment.Delta(a, b);
         }
     }
     return total;
@@ -322,20 +368,28 @@ bool Scorer::HasAdjustment(size_t comparison) const {
     return false;
 }
 
-double Scorer::AdjustmentFor(size_t comparison, uint32_t gamma, uint64_t row) const {
+double Scorer::AdjustmentFor(size_t comparison, uint32_t gamma, uint64_t a,
+                             uint64_t b) const {
     for (const TermFrequencyAdjustment& adjustment : adjustments_) {
         if (adjustment.comparison != comparison) continue;
-        if (comparisons_->LevelOf(gamma, comparison) != adjustment.exact_level) {
-            return 0.0;
-        }
-        return adjustment.Delta(row);
+        if (comparisons_->LevelOf(gamma, comparison) != adjustment.level) continue;
+        return adjustment.Delta(a, b);
     }
     return 0.0;
 }
 
+bool Scorer::AdjustsFuzzyLevels() const {
+    for (const TermFrequencyAdjustment& adjustment : adjustments_) {
+        if (adjustment.fuzzy) return true;
+    }
+    return false;
+}
+
 uint32_t Scorer::FrequencyFor(size_t comparison, uint64_t row) const {
     for (const TermFrequencyAdjustment& adjustment : adjustments_) {
-        if (adjustment.comparison == comparison) return adjustment.Frequency(row);
+        if (adjustment.comparison == comparison && !adjustment.fuzzy) {
+            return adjustment.Frequency(row);
+        }
     }
     return 0;
 }

@@ -29,6 +29,9 @@ cpplink predict --schema <schema.json> --model <model.json> --out <dir>
 | `--tf-damping F` | 1.0 | scale the term-frequency adjustment. 0 disables it |
 | `--no-bounds` | off | score every pair exactly instead of using the admissible bracket. **Verification only** |
 | `--no-signatures` | off | disable the per-value character-mask filter. **Verification only** |
+| `--no-ceiling` | off | score every candidate instead of bounding the whole pair first. **Verification only**; 3.2x slower on the 1M sample |
+| `--fuzzy-tf` | off | term-frequency adjustment on the fuzzy levels too, from neighbourhood mass. Costs a dictionary self-join per column |
+| `--ball-budget N` | 4e10 | value pairs the self-join may look at for one column; a larger dictionary is refused and keeps today's behaviour |
 | `--spill <dir>` | none | also write `(a, b, γ)` at 12 bytes a pair, so the run can be re-scored by [`rescore`](rescore.md) without comparing again |
 | `--spill-sample R` | 0 | additionally spill a uniform fraction R of *every* candidate, not just those above the threshold |
 | *(positional)* | — | required; the parquet file |
@@ -156,3 +159,51 @@ Because edges carry their weight, **the threshold can be raised later without re
 `cluster --threshold` re-reads the shards in seconds. So write at a low threshold and sweep in
 `cluster` rather than re-running `predict`. Sweeping on this data shows nothing above 40 bits
 is worth having, and everything from 0 to 40 bits is the same answer.
+
+## Bounding the pair before comparing it
+
+The signature filter rejects one level of one comparison before a character is read.
+It is applied per level, per comparison, and the pair is still walked comparison by
+comparison, so a pair that could never clear the threshold still pays for every metric the
+filter does not catch.
+
+`--no-ceiling` turns off the other half. With the ceiling on, every comparison is granted the
+best level the cheap bounds still admit, plus that column's largest term-frequency move where
+the exact level survives; if the sum is under the threshold, no string metric can change the
+answer and the pattern is never produced.
+The bound is admissible, so the edge set cannot move — `tests/predict_test.cpp` runs both ways
+at five thresholds and compares them.
+
+Measured on the 1M sample at 20 bits: 116,936,544 candidates in **11.2 s against 36.3 s**, 90.1%
+of candidates never compared, and the 142,541 edges byte-identical.
+The saving tracks the threshold — 35% skipped at 0 bits, 90% at 20, 99.8% at 40 — which lands
+where it is wanted, because 0 to 40 bits select nearly the same edges anyway.
+
+## Term frequency on the fuzzy levels
+
+A term-frequency adjustment needs an exact-match level, here and in splink.
+So two records sharing the misspelling "Zolnerowitch" against "Zolnerowich" get the averaged
+fuzzy weight, and the rarity that makes the pair convincing is thrown away.
+
+`--fuzzy-tf` replaces the value's own frequency with the mass of its *neighbourhood* — the
+share of the file that falls inside the ball the level defines — which is exactly `p_v` again
+when the level is exact.
+Computing it is a similarity self-join over every distinct value, which is affordable here only
+because values are interned: the join is over the 149k distinct surnames of the 1M sample, not
+its 1M rows, and it is amortised over every pair the run scores.
+
+Measured on `historical_50k`, same model, same blocking, threshold swept:
+
+| Threshold | F1 without | F1 with | Recall without | Recall with |
+| ---: | ---: | ---: | ---: | ---: |
+| 10 bits | 0.7452 | **0.7828** | 0.8461 | 0.8662 |
+| 20 bits | 0.7716 | **0.8007** | 0.6291 | 0.6691 |
+| 30 bits | 0.5074 | **0.5500** | 0.3400 | 0.3794 |
+
+Precision is unchanged to three decimal places at 20 and 30 bits; the gain is recall.
+The cost is a one-off 11.1 s for the masses and a scoring pass of 2.4 s against 1.5 s, because
+the bracket a fuzzy level admits is much wider than an exact one's — the check zone goes from
+7.5% of candidates to 52.4%, and those are the pairs that pay for a lookup.
+On the 1M synthetic sample the adjustment moves 47% of edge weights, by a median of 0.6 bits
+and by more than 5 bits on 1,128 of them, and changes no decision at all: the posterior there
+saturates so hard that nothing near the threshold exists to move.

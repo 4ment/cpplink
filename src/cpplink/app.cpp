@@ -15,6 +15,7 @@
 #include "cpplink/explain_blocking.hpp"
 #include "cpplink/inspect.hpp"
 #include "cpplink/model.hpp"
+#include "cpplink/neighbourhood.hpp"
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/predict.hpp"
 #include "cpplink/recall.hpp"
@@ -75,12 +76,13 @@ void PrintUsage(std::ostream& out) {
         << "                 [--u-sample N] [--session-pairs N] [--threads N]\n"
         << "                 [--iterations N] [--lambda F] [--seed N] "
            "[--mode MODE]\n"
+        << "                 [--fuzzy-u] [--ball-budget N]\n"
         << "                 <file.parquet>...\n"
         << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--no-ceiling]\n"
         << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
-        << "                [--spill-sample R]\n"
+        << "                [--spill-sample R] [--fuzzy-tf] [--ball-budget N]\n"
         << "                [--mode MODE] <file.parquet>...\n"
         << "cpplink completeness --schema <schema.json> --model <model.json>\n"
         << "                [--truth <pairs.csv>] [--sample R] [--threads N]\n"
@@ -306,6 +308,27 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
         PrintPairWaterfall(store, comparisons, scorer, row_a, row_b, out);
     }
     return 0;
+}
+
+// Builds the neighbourhood masses a fuzzy term-frequency adjustment needs, and
+// says which columns got one. A column too large for the budget keeps today's
+// behaviour, which is worth saying out loud rather than degrading quietly.
+void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
+                     const BallOptions& options, BallTables* balls, std::ostream& out) {
+    balls->Build(comparisons, store.NumRecords(), options);
+    out << "Neighbourhood masses in " << std::fixed << std::setprecision(1)
+        << balls->seconds << " s\n";
+    for (size_t c = 0; c < comparisons.Size(); ++c) {
+        out << "  " << comparisons.at(c).spec->name << ": ";
+        if (balls->Has(c)) {
+            out << balls->tables[c].Values() << " values, "
+                << balls->tables[c].ValuePairs() << " value pairs, "
+                << std::setprecision(2) << balls->tables[c].Seconds() << " s\n";
+        } else {
+            out << balls->reasons[c] << "\n";
+        }
+    }
+    out << "\n";
 }
 
 // Loads a schema and a parquet file, the opening move of every blocking command.
@@ -617,6 +640,11 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--seed") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.seed = std::stoull(value);
+        } else if (args[i] == "--fuzzy-u") {
+            options.fuzzy_u = true;
+        } else if (args[i] == "--ball-budget") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.ball.budget = std::stoull(value);
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink estimate: unknown option '" << args[i] << "'\n";
             return 1;
@@ -677,6 +705,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     std::string value;
     PredictOptions options;
     ScoreOptions score;
+    BallOptions ball;
+    bool fuzzy_tf = false;
     bool have_threshold = false;
     bool use_signatures = true;
     PairMode mode = PairMode::kAll;
@@ -728,6 +758,11 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             score.use_bounds = false;
         } else if (args[i] == "--no-ceiling") {
             score.use_ceiling = false;
+        } else if (args[i] == "--fuzzy-tf") {
+            fuzzy_tf = true;
+        } else if (args[i] == "--ball-budget") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            ball.budget = std::stoull(value);
         } else if (args[i] == "--spill") {
             if (!TakeValue(args, &i, &options.spill_dir, err)) return 1;
         } else if (args[i] == "--spill-sample") {
@@ -783,8 +818,15 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
         return 1;
     }
 
+    BallTables balls;
+    if (fuzzy_tf) {
+        ball.threads = options.threads;
+        BuildBallTables(comparisons, *store, ball, &balls, out);
+    }
+
     Scorer scorer;
-    if (!scorer.Bind(model, comparisons, *store, score, &error)) {
+    if (!scorer.Bind(model, comparisons, *store, score, &error,
+                     fuzzy_tf ? &balls : nullptr)) {
         err << "cpplink predict: " << error << "\n";
         return 1;
     }

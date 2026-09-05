@@ -139,7 +139,7 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
                         ++counts->dropped;
                         continue;
                     }
-                    const double weight = scorer.Weight(gamma, a);
+                    const double weight = scorer.Weight(gamma, a, b);
                     ++counts->tf_lookups;
                     if (weight < scorer.threshold()) {
                         ++counts->dropped;

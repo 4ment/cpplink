@@ -9,6 +9,7 @@
 
 #include "cpplink/comparison.hpp"
 #include "cpplink/model.hpp"
+#include "cpplink/neighbourhood.hpp"
 #include "cpplink/record_store.hpp"
 
 namespace cpplink {
@@ -29,30 +30,46 @@ enum class Zone : uint8_t {
 
 const char* ZoneName(Zone zone);
 
-// One comparison's term-frequency adjustment, resolved against the store.
+// One comparison level's term-frequency adjustment, resolved against the store.
 //
 // TF makes the weight depend on the value and not just the level -- a shared
 // "Zolnerowich" is not a shared "Smith" -- which is exactly what breaks gamma as a
 // sufficient statistic. It is therefore kept out of EM and applied here.
+//
+// On an exact level the value-specific u is p_v: given one side is v, that is the
+// chance the other side is v too. On a fuzzy level the same question has the same
+// shape and a different answer -- given one side is v, the chance the other lands
+// anywhere in v's ball -- which is the neighbourhood mass. Two sides give two
+// masses, and their geometric mean is the symmetric reading that collapses back to
+// p_v when the values are equal. So a fuzzy level gets an adjustment on exactly
+// the same footing as an exact one, which is what splink cannot do: there an
+// exact-match level is required before any adjustment is possible at all.
 struct TermFrequencyAdjustment {
     bool active = false;
     size_t comparison = 0;
-    uint8_t exact_level = 0;
+    uint8_t level = 0;
+    bool fuzzy = false;  // the mass comes from the ball table, not from tf
     double damping = 1.0;
-    double log_u_times_records = 0.0;  // log2(u[exact] * records)
-    double delta_max = 0.0;            // rarest value in the column
-    double delta_min = 0.0;            // most common value in the column
+    double log_u_times_records = 0.0;  // log2(u[level] * records)
+    double delta_max = 0.0;            // the rarest neighbourhood in the column
+    double delta_min = 0.0;            // the commonest
 
     const StringColumn* strings = nullptr;
     const DateColumn* dates = nullptr;
+    const BallMassTable* ball = nullptr;
 
-    // log2(u / p_v) for the value row `row` carries, damped.
-    double Delta(uint64_t row) const;
+    // log2(u / p) for the pair, damped: p is the shared value's frequency on an
+    // exact level and the geometric mean of the two neighbourhood masses on a
+    // fuzzy one.
+    double Delta(uint64_t a, uint64_t b) const;
     // How many records carry that value. Zero where the value is null or the
-    // column keeps no term frequencies; this is what Delta is computed from, and
-    // reporting it is what makes a term-frequency move explicable rather than
-    // magic.
+    // column keeps no term frequencies; this is what Delta is computed from on an
+    // exact level, and reporting it is what makes a term-frequency move
+    // explicable rather than magic.
     uint32_t Frequency(uint64_t row) const;
+    // The neighbourhood mass this row's value carries at this level, for the same
+    // reason.
+    double Mass(uint64_t row) const;
 };
 
 struct ScoreOptions {
@@ -68,8 +85,11 @@ struct ScoreOptions {
 // brackets, and the zone each pattern falls in.
 class Scorer {
    public:
+    // `balls` is optional: without it only exact levels are term-frequency
+    // adjusted, which is where this started and where splink stops.
     bool Bind(const Model& model, const ComparisonSet& comparisons,
-              const RecordStore& store, const ScoreOptions& options, std::string* error);
+              const RecordStore& store, const ScoreOptions& options, std::string* error,
+              const BallTables* balls = nullptr);
 
     // prior + sum of level weights. Everything TF-independent.
     double BaseWeight(uint32_t gamma) const;
@@ -86,9 +106,9 @@ class Scorer {
     // Whether the pair can clear the threshold at all. False means it cannot,
     // whatever the metrics would have said, so the comparison never has to run.
     bool CanReach(uint64_t a, uint64_t b) const;
-    // The exact TF-adjusted weight. Both rows agree on every TF level by
-    // construction, so the value is read from `a`.
-    double Weight(uint32_t gamma, uint64_t a) const;
+    // The exact TF-adjusted weight. On an exact level both rows carry the same
+    // value and only `a` is read; a fuzzy level needs both.
+    double Weight(uint32_t gamma, uint64_t a, uint64_t b) const;
 
     // The pieces the weight is made of, for explaining one pair rather than
     // scoring billions.
@@ -96,9 +116,12 @@ class Scorer {
     double LevelWeight(size_t comparison, uint8_t level) const;
     bool HasAdjustment(size_t comparison) const;
     // The term-frequency move this pair gets for one comparison: zero unless the
-    // pattern puts it on that comparison's exact level.
-    double AdjustmentFor(size_t comparison, uint32_t gamma, uint64_t row) const;
+    // pattern puts it on a level that has one.
+    double AdjustmentFor(size_t comparison, uint32_t gamma, uint64_t a, uint64_t b) const;
     uint32_t FrequencyFor(size_t comparison, uint64_t row) const;
+    // Levels of this comparison that carry an adjustment, for the report that has
+    // to say which ones did.
+    bool AdjustsFuzzyLevels() const;
 
     double threshold() const { return options_.threshold; }
     bool Dense() const { return dense_; }

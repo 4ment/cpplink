@@ -151,31 +151,15 @@ bool ComparisonSet::IsNull(const BoundComparison& comparison, uint64_t row) cons
     return true;
 }
 
-bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpec& level,
-                               uint64_t a, uint64_t b) const {
+bool ComparisonSet::StringLevelFires(const BoundComparison& comparison,
+                                     const LevelSpec& level, uint32_t left,
+                                     uint32_t right) const {
     switch (level.type) {
-        case LevelType::kNull:
-            return IsNull(comparison, a) || IsNull(comparison, b);
-
-        case LevelType::kElse:
-            return true;
-
         case LevelType::kExact:
-            if (comparison.strings != nullptr) {
-                const uint32_t left = comparison.strings->ids[a];
-                // A null equals nothing, not even another null.
-                return left != kNullId && left == comparison.strings->ids[b];
-            }
-            if (comparison.dates != nullptr) {
-                const int32_t left = comparison.dates->values[a];
-                return left != kNullDate && left == comparison.dates->values[b];
-            }
-            if (comparison.lists != nullptr) return SameSet(*comparison.lists, a, b);
-            return false;
+            // A null equals nothing, not even another null.
+            return left != kNullId && left == right;
 
         case LevelType::kLevenshtein: {
-            const uint32_t left = comparison.strings->ids[a];
-            const uint32_t right = comparison.strings->ids[b];
             if (left == kNullId || right == kNullId) return false;
             if (left == right) return true;  // identical ids, distance zero
             const int limit = static_cast<int>(level.threshold);
@@ -195,8 +179,6 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
         }
 
         case LevelType::kJaroWinkler: {
-            const uint32_t left = comparison.strings->ids[a];
-            const uint32_t right = comparison.strings->ids[b];
             if (left == kNullId || right == kNullId) return false;
             if (left == right) return true;
             if (comparison.signatures != nullptr &&
@@ -211,6 +193,51 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
                                       comparison.strings->dict.Value(right),
                                       level.threshold);
         }
+
+        default:
+            return false;
+    }
+}
+
+uint8_t ComparisonSet::LevelForValues(size_t comparison, uint32_t left,
+                                      uint32_t right) const {
+    const BoundComparison& bound = bound_[comparison];
+    const std::vector<LevelSpec>& levels = bound.spec->levels;
+    for (size_t i = 0; i < levels.size(); ++i) {
+        if (levels[i].type == LevelType::kNull) continue;  // not a value's business
+        if (levels[i].type == LevelType::kElse) return static_cast<uint8_t>(i);
+        if (StringLevelFires(bound, levels[i], left, right)) {
+            return static_cast<uint8_t>(i);
+        }
+    }
+    return static_cast<uint8_t>(levels.size() - 1);
+}
+
+bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpec& level,
+                               uint64_t a, uint64_t b) const {
+    switch (level.type) {
+        case LevelType::kNull:
+            return IsNull(comparison, a) || IsNull(comparison, b);
+
+        case LevelType::kElse:
+            return true;
+
+        case LevelType::kExact:
+            if (comparison.strings != nullptr) {
+                return StringLevelFires(comparison, level, comparison.strings->ids[a],
+                                        comparison.strings->ids[b]);
+            }
+            if (comparison.dates != nullptr) {
+                const int32_t left = comparison.dates->values[a];
+                return left != kNullDate && left == comparison.dates->values[b];
+            }
+            if (comparison.lists != nullptr) return SameSet(*comparison.lists, a, b);
+            return false;
+
+        case LevelType::kLevenshtein:
+        case LevelType::kJaroWinkler:
+            return StringLevelFires(comparison, level, comparison.strings->ids[a],
+                                    comparison.strings->ids[b]);
 
         case LevelType::kDateWithin: {
             const int32_t left = comparison.dates->values[a];

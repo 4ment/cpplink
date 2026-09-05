@@ -11,6 +11,7 @@
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
 #include "cpplink/model.hpp"
+#include "cpplink/neighbourhood.hpp"
 #include "cpplink/record_store.hpp"
 
 namespace cpplink {
@@ -24,6 +25,12 @@ struct EstimateOptions {
     double lambda_init = 0.01;
     double lambda = 0.0;  // > 0 overrides the derived value
     uint64_t seed = 20260903;
+    // Compute u for the fuzzy levels exactly, by self-joining the column's
+    // dictionary, instead of sampling random pairs and rescaling. Off by default
+    // because it costs a quadratic scan over the distinct values, and it is
+    // refused on a dictionary too large for `ball.budget`.
+    bool fuzzy_u = false;
+    BallOptions ball;
 };
 
 // One EM session: the sources conditioning on a single column, unioned among
@@ -50,10 +57,26 @@ struct SessionReport {
     std::vector<std::string> warnings;
 };
 
+// One column's dictionary self-join: what it cost and what it bought, or why it
+// was not run. Which columns got an exact fuzzy u is part of what a run reports,
+// because the alternative is a sampled number wearing the same label.
+struct BallReport {
+    std::string comparison;
+    bool built = false;
+    std::string reason;
+    uint64_t values = 0;
+    uint64_t value_pairs = 0;
+    uint64_t levels = 0;
+    double seconds = 0.0;
+};
+
 struct EstimateReport {
     uint64_t u_pairs = 0;
     double u_seconds = 0.0;
     uint64_t u_exact_levels = 0;
+    uint64_t u_ball_levels = 0;
+    double ball_seconds = 0.0;
+    std::vector<BallReport> balls;
     std::vector<SessionReport> sessions;
     std::vector<std::string> warnings;
 };
