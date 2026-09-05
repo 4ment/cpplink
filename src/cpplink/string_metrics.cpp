@@ -215,7 +215,8 @@ bool JaroWinklerAtLeast(std::string_view a, std::string_view b, double threshold
 }
 
 double HaversineKm(double lat_a, double lon_a, double lat_b, double lon_b) {
-    constexpr double kEarthRadiusKm = 6371.0088;
+    constexpr double kEarthRadiusKm =
+        kKmPerDegreeLatitude * 180.0 / 3.14159265358979323846;
     const double delta_lat = ToRadians(lat_b - lat_a);
     const double delta_lon = ToRadians(lon_b - lon_a);
     const double sin_lat = std::sin(delta_lat / 2.0);

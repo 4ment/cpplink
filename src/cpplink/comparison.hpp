@@ -51,6 +51,14 @@ class ComparisonSet {
     // Reads a level index back out of a packed pattern.
     uint8_t LevelOf(uint32_t gamma, size_t comparison) const;
 
+    // Whether a level could fire for this pair, decided without evaluating one
+    // string metric: exact for the cheap level types, and the signature bounds
+    // for the fuzzy ones. False means "certainly not"; true means "maybe".
+    //
+    // It is never false where `LevelFires` would be true, which is what lets a
+    // caller bound the whole pair's weight before comparing any of it.
+    bool LevelPossible(size_t comparison, size_t level, uint64_t a, uint64_t b) const;
+
     // Whether the comparison has no value to read on this row. Estimation counts
     // these once over the data, which makes the null level's u exact rather than
     // sampled.
@@ -65,6 +73,8 @@ class ComparisonSet {
    private:
     bool IsNull(const BoundComparison& comparison, uint64_t row) const;
     bool LevelFires(const BoundComparison& comparison, const LevelSpec& level, uint64_t a,
+                    uint64_t b) const;
+    bool LevelMaybe(const BoundComparison& comparison, const LevelSpec& level, uint64_t a,
                     uint64_t b) const;
 
     std::vector<BoundComparison> bound_;

@@ -76,8 +76,9 @@ void PrintUsage(std::ostream& out) {
         << "                 <file.parquet>...\n"
         << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
-        << "                [--threads N] [--limit N] [--no-bounds] [--tf-damping F]\n"
-        << "                [--no-signatures] [--spill <dir>] [--spill-sample R]\n"
+        << "                [--threads N] [--limit N] [--no-bounds] [--no-ceiling]\n"
+        << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
+        << "                [--spill-sample R]\n"
         << "                [--mode MODE] <file.parquet>...\n"
         << "cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>\n"
         << "                --out <dir> [--threshold BITS | --probability P]\n"
@@ -599,6 +600,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             score.tf_damping = std::stod(value);
         } else if (args[i] == "--no-bounds") {
             score.use_bounds = false;
+        } else if (args[i] == "--no-ceiling") {
+            score.use_ceiling = false;
         } else if (args[i] == "--spill") {
             if (!TakeValue(args, &i, &options.spill_dir, err)) return 1;
         } else if (args[i] == "--spill-sample") {

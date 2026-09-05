@@ -259,6 +259,96 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
     return false;
 }
 
+// The cheap half of `LevelFires`. Every case here either evaluates the level
+// exactly, because that costs a load and a compare, or answers with an admissible
+// bound that can only ever say "maybe" where the truth is "no".
+bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, const LevelSpec& level,
+                               uint64_t a, uint64_t b) const {
+    switch (level.type) {
+        case LevelType::kNull:
+        case LevelType::kElse:
+        case LevelType::kExact:
+        case LevelType::kDateWithin:
+        case LevelType::kNumericWithin:
+            // Exact already, and cheaper than any bound would be.
+            return LevelFires(comparison, level, a, b);
+
+        case LevelType::kLevenshtein: {
+            const uint32_t left = comparison.strings->ids[a];
+            const uint32_t right = comparison.strings->ids[b];
+            if (left == kNullId || right == kNullId) return false;
+            if (left == right) return true;
+            if (comparison.signatures == nullptr) return true;
+            return LevenshteinLowerBound(comparison.signatures->Mask(left),
+                                         comparison.signatures->Length(left),
+                                         comparison.signatures->Mask(right),
+                                         comparison.signatures->Length(right)) <=
+                   static_cast<int>(level.threshold);
+        }
+
+        case LevelType::kJaroWinkler: {
+            const uint32_t left = comparison.strings->ids[a];
+            const uint32_t right = comparison.strings->ids[b];
+            if (left == kNullId || right == kNullId) return false;
+            if (left == right) return true;
+            if (comparison.signatures == nullptr) return true;
+            return JaroWinklerUpperBound(comparison.signatures->Mask(left),
+                                         comparison.signatures->Length(left),
+                                         comparison.signatures->Mask(right),
+                                         comparison.signatures->Length(right)) >=
+                   level.threshold;
+        }
+
+        case LevelType::kGeoWithin: {
+            const double lat_a = comparison.numbers->values[a];
+            const double lat_b = comparison.numbers->values[b];
+            const double lon_a = comparison.numbers2->values[a];
+            const double lon_b = comparison.numbers2->values[b];
+            if (std::isnan(lat_a) || std::isnan(lat_b) || std::isnan(lon_a) ||
+                std::isnan(lon_b)) {
+                return false;
+            }
+            // The latitude arc alone is a lower bound on the great-circle
+            // distance, and it costs a subtract where the haversine costs four
+            // trigonometric calls. The metre of slack absorbs rounding rather
+            // than risking a bound that is wrong at the boundary.
+            const double arc = kKmPerDegreeLatitude * std::abs(lat_a - lat_b);
+            return arc <= level.threshold + 0.001;
+        }
+
+        case LevelType::kListOverlap: {
+            const uint64_t size_a =
+                comparison.lists->offsets[a + 1] - comparison.lists->offsets[a];
+            const uint64_t size_b =
+                comparison.lists->offsets[b + 1] - comparison.lists->offsets[b];
+            // The intersection cannot be larger than the smaller set, and the
+            // sizes are two subtractions off the offset array.
+            return static_cast<double>(std::min(size_a, size_b)) >= level.threshold;
+        }
+
+        case LevelType::kListJaccard: {
+            const uint64_t size_a =
+                comparison.lists->offsets[a + 1] - comparison.lists->offsets[a];
+            const uint64_t size_b =
+                comparison.lists->offsets[b + 1] - comparison.lists->offsets[b];
+            const uint64_t smaller = std::min(size_a, size_b);
+            const uint64_t larger = std::max(size_a, size_b);
+            if (larger == 0) return false;
+            // shared <= smaller and union >= larger, so smaller/larger is an
+            // upper bound on the Jaccard coefficient.
+            return static_cast<double>(smaller) / static_cast<double>(larger) >=
+                   level.threshold;
+        }
+    }
+    return true;
+}
+
+bool ComparisonSet::LevelPossible(size_t comparison, size_t level, uint64_t a,
+                                  uint64_t b) const {
+    const BoundComparison& bound = bound_[comparison];
+    return LevelMaybe(bound, bound.spec->levels[level], a, b);
+}
+
 uint8_t ComparisonSet::EvaluateOne(size_t comparison, uint64_t a, uint64_t b) const {
     const BoundComparison& bound = bound_[comparison];
     const std::vector<LevelSpec>& levels = bound.spec->levels;

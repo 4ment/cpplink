@@ -50,4 +50,9 @@ bool JaroWinklerAtLeast(std::string_view a, std::string_view b, double threshold
 // Great-circle distance in kilometres.
 double HaversineKm(double lat_a, double lon_a, double lat_b, double lon_b);
 
+// Kilometres per degree of latitude, on the same sphere HaversineKm uses. The
+// latitude arc between two points is a lower bound on the distance between them,
+// which is a subtraction where the haversine is four trigonometric calls.
+inline constexpr double kKmPerDegreeLatitude = 6371.0088 * 3.14159265358979323846 / 180.0;
+
 }  // namespace cpplink

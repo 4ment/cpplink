@@ -126,6 +126,9 @@ class PredictFixture : public ::testing::Test {
         cpplink::ScoreOptions score;
         score.threshold = threshold;
         score.use_bounds = bounds;
+        // Both shortcuts move together here: "bounds off" is the exhaustive run
+        // every admissibility claim is checked against.
+        score.use_ceiling = bounds;
         cpplink::Scorer scorer;
         std::string error;
         EXPECT_TRUE(scorer.Bind(model_, comparisons_, *store_, score, &error)) << error;
@@ -189,6 +192,54 @@ TEST_F(PredictFixture, BoundedScoringEmitsExactlyWhatExhaustiveScoringDoes) {
     }
 }
 
+// The ceiling on its own: same bracket, same threshold, the only difference is
+// whether the pair is bounded before the comparison runs or after.
+TEST_F(PredictFixture, TheCeilingSkipsWorkWithoutChangingTheEdges) {
+    for (const double threshold : {-8.0, 0.0, 1.5, 3.0, 4.5}) {
+        std::vector<Edge> with;
+        std::vector<Edge> without;
+        cpplink::PredictReport ceiling;
+        cpplink::PredictReport flat;
+        for (int pass = 0; pass < 2; ++pass) {
+            cpplink::ScoreOptions score;
+            score.threshold = threshold;
+            score.use_ceiling = pass == 0;
+            cpplink::Scorer scorer;
+            std::string error;
+            ASSERT_TRUE(scorer.Bind(model_, comparisons_, *store_, score, &error))
+                << error;
+            cpplink::PredictOptions options;
+            options.out_dir =
+                (dir_ / ("ceil" + std::to_string(pass) + std::to_string(threshold)))
+                    .string();
+            options.threads = 4;
+            cpplink::PredictReport* report = pass == 0 ? &ceiling : &flat;
+            ASSERT_TRUE(cpplink::Predict(*store_, comparisons_, plan_, scorer, options,
+                                         report, &error))
+                << error;
+            (pass == 0 ? with : without) = ReadShards(options.out_dir);
+        }
+        EXPECT_EQ(with, without) << "threshold " << threshold;
+        EXPECT_EQ(flat.skipped, 0u);
+        EXPECT_EQ(ceiling.enumerated, flat.enumerated);
+        // The comparisons the ceiling avoided are exactly the ones the bracket
+        // would have dropped afterwards, so nothing else can have moved.
+        EXPECT_EQ(ceiling.skipped + ceiling.dropped, flat.dropped);
+        EXPECT_EQ(ceiling.checked, flat.checked);
+        EXPECT_EQ(ceiling.certain, flat.certain);
+    }
+}
+
+// At a threshold no pattern in this fixture can reach, the ceiling refuses every
+// pair and not one comparison runs.
+TEST_F(PredictFixture, AnUnreachableThresholdSkipsEveryCandidate) {
+    cpplink::PredictReport report;
+    const std::vector<Edge> edges = Run("unreachable", 40.0, true, 2, &report);
+    EXPECT_TRUE(edges.empty());
+    EXPECT_GT(report.enumerated, 0u);
+    EXPECT_EQ(report.skipped, report.enumerated);
+}
+
 TEST_F(PredictFixture, ThreadCountDoesNotChangeTheEdges) {
     const std::vector<Edge> one = Run("t1", 0.0, true, 1, nullptr);
     EXPECT_EQ(one, Run("t4", 0.0, true, 4, nullptr));
@@ -199,7 +250,8 @@ TEST_F(PredictFixture, ThreadCountDoesNotChangeTheEdges) {
 TEST_F(PredictFixture, ZoneCountsAddUpToTheCandidatesEnumerated) {
     cpplink::PredictReport report;
     Run("zones", 1.0, true, 4, &report);
-    EXPECT_EQ(report.dropped + report.checked + report.certain, report.enumerated);
+    EXPECT_EQ(report.skipped + report.dropped + report.checked + report.certain,
+              report.enumerated);
     EXPECT_EQ(report.enumerated, plan_.CountPairs(0));
     EXPECT_EQ(report.tf_lookups, report.checked + report.certain);
     EXPECT_EQ(report.patterns_drop + report.patterns_check + report.patterns_certain,

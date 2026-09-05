@@ -64,6 +64,9 @@ struct PredictOptions {
 
 struct PredictReport {
     uint64_t enumerated = 0;
+    // Bounded away before the pattern was ever produced: the pair could not have
+    // cleared the threshold whatever the string metrics said, so none ran.
+    uint64_t skipped = 0;
     uint64_t dropped = 0;  // pattern below threshold even at its rarest values
     uint64_t checked = 0;  // bracket straddled the threshold
     uint64_t certain = 0;  // pattern above threshold even at its commonest values
