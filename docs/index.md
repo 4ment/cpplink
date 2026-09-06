@@ -32,7 +32,8 @@ discarded. EM reads the histogram, so **its cost is independent of the data size
 ```
 0 Profile  what the columns can be worth, what a     cpplink profile
            match will score, and what is the same
-           evidence twice
+           evidence twice; and where the fuzzy       cpplink levels
+           thresholds should actually sit
 1 Load     parquet → interned columnar store        cpplink inspect
 2 Block    lazy pair iterator, no table             cpplink explain-blocking / recall
 3 Compare  pair → packed γ                          cpplink explain

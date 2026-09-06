@@ -126,6 +126,10 @@ cpplink inspect --schema examples/sample_schema.json data.parquet
 # plan, no known pairs
 cpplink profile --schema examples/sample_schema.json data.parquet
 
+# Check the schema's fuzzy thresholds against the column they run on, from the
+# exact u curve of the dictionary self-join and an m curve from anchor pairs
+cpplink levels --schema examples/sample_schema.json --out proposed.json data.parquet
+
 # Show which level each comparison assigns to one pair, and the packed pattern
 cpplink explain --schema examples/sample_schema.json --pair r17,r19 data.parquet
 
