@@ -18,6 +18,7 @@
 #include "cpplink/neighbourhood.hpp"
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/predict.hpp"
+#include "cpplink/profile.hpp"
 #include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/rescore.hpp"
@@ -36,6 +37,9 @@ void PrintUsage(std::ostream& out) {
         << "\n"
         << "commands:\n"
         << "  inspect     load a parquet file and report cardinality and memory\n"
+        << "  profile     what the columns can be worth, and which pairs of them "
+           "are\n"
+        << "              the same evidence twice\n"
         << "  explain     show the levels a single pair lands on, and with a "
            "model\n"
         << "              the waterfall of bits behind its score\n"
@@ -62,6 +66,10 @@ void PrintUsage(std::ostream& out) {
         << "One file is a deduplication and needs no --mode.\n"
         << "\n"
         << "cpplink inspect --schema <schema.json> <file.parquet>...\n"
+        << "cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]\n"
+        << "                [--expected-matches N] [--threads N] [--json] "
+           "[--mode MODE]\n"
+        << "                <file.parquet>...\n"
         << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b>\n"
         << "                [--rows <i>,<j>] [--model <model.json>] "
            "[--threshold BITS]\n"
@@ -178,6 +186,72 @@ int RunInspect(const std::vector<std::string>& args, std::ostream& out,
         out << "\n";
     }
     PrintInspection(store, stats, out);
+    return 0;
+}
+
+int RunProfile(const std::vector<std::string>& args, std::ostream& out,
+               std::ostream& err) {
+    std::string schema_path;
+    std::string value;
+    std::vector<std::string> data_paths;
+    ProfileOptions options;
+    bool as_json = false;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
+        } else if (args[i] == "--sample-rows") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.sample_rows = std::stoull(value);
+        } else if (args[i] == "--expected-matches") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.expected_matches = std::stoull(value);
+        } else if (args[i] == "--threads") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threads = static_cast<unsigned>(std::stoul(value));
+        } else if (args[i] == "--no-pairs") {
+            options.pairs = false;
+        } else if (args[i] == "--json") {
+            as_json = true;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink profile: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else {
+            data_paths.push_back(args[i]);
+        }
+    }
+    if (schema_path.empty() || data_paths.empty()) {
+        err << "cpplink profile: --schema <schema.json> and a parquet file are "
+               "required\n";
+        return 1;
+    }
+
+    Schema schema;
+    std::string error;
+    if (!LoadSchema(schema_path, &schema, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    RecordStore store(schema);
+    LoadStats stats;
+    if (!LoadParquetFiles(data_paths, schema, &store, &stats, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    const ProfileReport report =
+        BuildProfile(store, DefaultMode(mode_given, mode, data_paths.size()), options);
+    if (as_json) {
+        WriteProfileJson(report, out);
+    } else {
+        PrintProfileReport(report, out);
+    }
     return 0;
 }
 
@@ -1108,6 +1182,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
 
     const std::vector<std::string> rest(args.begin() + 1, args.end());
     if (first == "inspect") return RunInspect(rest, out, err);
+    if (first == "profile") return RunProfile(rest, out, err);
     if (first == "explain") return RunExplain(rest, out, err);
     if (first == "explain-blocking") return RunExplainBlocking(rest, out, err);
     if (first == "recall") return RunRecall(rest, out, err);

@@ -128,8 +128,18 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
     const size_t datasets = store.NumDatasets();
     const bool cross = mode == PairMode::kCrossDataset;
 
-    // The denominator both closed forms are taken over: every ordered draw for a
-    // dedup run, and every ordered cross-input draw for a link one.
+    // The denominator both closed forms are taken over: every ordered pair of
+    // distinct rows for a dedup run, and every ordered cross-input draw for a
+    // link one.
+    //
+    // A row against itself is not a pair either run can see, and `SampleRandomPairs`
+    // says so by skipping `a == b`; the closed form has to agree with it. For a
+    // dedup that is `records` of the `records * records` ordered draws, which is
+    // nothing while u is large and is the whole of u once u approaches 1/records --
+    // exactly the regime the strongest columns sit in. A near-unique column read
+    // over the wrong denominator loses several bits of weight. The link denominator
+    // drops the diagonal already, because the within-input draws it subtracts
+    // contain it.
     double space = records * records;
     if (cross) {
         double within = 0.0;
@@ -140,13 +150,19 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
         }
         space -= within;
         if (space <= 0.0) return false;
+    } else {
+        space -= records;
     }
 
     if (levels[level].type == LevelType::kNull) {
         if (level != 0) return false;  // an earlier level could pre-empt it
         if (!cross) {
-            const double present = (records - static_cast<double>(nulls[0])) / records;
-            *value = 1.0 - present * present;
+            // Every input's nulls, not the first input's: a dedup run over more
+            // than one file is `--mode link-and-dedup` and reads them all.
+            double missing = 0.0;
+            for (size_t d = 0; d < datasets; ++d) missing += static_cast<double>(nulls[d]);
+            const double present = records - missing;
+            *value = 1.0 - present * (present - 1.0) / space;
             return true;
         }
         // Neither side null, over cross-input draws: the present counts of two
@@ -180,9 +196,11 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
     if (tf == nullptr) return false;
 
     Neumaier collisions;
+    Neumaier present;
     for (const uint32_t frequency : *tf) {
         const double count = static_cast<double>(frequency);
         collisions.Add(count * count);
+        present.Add(count);
     }
     double agreeing = collisions.Total();
     if (cross) {
@@ -192,6 +210,11 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
         double within = 0.0;
         if (!WithinDatasetCollisions(store, bound, &within)) return false;
         agreeing -= within;
+    } else {
+        // Sum of c^2 counts every present row agreeing with itself once. Sum of
+        // c(c - 1) is what is left: the ordered pairs of distinct rows that agree,
+        // over the denominator that now counts the same thing.
+        agreeing -= present.Total();
     }
     *value = agreeing / space;
     return true;

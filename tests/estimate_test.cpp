@@ -171,21 +171,31 @@ class EstimateFixture : public ::testing::Test {
 };
 
 // The closed form is the whole reason u needs no sampling at this cardinality:
-// it is the term frequencies' second moment, and it must be exact, not close.
+// it is a count over the term frequencies, and it must be exact, not close.
+//
+// The count is of ordered pairs of *distinct* rows, which is what a run can see
+// and what `SampleRandomPairs` draws. Taking it over every ordered draw instead
+// puts each row's agreement with itself in the numerator and denominator both,
+// which is `1/records` of u -- nothing while u is large, and the whole of u for a
+// near-unique column. This fixture is that column: 1,100 distinct emails over
+// 1,200 rows, where the wrong denominator reads u seven times too large and costs
+// the strongest comparison in the schema 2.8 bits of weight.
 TEST_F(EstimateFixture, ExactLevelUComesFromTheTermFrequenciesExactly) {
     ASSERT_TRUE(Run()) << message_;
 
     const auto& email = std::get<cpplink::StringColumn>(store_->column(0));
     double expected = 0.0;
     for (const uint32_t frequency : email.tf) {
-        const double share = static_cast<double>(frequency) / kRecords;
-        expected += share * share;
+        const double count = static_cast<double>(frequency);
+        expected += count * (count - 1.0);
     }
+    expected /= static_cast<double>(kRecords) * (kRecords - 1);
     const cpplink::ModelLevel& level = Comparison("email").levels[1];
     EXPECT_TRUE(level.u_exact);
     EXPECT_NEAR(level.u, expected, 1e-15);
-    // 100 values seen twice and 1000 seen once, over 1200 records.
-    EXPECT_NEAR(level.u, (100 * 4.0 + 1000 * 1.0) / (1200.0 * 1200.0), 1e-15);
+    // 100 values seen twice and 1000 seen once: 200 ordered agreeing pairs out of
+    // the 1200 * 1199 ordered pairs of distinct rows, and not one pair more.
+    EXPECT_NEAR(level.u, 200.0 / (1200.0 * 1199.0), 1e-15);
 }
 
 TEST_F(EstimateFixture, EveryComparisonsLevelsSumToOne) {
@@ -236,14 +246,23 @@ TEST_F(EstimateFixture, CitySessionSeparatesMatchesFromABlockOfMostlyNonMatches)
     for (uint64_t i = 0; i < kPlanted; ++i) {
         if (CityAgrees(i)) ++reachable;
     }
-    // EM's match mass is a posterior, so it undercounts on purpose: a pair that
-    // agrees only on email is worth 10 bits against a 12-bit prior, which is not
-    // enough to call it a match. That is why lambda is reported as a lower bound
-    // and not as a count.
-    EXPECT_LT(session.implied_matches, static_cast<double>(reachable) * 1.1);
-    EXPECT_GT(session.implied_matches, static_cast<double>(reachable) * 0.6);
-    // Every planted pair shares an email, and no other pair in the block does.
-    EXPECT_GT(Comparison("email").levels[1].m, 0.95);
+    // EM's match mass is a posterior, so it lands near the count rather than on
+    // it. How near turns on what an email agreement is worth: over the ordered
+    // pairs of distinct rows it is 12.8 bits against this block's 11.4-bit prior,
+    // which is enough to call such a pair a match, and the implied count comes out
+    // within a tenth of the truth. Over every ordered draw it was 10.0 bits, not
+    // enough, and the same session read 52 matches where there are 66.
+    EXPECT_LT(session.implied_matches, static_cast<double>(reachable) * 1.15);
+    EXPECT_GT(session.implied_matches, static_cast<double>(reachable) * 0.9);
+    // Every planted pair shares an email and no other pair in the block does, so
+    // the truth is 1. EM does not reach it, and the gap is its own: finding the
+    // matches it was missing also pulls in the pairs agreeing on surname and
+    // postcode by chance, and those carry no email agreement to credit. The same
+    // trade shows up as m for surname and postcode moving *towards* their known
+    // rates, which is the direction that matters.
+    EXPECT_GT(Comparison("email").levels[1].m, 0.8);
+    EXPECT_NEAR(Comparison("surname").levels[1].m, 0.8, 0.05);   // 4 pairs in 5
+    EXPECT_NEAR(Comparison("postcode").levels[0].m, 6.0 / 7.0, 0.05);
 }
 
 // A session cannot estimate the comparison it blocked on: gamma is constant there
