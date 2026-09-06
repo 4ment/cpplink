@@ -3,6 +3,7 @@
 
 #include "cpplink/profile.hpp"
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <sstream>
@@ -275,6 +276,257 @@ TEST_F(ProfileFixture, WithoutPairsNothingIsWalked) {
     EXPECT_FALSE(report.walked);
     EXPECT_TRUE(report.pairs.empty());
     EXPECT_GT(report.available_bits, 0.0);
+}
+
+// Thirty thousand rows: fifteen thousand originals and a duplicate of each,
+// corrupted column by column at rates this test knows, so m has a planted answer
+// to be checked against rather than a plausible shape to be eyeballed.
+//
+//   key1/key2/key3  3,000 values each, redrawn on the duplicate at 10, 20 and 30%
+//   soft              200 values, redrawn at 40%
+//   linked            400 values, redrawn on exactly the rows key3 was, which is a
+//                     dependence among matches that the u side cannot see at all
+//   coarse          key1 modulo 40, recomputed after the corruption, so key1
+//                   determines it and no session may anchor on one and learn the
+//                   other
+constexpr uint64_t kPlantedPairs = 15000;
+constexpr uint32_t kKeyValues = 3000;
+constexpr uint32_t kSoftValues = 200;
+constexpr uint32_t kLinkedValues = 400;
+constexpr uint32_t kCoarseClasses = 40;
+
+const char* const kAnchorSchemaJson = R"({
+  "unique_id": "id",
+  "columns": [
+    {"name": "key1", "type": "string"},
+    {"name": "key2", "type": "string"},
+    {"name": "key3", "type": "string"},
+    {"name": "soft", "type": "string"},
+    {"name": "linked", "type": "string"},
+    {"name": "coarse", "type": "string"}
+  ]
+})";
+
+class AnchorFixture : public ::testing::Test {
+   protected:
+    // key1, key2, key3, soft, linked. coarse is derived and not carried.
+    using Record = std::array<uint32_t, 5>;
+
+    void SetUp() override {
+        std::string error;
+        ASSERT_TRUE(cpplink::ParseSchema(kAnchorSchemaJson, &schema_, &error)) << error;
+        store_ = std::make_unique<cpplink::RecordStore>(schema_);
+
+        std::vector<Record> planted(kPlantedPairs);
+        for (uint64_t i = 0; i < kPlantedPairs; ++i) {
+            planted[i] = {Draw(kKeyValues), Draw(kKeyValues), Draw(kKeyValues),
+                          Draw(kSoftValues), Draw(kLinkedValues)};
+        }
+        for (const Record& record : planted) Emit(record);
+        for (const Record& record : planted) {
+            Record copy = record;
+            if (Draw(100) < 10) copy[0] = Draw(kKeyValues);
+            if (Draw(100) < 20) copy[1] = Draw(kKeyValues);
+            if (Draw(100) < 30) {
+                copy[2] = Draw(kKeyValues);
+                copy[4] = Draw(kLinkedValues);
+            }
+            if (Draw(100) < 40) copy[3] = Draw(kSoftValues);
+            Emit(copy);
+        }
+        store_->set_num_records(2 * kPlantedPairs);
+        store_->Finalize();
+    }
+
+    uint32_t Draw(uint32_t range) {
+        seed_ = seed_ * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<uint32_t>((seed_ >> 33) % range);
+    }
+
+    void Emit(const Record& record) {
+        static const char* const kPrefix[5] = {"a", "b", "c", "s", "l"};
+        for (size_t i = 0; i < 5; ++i) {
+            cpplink::StringColumn& column =
+                std::get<cpplink::StringColumn>(store_->mutable_column(i));
+            column.ids.push_back(
+                column.dict.Intern(kPrefix[i] + std::to_string(record[i])));
+        }
+        cpplink::StringColumn& coarse =
+            std::get<cpplink::StringColumn>(store_->mutable_column(5));
+        coarse.ids.push_back(
+            coarse.dict.Intern("g" + std::to_string(record[0] % kCoarseClasses)));
+        store_->mutable_ids().Append("r" + std::to_string(emitted_++));
+    }
+
+    // One planted duplicate per original, which is what the prior odds have to be
+    // told: the default of one per record would double the match rate.
+    cpplink::ProfileOptions Options() const {
+        cpplink::ProfileOptions options;
+        options.expected_matches = kPlantedPairs;
+        options.threads = 1;
+        return options;
+    }
+
+    const cpplink::ColumnMatchProfile& MatchNamed(const cpplink::ProfileReport& report,
+                                                  const std::string& name) const {
+        for (const cpplink::ColumnMatchProfile& match : report.matches) {
+            if (match.name == name) return match;
+        }
+        ADD_FAILURE() << "no m for " << name;
+        return report.matches.front();
+    }
+
+    const cpplink::ColumnPairProfile& PairNamed(const cpplink::ProfileReport& report,
+                                                const std::string& left,
+                                                const std::string& right) const {
+        for (const cpplink::ColumnPairProfile& pair : report.pairs) {
+            if (pair.left_name == left && pair.right_name == right) return pair;
+        }
+        ADD_FAILURE() << "no pair " << left << " / " << right;
+        return report.pairs.front();
+    }
+
+    uint64_t emitted_ = 0;
+    uint64_t seed_ = 987654321;
+    cpplink::Schema schema_;
+    std::unique_ptr<cpplink::RecordStore> store_;
+};
+
+// The estimate this whole half of the command exists for. A column redrawn on a
+// tenth of the duplicates has m of 0.9 plus the chance the redraw lands on the
+// same value, and the anchor pairs have to find that without a model, without a
+// truth file and without ever being told which rows are duplicates of which.
+TEST_F(AnchorFixture, AnchorMFindsThePlantedRate) {
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options());
+    ASSERT_TRUE(report.anchored) << report.anchor_refusal;
+    EXPECT_NEAR(MatchNamed(report, "key1").m, 0.9 + 0.1 / kKeyValues, 0.02);
+    EXPECT_NEAR(MatchNamed(report, "key2").m, 0.8 + 0.2 / kKeyValues, 0.02);
+    EXPECT_NEAR(MatchNamed(report, "key3").m, 0.7 + 0.3 / kKeyValues, 0.02);
+    EXPECT_NEAR(MatchNamed(report, "soft").m, 0.6 + 0.4 / kSoftValues, 0.02);
+    EXPECT_NEAR(MatchNamed(report, "linked").m, 0.7 + 0.3 / kLinkedValues, 0.02);
+    EXPECT_NEAR(MatchNamed(report, "coarse").m, 0.9 + 0.1 / kCoarseClasses, 0.02);
+}
+
+// An anchor forces its own columns to agree, and forces every column it determines
+// to agree with them, so a session that read either back would be reporting its own
+// selection as a measurement.
+TEST_F(AnchorFixture, NoSessionLearnsWhatItsAnchorHasAlreadySaid) {
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options());
+    ASSERT_FALSE(report.sessions.empty());
+    bool anchored_on_key1 = false;
+    for (const cpplink::AnchorSession& session : report.sessions) {
+        for (size_t column : session.anchor) {
+            EXPECT_EQ(std::count(session.learns.begin(), session.learns.end(), column),
+                      0);
+        }
+        const bool holds_key1 =
+            std::find(session.anchor_names.begin(), session.anchor_names.end(), "key1") !=
+            session.anchor_names.end();
+        anchored_on_key1 = anchored_on_key1 || holds_key1;
+        if (!holds_key1) continue;
+        for (size_t column : session.learns) {
+            EXPECT_NE(report.columns[column].name, "coarse")
+                << "coarse is key1 modulo 40 and this session anchors on key1";
+        }
+    }
+    EXPECT_TRUE(anchored_on_key1);
+}
+
+// What the M side is for. `linked` is corrupted on exactly the duplicates `key3`
+// was, so among matches the two agree together far more than agreeing apart would
+// predict: log2(0.7 / (0.7 * 0.7)) is 0.51 bits. The u side cannot see it, because
+// the two columns are drawn independently and share no value.
+TEST_F(AnchorFixture, MSideFindsTheDependenceTheUSideCannot) {
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options());
+    ASSERT_TRUE(report.anchored) << report.anchor_refusal;
+    const cpplink::ColumnPairProfile& coupled = PairNamed(report, "key3", "linked");
+    ASSERT_TRUE(coupled.m_resolved);
+    EXPECT_NEAR(coupled.m_redundant_bits, -std::log2(0.7), 0.06);
+    // And invents none where there is none: soft is corrupted on its own coin.
+    const cpplink::ColumnPairProfile& apart = PairNamed(report, "key2", "soft");
+    ASSERT_TRUE(apart.m_resolved);
+    EXPECT_NEAR(apart.m_redundant_bits, 0.0, 0.06);
+}
+
+// m <= 1, so log2(m/u) can never exceed the column's own ceiling. The ledger's
+// second half is a tighter bound than its first and never a looser one.
+TEST_F(AnchorFixture, EstimatedWeightNeverExceedsTheCeiling) {
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options());
+    ASSERT_TRUE(report.anchored) << report.anchor_refusal;
+    for (const cpplink::ColumnMatchProfile& match : report.matches) {
+        if (!match.estimated) continue;
+        EXPECT_LE(match.weight, report.columns[match.column].bits + 1e-9) << match.name;
+        EXPECT_GT(match.m, 0.0);
+        EXPECT_LE(match.m, 1.0);
+    }
+    EXPECT_EQ(report.estimated_columns, report.matches.size());
+}
+
+// The pairwise pass is what separates an anchor from a column it determines, so
+// without it the M side is refused rather than run on an anchor that has already
+// answered the question.
+TEST_F(AnchorFixture, WithoutThePairwisePassThereIsNoMSide) {
+    cpplink::ProfileOptions options = Options();
+    options.pairs = false;
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, options);
+    EXPECT_FALSE(report.anchored);
+    EXPECT_FALSE(report.anchor_refusal.empty());
+    EXPECT_TRUE(report.matches.empty());
+    EXPECT_EQ(report.expected_bits, 0.0);
+}
+
+// Turning it off leaves the ceiling half of the report exactly as it was.
+TEST_F(AnchorFixture, AnchorsCanBeTurnedOffWithoutASound) {
+    cpplink::ProfileOptions options = Options();
+    options.anchors = false;
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, options);
+    EXPECT_FALSE(report.anchored);
+    EXPECT_TRUE(report.anchor_refusal.empty());
+    EXPECT_TRUE(report.sessions.empty());
+    EXPECT_GT(report.available_bits, 0.0);
+}
+
+// An anchor on key1 and key2 selects the planted pairs that survived both
+// corruptions, which is 15,000 * 0.9 * 0.8, and it is a test rather than an
+// observation because it is the one number that says the enumeration found the
+// duplicates rather than something else that collides.
+TEST_F(AnchorFixture, AnchorSelectsThePlantedPairs) {
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options());
+    ASSERT_TRUE(report.anchored) << report.anchor_refusal;
+    const cpplink::AnchorSession* found = nullptr;
+    for (const cpplink::AnchorSession& session : report.sessions) {
+        if (session.anchor_names.size() == 2 && session.anchor_names[0] == "key1" &&
+            session.anchor_names[1] == "key2") {
+            found = &session;
+        }
+    }
+    ASSERT_NE(found, nullptr);
+    EXPECT_TRUE(found->used);
+    EXPECT_FALSE(found->capped);
+    EXPECT_NEAR(static_cast<double>(found->pairs), 0.9 * 0.8 * kPlantedPairs, 400.0);
+    EXPECT_GT(found->posterior_bits, 0.0);
+}
+
+// A budget stops the walk rather than the estimate: a run that reaches it still
+// reports m, and says it was capped.
+TEST_F(AnchorFixture, PairBudgetCapsTheWalk) {
+    cpplink::ProfileOptions options = Options();
+    options.anchor_pairs = 500;
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, options);
+    ASSERT_TRUE(report.anchored) << report.anchor_refusal;
+    for (const cpplink::AnchorSession& session : report.sessions) {
+        EXPECT_LE(session.pairs, 500u);
+        EXPECT_TRUE(session.capped);
+    }
+    EXPECT_NEAR(MatchNamed(report, "key1").m, 0.9, 0.06);
 }
 
 TEST(ProfileCommand, NeedsSchemaAndData) {
