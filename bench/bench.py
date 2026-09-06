@@ -21,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from datasets import DATASETS, TRACKS  # noqa: E402
+from datasets import CPPLINK_ONLY_TRACKS, DATASETS, TRACKS  # noqa: E402
 from score import score  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,8 +34,10 @@ RUNNERS = {
 
 
 def human_bytes(count):
-    for unit in ("B", "KB", "MB", "GB"):
-        if count < 1024 or unit == "GB":
+    # Binary units with binary names: ru_maxrss divided by 1024 is MiB, and
+    # printing it as MB understates a 4.35 GB peak as "4.1 GB".
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if count < 1024 or unit == "GiB":
             return f"{count:.0f} {unit}" if unit == "B" else f"{count:.1f} {unit}"
         count /= 1024
 
@@ -86,6 +88,8 @@ def run_one(tool, dataset, track, out, args):
                "--u-sample", str(args.u_sample), "--seed", str(args.seed)]
     if tool == "cpplink":
         command.append("--analysis")
+        if track in CPPLINK_ONLY_TRACKS:
+            command.append("--fuzzy")
     os.makedirs(out, exist_ok=True)
     start = time.perf_counter()
     with open(os.path.join(out, "run.log"), "w") as log:
@@ -131,7 +135,11 @@ def main():
                 # splink has no automatic blocking, so its native-track
                 # configuration is identical to its matched-track one. It is
                 # run anyway: the two rows are then a repeatability check, and
-                # each track's table is self-contained.
+                # each track's table is self-contained. The fuzzy_tf track is
+                # a cpplink feature with no splink counterpart at all, so a
+                # third identical splink run would say nothing and is skipped.
+                if tool != "cpplink" and track in CPPLINK_ONLY_TRACKS:
+                    continue
                 reports = []
                 for repeat in range(args.repeat):
                     out = os.path.join(RESULTS, name, track, tool, f"rep{repeat}")
@@ -159,6 +167,7 @@ def main():
                     "quality": quality,
                     "best_threshold": best[0],
                     "best": best[1],
+                    "analysis": first.get("analysis", {}),
                 })
 
     os.makedirs(RESULTS, exist_ok=True)
@@ -181,6 +190,25 @@ def main():
     for row in rows:
         print(f"| {row['dataset']} | {row['track']} | {row['tool']} | "
               f"{row['pipeline_seconds']:.2f} | {human_bytes(row['peak_rss_bytes'])} |")
+
+    print("\n## Blocking, and the ceiling it puts on recall\n")
+    print("| dataset | track | candidate pairs | blocking recall | "
+          "completeness est. | error | trusted |")
+    print("|---|---|---:|---:|---:|---:|---|")
+    for row in rows:
+        if row["tool"] != "cpplink":
+            continue
+        analysis = row["analysis"]
+        if not analysis:
+            continue
+        estimated = analysis.get("completeness", {})
+        pc = estimated.get("pc_estimate")
+        measured = analysis["blocking_recall"]
+        error = f"{pc - measured:+.4f}" if pc is not None else "-"
+        print(f"| {row['dataset']} | {row['track']} | "
+              f"{analysis['candidate_pairs']:,} | {measured:.4f} | "
+              f"{'-' if pc is None else f'{pc:.4f}'} | {error} | "
+              f"{estimated.get('trusted', '-')} |")
 
     print("\n## Threshold sweep (F1)\n")
     header = " | ".join(str(t) for t in thresholds)

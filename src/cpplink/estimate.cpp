@@ -160,7 +160,9 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
             // Every input's nulls, not the first input's: a dedup run over more
             // than one file is `--mode link-and-dedup` and reads them all.
             double missing = 0.0;
-            for (size_t d = 0; d < datasets; ++d) missing += static_cast<double>(nulls[d]);
+            for (size_t d = 0; d < datasets; ++d) {
+                missing += static_cast<double>(nulls[d]);
+            }
             const double present = records - missing;
             *value = 1.0 - present * (present - 1.0) / space;
             return true;
@@ -484,7 +486,11 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
     // dedup-only closed form for the same reason the exact level's is.
     BallTables balls;
     if (options.fuzzy_u && plan.mode() != PairMode::kCrossDataset) {
-        balls.Build(comparisons, store.NumRecords(), options.ball);
+        // The self-join is threaded by the same knob as everything else here:
+        // --threads is the whole command's budget, not the pair walk's alone.
+        BallOptions ball = options.ball;
+        ball.threads = options.threads;
+        balls.Build(comparisons, store.NumRecords(), ball);
         report->ball_seconds = balls.seconds;
         for (size_t c = 0; c < count; ++c) {
             BallReport entry;
