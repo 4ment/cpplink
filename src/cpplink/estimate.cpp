@@ -618,6 +618,12 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         report->tie_seconds = profile.seconds;
     }
     const auto tied_to = [&](const std::string& column, const std::string& other) {
+        // A declared derivation is a tie by construction and needs no rows to see.
+        // The pairwise test below would have to rediscover it, and it can refuse
+        // to: the joint of a column and a key derived from it is exactly the shape
+        // a file's own duplicates swamp, and a near-unique source is a determinant
+        // the profile declines to read.
+        if (SameSource(store.schema(), column, other)) return true;
         for (const ColumnPairProfile& pair : profile.pairs) {
             const bool here = (pair.left_name == column && pair.right_name == other) ||
                               (pair.right_name == column && pair.left_name == other);

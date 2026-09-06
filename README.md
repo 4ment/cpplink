@@ -74,6 +74,22 @@ CSR with each row sorted, `date` is days since the epoch, and `double` is stored
 Only the first three carry term frequencies: exact agreement between two doubles is not a
 discrete event worth counting, so a `double` column cannot drive rare-value blocking.
 
+A column can also be derived from another rather than read from the file, which is cheap here
+because interning makes an exact level on a derived key an integer equality and the transform
+runs once per distinct value rather than once per row:
+
+```json
+{"name": "surname_key", "derive": {"from": "surname", "transform": "soundex"}},
+{"name": "name_key",    "derive": {"from": "full_name",
+                                   "transform": ["normalize", "sorted_tokens"]}}
+```
+
+The transforms are `normalize`, `sorted_tokens`, `soundex`, and the date parts `year`,
+`month`, `day` and `year_month`; a list applies them in order and is type-checked against the
+source column when the schema is parsed. A derived column is interned, counted, blocked on and
+compared like any other, and because the derivation is a functional dependency the schema has
+declared, estimation treats it and its source as one piece of evidence rather than two.
+
 Comparisons are declared in the same file. Levels are evaluated top-down and the first hit
 wins, so their order is the model — put the strongest evidence first. A comparison can span
 more than one column: a coordinate pair is one comparison, not two.
