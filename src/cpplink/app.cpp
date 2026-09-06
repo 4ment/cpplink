@@ -28,6 +28,7 @@
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
+#include "cpplink/simplify.hpp"
 
 namespace cpplink {
 
@@ -47,6 +48,7 @@ void PrintUsage(std::ostream& out) {
         << "  levels      check the schema's fuzzy thresholds against the column "
            "they\n"
         << "              run on, and propose better ones\n"
+        << "  simplify    merge the levels a scored stream cannot tell apart\n"
         << "  explain     show the levels a single pair lands on, and with a "
            "model\n"
         << "              the waterfall of bits behind its score\n"
@@ -86,6 +88,10 @@ void PrintUsage(std::ostream& out) {
         << "               [--anchor-margin BITS] [--anchor-rows N]\n"
         << "               [--anchor-pairs N] [--ball-budget N] [--threads N]\n"
         << "               [--mode MODE] <file.parquet>...\n"
+        << "cpplink simplify --schema <schema.json> --model <model.json>\n"
+        << "                 [--out <schema.json>] [--alpha F] [--min-gap BITS]\n"
+        << "                 [--pair-cap N] [--threads N] [--seed N] [--json]\n"
+        << "                 [--mode MODE] <file.parquet>...\n"
         << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b>\n"
         << "                [--rows <i>,<j>] [--model <model.json>] "
            "[--threshold BITS]\n"
@@ -429,6 +435,135 @@ int RunLevels(const std::vector<std::string>& args, std::ostream& out,
     }
     target << rewritten;
     if (!as_json) out << "\nWrote the proposal to " << out_path << "\n";
+    return 0;
+}
+
+int RunSimplify(const std::vector<std::string>& args, std::ostream& out,
+                std::ostream& err) {
+    std::string schema_path;
+    std::string model_path;
+    std::string out_path;
+    std::string value;
+    std::vector<std::string> data_paths;
+    SimplifyOptions options;
+    bool as_json = false;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--model") {
+            if (!TakeValue(args, &i, &model_path, err)) return 1;
+        } else if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &out_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
+        } else if (args[i] == "--alpha") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.alpha = std::stod(value);
+        } else if (args[i] == "--min-gap") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.min_gap = std::stod(value);
+        } else if (args[i] == "--pair-cap") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.pair_cap = std::stoull(value);
+        } else if (args[i] == "--threads") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threads = static_cast<unsigned>(std::stoul(value));
+        } else if (args[i] == "--seed") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.seed = std::stoull(value);
+        } else if (args[i] == "--json") {
+            as_json = true;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink simplify: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else {
+            data_paths.push_back(args[i]);
+        }
+    }
+    if (schema_path.empty() || model_path.empty() || data_paths.empty()) {
+        err << "cpplink simplify: --schema <schema.json>, --model <model.json> and a "
+               "parquet file are required\n";
+        return 1;
+    }
+    if (options.alpha <= 0.0 || options.alpha >= 1.0) {
+        err << "cpplink simplify: --alpha must be between 0 and 1\n";
+        return 1;
+    }
+
+    Schema schema;
+    std::string error;
+    if (!LoadSchema(schema_path, &schema, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    if (schema.comparisons.empty()) {
+        err << "cpplink simplify: the schema declares no comparisons\n";
+        return 1;
+    }
+    Model model;
+    if (!LoadModel(model_path, &model, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    RecordStore store(schema);
+    LoadStats stats;
+    if (!LoadParquetFiles(data_paths, schema, &store, &stats, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    ComparisonSet comparisons;
+    if (!comparisons.Bind(schema, store, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    if (!ModelMatches(model, comparisons, &error)) {
+        err << "cpplink simplify: " << error << "\n";
+        return 1;
+    }
+    BlockingPlan plan;
+    if (!plan.Build(schema, store, DefaultMode(mode_given, mode, data_paths.size()),
+                    &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    const SimplifyReport report = BuildSimplify(store, comparisons, plan, model, options);
+    if (as_json) {
+        WriteSimplifyJson(report, out);
+    } else {
+        PrintSimplifyReport(report, out);
+    }
+
+    if (out_path.empty()) return 0;
+    if (report.merged_levels == 0) {
+        if (!as_json) out << "\nNothing to write: the schema is already simple.\n";
+        return 0;
+    }
+    std::ifstream source(schema_path);
+    if (!source) {
+        err << "cpplink simplify: cannot reread " << schema_path << "\n";
+        return 1;
+    }
+    const std::string text((std::istreambuf_iterator<char>(source)),
+                           std::istreambuf_iterator<char>());
+    std::string rewritten;
+    if (!RewriteSchema(text, report, &rewritten, &error)) {
+        err << "cpplink simplify: " << error << "\n";
+        return 1;
+    }
+    std::ofstream target(out_path);
+    if (!target) {
+        err << "cpplink simplify: cannot write " << out_path << "\n";
+        return 1;
+    }
+    target << rewritten;
+    if (!as_json) out << "\nWrote the simplified schema to " << out_path << "\n";
     return 0;
 }
 
@@ -1369,6 +1504,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     if (first == "inspect") return RunInspect(rest, out, err);
     if (first == "profile") return RunProfile(rest, out, err);
     if (first == "levels") return RunLevels(rest, out, err);
+    if (first == "simplify") return RunSimplify(rest, out, err);
     if (first == "explain") return RunExplain(rest, out, err);
     if (first == "explain-blocking") return RunExplainBlocking(rest, out, err);
     if (first == "recall") return RunRecall(rest, out, err);
