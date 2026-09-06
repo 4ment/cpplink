@@ -77,7 +77,7 @@ class Dataset:
 
     def cpplink_schema(self, track: str) -> dict:
         blocking = [{"type": "exact_value", "column": c} for c in self.block_columns]
-        if track == "native":
+        if track in ("native", "fuzzy_tf"):
             blocking += self.cpplink_extra
         return {
             "unique_id": "unique_id",
@@ -182,4 +182,11 @@ DATASETS = {
 # and both tools get the answer, so it cannot favour either.
 LAMBDA_RECALL = 0.8
 
-TRACKS = ("matched", "native")
+# "fuzzy_tf" is "native" plus cpplink's term frequency for the fuzzy levels
+# (`estimate --fuzzy-u`, `predict --fuzzy-tf`). It is a separate track rather
+# than a change to "native" so that each step isolates one thing: matched ->
+# native is the automatic blocking, native -> fuzzy_tf is the neighbourhood
+# mass. splink has no counterpart for either, and none for fuzzy TF at all, so
+# only cpplink runs this track.
+TRACKS = ("matched", "native", "fuzzy_tf")
+CPPLINK_ONLY_TRACKS = ("fuzzy_tf",)

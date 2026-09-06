@@ -1,0 +1,169 @@
+{
+  "unique_id": "unique_id",
+  "columns": [
+    {
+      "name": "first_name",
+      "type": "string"
+    },
+    {
+      "name": "surname",
+      "type": "string"
+    },
+    {
+      "name": "dob",
+      "type": "string"
+    },
+    {
+      "name": "city",
+      "type": "string"
+    },
+    {
+      "name": "email",
+      "type": "string"
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "first_name",
+      "columns": [
+        "first_name"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.8
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "surname",
+      "columns": [
+        "surname"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.9
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.8
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "dob",
+      "columns": [
+        "dob"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 1
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 2
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "city",
+      "columns": [
+        "city"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "columns": [
+        "email"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.88
+        },
+        {
+          "type": "else"
+        }
+      ]
+    }
+  ],
+  "blocking": [
+    {
+      "type": "exact_value",
+      "column": "dob"
+    },
+    {
+      "type": "exact_value",
+      "column": "surname"
+    },
+    {
+      "type": "exact_value",
+      "column": "email"
+    },
+    {
+      "type": "rare_value",
+      "column": "first_name",
+      "max_frequency": 20
+    },
+    {
+      "type": "sorted_neighbourhood",
+      "column": "surname",
+      "window": 10
+    }
+  ]
+}

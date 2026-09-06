@@ -35,21 +35,51 @@ def peak_child_bytes():
 
 
 def parse_analysis(blocking, reached):
-    """Pull the two numbers that explain a recall difference out of the reports.
+    """Pull the numbers that explain a recall difference out of the reports.
 
     Blocking recall is the ceiling on the pipeline's recall: a truth pair no
     source produces is never scored, so no threshold recovers it.
+
+    `recall --json` rather than its table, because the table has gained columns
+    twice and a positional parse of it reads the wrong ones silently. The
+    deduplicated candidate count is taken from both commands and required to
+    agree: `explain-blocking` prices the union from the term frequencies alone
+    and `recall --count` enumerates it, so agreement is a check, not a copy.
     """
-    analysis = {}
+    report = json.loads(reached)
+    analysis = {
+        "candidate_pairs": report["candidate_union"],
+        "candidate_sum": report["candidate_sum"],
+        "truth_pairs": report["truth_pairs"],
+        "truth_pairs_reached": report["union_found"],
+        "blocking_recall": report["pair_completeness"],
+        "pair_quality": report["pair_quality"],
+        "reduction_ratio": report["reduction_ratio"],
+    }
+    priced = None
     for line in blocking.splitlines():
         if line.startswith("Union, deduplicated"):
-            analysis["candidate_pairs"] = int(line.split()[-1].replace(",", ""))
-    for line in reached.splitlines():
-        if line.startswith("Union"):
-            parts = line.split()
-            analysis["truth_pairs_reached"] = int(parts[-2].replace(",", ""))
-            analysis["blocking_recall"] = float(parts[-1].rstrip("%")) / 100.0
+            priced = int(line.split()[-1].replace(",", ""))
+    if priced is not None and priced != analysis["candidate_pairs"]:
+        raise SystemExit(
+            f"blocking is priced at {priced:,} pairs and enumerates "
+            f"{analysis['candidate_pairs']:,}: one of the two is lying"
+        )
     return analysis
+
+
+def parse_completeness(text):
+    """The no-truth estimate of the same blocking recall `recall` measures.
+
+    Recorded next to it so the estimator is scored against the number it is a
+    substitute for, on every dataset, on every run. A refusal is a result too:
+    the report says `trusted` false rather than guessing, and that is kept.
+    """
+    report = json.loads(text)
+    return {key: report[key] for key in (
+        "pc_estimate", "pc_bound", "pc_basis", "trusted", "dark_cells",
+        "dark_mass", "observed_pairs",
+    ) if key in report}
 
 
 class Runner:
@@ -84,7 +114,12 @@ def main():
     parser.add_argument("--u-sample", type=int, default=1000000)
     parser.add_argument("--seed", type=int, default=20260904)
     parser.add_argument("--analysis", action="store_true",
-                        help="also price blocking and measure its recall")
+                        help="also price blocking, measure its recall, and "
+                             "estimate that recall again with no truth at all")
+    parser.add_argument("--fuzzy", action="store_true",
+                        help="term frequency for the fuzzy levels: an exact u "
+                             "from the dictionary self-join, and a scoring "
+                             "adjustment from the neighbourhood mass")
     args = parser.parse_args()
 
     dataset = DATASETS[args.dataset]
@@ -106,16 +141,30 @@ def main():
             blocking = run("explain_blocking", "explain-blocking", "--schema", schema,
                            "--count", parquet)
             reached = run("recall", "recall", "--schema", schema, "--truth", truth,
-                          parquet)
+                          "--count", "--json", parquet)
             analysis = parse_analysis(blocking, reached)
 
-        run("estimate", "estimate", "--schema", schema, "--out", model,
-            "--threads", args.threads, "--u-sample", args.u_sample,
-            "--lambda", repr(dataset.lam), "--seed", args.seed, parquet)
+        estimate = ["estimate", "--schema", schema, "--out", model,
+                    "--threads", args.threads, "--u-sample", args.u_sample,
+                    "--lambda", repr(dataset.lam), "--seed", args.seed]
+        if args.fuzzy:
+            estimate.append("--fuzzy-u")
+        run("estimate", *estimate, parquet)
 
-        run("predict", "predict", "--schema", schema, "--model", model,
-            "--out", edges, "--probability", repr(min(thresholds)),
-            "--threads", args.threads, parquet)
+        if args.analysis:
+            # After estimate, because it reads the model: the estimator is the
+            # model plus the term frequencies and nothing else.
+            text = run("completeness", "completeness", "--schema", schema,
+                       "--model", model, "--threads", args.threads, "--json",
+                       parquet)
+            analysis["completeness"] = parse_completeness(text)
+
+        predict = ["predict", "--schema", schema, "--model", model,
+                   "--out", edges, "--probability", repr(min(thresholds)),
+                   "--threads", args.threads]
+        if args.fuzzy:
+            predict.append("--fuzzy-tf")
+        run("predict", *predict, parquet)
 
         clusters = {}
         for threshold in thresholds:
@@ -136,6 +185,7 @@ def main():
         "dataset": dataset.name,
         "track": args.track,
         "threads": args.threads,
+        "fuzzy_tf": args.fuzzy,
         "stages": stages,
         "pipeline_seconds": stages["estimate"] + stages["predict"] + cluster_once,
         "peak_rss_bytes": peak_child_bytes(),
