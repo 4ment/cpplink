@@ -15,7 +15,7 @@ the whole pair space, so it runs in seconds and is the first thing to point at a
 cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]
                 [--expected-matches N] [--threads N] [--json] [--mode MODE]
                 [--no-anchors] [--anchor-rows N] [--anchor-margin BITS]
-                [--anchor-pairs N] <file.parquet>...
+                [--anchor-pairs N] [--truth <pairs.csv>] <file.parquet>...
 ```
 
 | Option | Meaning |
@@ -27,6 +27,7 @@ cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]
 | `--anchor-rows N` | rows the anchor pass reads, default 4,000,000; `0` reads every row |
 | `--anchor-margin BITS` | posterior bits an anchor must clear before its pairs are read as matches, default 6 |
 | `--anchor-pairs N` | anchor pairs one session walks before it stops, default 1,000,000 |
+| `--truth <file>` | an `id_a,id_b` CSV; every `m` is read a second time off the known pairs and scored beside the estimate, and nothing is fitted to it |
 | `--expected-matches N` | matching pairs assumed present, which is what the prior odds are made of; default is one duplicate per record |
 | `--threads N` | default is the hardware concurrency |
 | `--json` | the same numbers as JSON |
@@ -370,6 +371,29 @@ The anchor estimate gets the sign right.
 That is the same file whose best F1 sits at the bottom of the threshold grid, and the ledger now
 says why before anything has been run.
 
+### Scoring it against known pairs
+
+Where a truth file exists, `--truth` reads every `m` a second time off the known pairs and
+prints it beside the estimate:
+
+```text
+Column             Sessions       Pairs     Cov       m       Spread   Weight  Exp bits   True m     Err
+--------------------------------------------------------------------------------------------------------
+postcode_fake             1      30,387  78.75%   0.748            -    12.32      6.86    0.594  +0.154
+first_and_surname         1      42,994  99.91%   0.529            -    11.33      5.47    0.301  +0.228
+...
+mean |error|                                                                                       0.117
+```
+
+and adds a `Truth margin` line to the ledger beside `Est. margin`, summed over exactly the
+columns the anchor estimate covers so the two are the same question about the same columns.
+
+Nothing above the truth reading depends on it.
+The anchors are chosen, walked and averaged identically whether the flag is given or not, which
+is what makes `Err` a measurement of the anchor's selection rather than of a fit.
+The benchmark harness passes it on every run, so the numbers below are re-measured rather than
+remembered.
+
 ### Where it is wrong, and in which direction
 
 Every `m` on `historical_50k` reads high:
@@ -505,6 +529,11 @@ Each entry of `matches` carries `name`, `estimated`, `sessions`, `pairs`, `cover
 `m_low`, `m_high`, `weight`, `expected_bits` and `floored`.
 Each entry of `sessions` carries `anchor`, `learns`, `bits`, `posterior_bits`, `groups`,
 `pairs`, `oversized_groups`, `capped` and `used`.
+
+With `--truth` the top level gains `truthed`, `truth_pairs`, `truth_expected_bits`,
+`truth_margin_bits` and `truth_mean_error`, and each entry of `matches` gains `truthed` and,
+where it is true, `truth_pairs`, `truth_coverage`, `truth_m`, `truth_weight` and
+`truth_expected_bits`.
 
 ## What to do about a suspect
 

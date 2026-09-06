@@ -154,6 +154,9 @@ and on `febrl3`:
 | others | | 22.90 | 22.94 | +0.04 | +0.02 |
 | **total** | | 52.07 | 53.11 | **+1.04** | +1.01 |
 
+The benchmark harness passes `--truth` on every run and prints both totals beside each other,
+so these numbers are re-measured rather than remembered.
+
 **The gains survive the move to the truth curve**, and on `historical_50k` they get larger,
 which is the answer to the obvious objection: the cuts are placed on the anchor curve, so if
 they were fitting the anchor's bias rather than the column, the truth reading would take them

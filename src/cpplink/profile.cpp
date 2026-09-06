@@ -22,6 +22,7 @@
 
 #include "cpplink/format.hpp"
 #include "cpplink/pair_stream.hpp"
+#include "cpplink/recall.hpp"
 
 namespace cpplink {
 namespace {
@@ -128,9 +129,9 @@ std::string Fixed(double value, int decimals) {
     return buffer;
 }
 
-std::string Signed(double value) {
+std::string Signed(double value, int decimals = 2) {
     char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%+.2f", value);
+    std::snprintf(buffer, sizeof(buffer), "%+.*f", decimals, value);
     return buffer;
 }
 
@@ -706,6 +707,76 @@ void BuildMatchSide(const RecordStore& store, const ProfileOptions& options,
         report->prior_bits + report->expected_bits + report->double_counted_bits;
 }
 
+// The same agreement rates, over known pairs rather than anchor pairs. Nothing
+// above depends on this: it is a second reading of the number the anchor estimate
+// already produced, so the difference between them is the bias the anchor carries
+// and the report can print it rather than claim there is none.
+void BuildTruthSide(const RecordStore& store, const TruthPairs& truth,
+                    ProfileReport* report) {
+    if (report->matches.empty()) return;
+    std::vector<ScalarView> views;
+    views.reserve(report->columns.size());
+    for (size_t i = 0; i < report->columns.size(); ++i) {
+        views.push_back(ViewOf(store.column(i)));
+    }
+
+    std::vector<uint64_t> both(report->columns.size(), 0);
+    std::vector<uint64_t> agree(report->columns.size(), 0);
+    uint64_t pairs = 0;
+    for (const std::pair<uint32_t, uint32_t>& known : truth.rows) {
+        // Link mode's pair space is the cross product, so a known pair inside one
+        // input is not a pair the model will ever be asked about.
+        if (report->mode == PairMode::kCrossDataset &&
+            store.DatasetOf(known.first) == store.DatasetOf(known.second)) {
+            continue;
+        }
+        ++pairs;
+        for (ColumnMatchProfile& match : report->matches) {
+            const ScalarView& view = views[match.column];
+            if (!view.Valid()) continue;
+            const uint32_t left = view.Key(known.first);
+            const uint32_t right = view.Key(known.second);
+            if (left == kNullId || right == kNullId) continue;
+            ++both[match.column];
+            if (left == right) ++agree[match.column];
+        }
+    }
+    if (pairs == 0) return;
+
+    report->truthed = true;
+    report->truth_pairs = pairs;
+    const double walked = static_cast<double>(pairs);
+    double error = 0.0;
+    size_t scored = 0;
+    for (ColumnMatchProfile& match : report->matches) {
+        const uint64_t present = both[match.column];
+        if (present < kMinAnchorPairs) continue;
+        match.truthed = true;
+        match.truth_pairs = present;
+        match.truth_coverage = static_cast<double>(present) / walked;
+        match.truth_m =
+            static_cast<double>(agree[match.column]) / static_cast<double>(present);
+        const double edge = 0.5 / static_cast<double>(present);
+        match.truth_m = std::min(std::max(match.truth_m, edge), 1.0 - edge);
+        const double u = report->columns[match.column].collision;
+        match.truth_weight = Log2(match.truth_m / u);
+        match.truth_expected_bits =
+            match.truth_coverage *
+            (match.truth_m * match.truth_weight +
+             (1.0 - match.truth_m) * Log2((1.0 - match.truth_m) / (1.0 - u)));
+        // The margin is summed over the columns the anchor estimate covers, so
+        // the two numbers answer the same question about the same columns.
+        if (match.estimated) {
+            report->truth_expected_bits += match.truth_expected_bits;
+            error += std::abs(match.m - match.truth_m);
+            ++scored;
+        }
+    }
+    if (scored > 0) report->truth_mean_error = error / static_cast<double>(scored);
+    report->truth_margin_bits =
+        report->prior_bits + report->truth_expected_bits + report->double_counted_bits;
+}
+
 }  // namespace
 
 std::vector<uint64_t> AnchorRows(uint64_t records, const ProfileOptions& options) {
@@ -830,7 +901,7 @@ std::string ColumnPairProfile::Verdict() const {
 }
 
 ProfileReport BuildProfile(const RecordStore& store, PairMode mode,
-                           const ProfileOptions& options) {
+                           const ProfileOptions& options, const TruthPairs* truth) {
     const auto started = std::chrono::steady_clock::now();
     ProfileReport report;
     report.records = store.NumRecords();
@@ -958,6 +1029,9 @@ ProfileReport BuildProfile(const RecordStore& store, PairMode mode,
     // The M side reads the pairwise results by column index, so it runs while the
     // table is still in the order it was built in.
     BuildMatchSide(store, options, &report);
+    if (truth != nullptr && !truth->rows.empty()) {
+        BuildTruthSide(store, *truth, &report);
+    }
 
     // Suspects first, then whatever evidence each pair does carry: a refused joint
     // still has a determination share and a containment rate, and those are what
@@ -1024,6 +1098,12 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
             << std::setw(18) << "" << std::setw(10)
             << Signed(report.estimated_margin_bits) << " bits\n";
     }
+    if (report.truthed) {
+        out << "  " << std::left << std::setw(14) << "Truth margin" << std::right
+            << std::setw(18) << "" << std::setw(10) << Signed(report.truth_margin_bits)
+            << " bits   (m over " << WithThousands(report.truth_pairs)
+            << " known pairs)\n";
+    }
     out << "\n";
 
     out << std::left << std::setw(18) << "Column" << std::setw(12) << "Type" << std::right
@@ -1061,14 +1141,21 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
         out << std::left << std::setw(18) << "Column" << std::right << std::setw(9)
             << "Sessions" << std::setw(12) << "Pairs" << std::setw(8) << "Cov"
             << std::setw(8) << "m" << std::setw(13) << "Spread" << std::setw(9)
-            << "Weight" << std::setw(10) << "Exp bits" << "\n";
-        out << std::string(87, '-') << "\n";
+            << "Weight" << std::setw(10) << "Exp bits";
+        if (report.truthed) out << std::setw(9) << "True m" << std::setw(8) << "Err";
+        out << "\n";
+        out << std::string(report.truthed ? 104 : 87, '-') << "\n";
         for (const ColumnMatchProfile& match : report.matches) {
             out << std::left << std::setw(18) << Truncate(match.name, 17) << std::right;
             if (!match.estimated) {
                 out << std::setw(9) << 0 << std::setw(12) << "-" << std::setw(8) << "-"
                     << std::setw(8) << "-" << std::setw(13) << "-" << std::setw(9) << "-"
-                    << std::setw(10) << "-" << "\n";
+                    << std::setw(10) << "-";
+                if (report.truthed) {
+                    out << std::setw(9) << (match.truthed ? Fixed(match.truth_m, 3) : "-")
+                        << std::setw(8) << "-";
+                }
+                out << "\n";
                 continue;
             }
             const std::string spread =
@@ -1078,7 +1165,17 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
                 << WithThousands(match.pairs) << std::setw(8) << Percent(match.coverage)
                 << std::setw(8) << Fixed(match.m, 3) << std::setw(13) << spread
                 << std::setw(9) << Fixed(match.weight, 2) << std::setw(10)
-                << Fixed(match.expected_bits, 2) << "\n";
+                << Fixed(match.expected_bits, 2);
+            if (report.truthed) {
+                out << std::setw(9) << (match.truthed ? Fixed(match.truth_m, 3) : "-")
+                    << std::setw(8)
+                    << (match.truthed ? Signed(match.m - match.truth_m, 3) : "-");
+            }
+            out << "\n";
+        }
+        if (report.truthed) {
+            out << std::left << std::setw(18) << "mean |error|" << std::right
+                << std::setw(86) << Fixed(report.truth_mean_error, 3) << "\n";
         }
         out << "\n";
 
@@ -1219,6 +1316,14 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
                "reads high. Spread is the same m\nover different anchors, which is what "
                "that bias looks like from the inside.\n";
     }
+
+    if (report.truthed) {
+        out << "\nTrue m is the same agreement rate over the known pairs, which nothing "
+               "above it\never read. Err is how far the anchor estimate sits from it, "
+               "and it is expected\nto be positive: what that column of numbers "
+               "measures is the selection an anchor\nmakes, not an error in the "
+               "arithmetic.\n";
+    }
 }
 
 void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
@@ -1243,6 +1348,11 @@ void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
     root["estimated_margin_bits"] = report.estimated_margin_bits;
     root["estimated_columns"] = report.estimated_columns;
     root["scored_columns"] = report.scored_columns;
+    root["truthed"] = report.truthed;
+    root["truth_pairs"] = report.truth_pairs;
+    root["truth_expected_bits"] = report.truth_expected_bits;
+    root["truth_margin_bits"] = report.truth_margin_bits;
+    root["truth_mean_error"] = report.truth_mean_error;
     root["walked"] = report.walked;
     root["sampled"] = report.sampled;
     root["sampled_rows"] = report.sampled_rows;
@@ -1298,6 +1408,14 @@ void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
         item["weight"] = match.weight;
         item["expected_bits"] = match.expected_bits;
         item["floored"] = match.floored;
+        item["truthed"] = match.truthed;
+        if (match.truthed) {
+            item["truth_pairs"] = match.truth_pairs;
+            item["truth_coverage"] = match.truth_coverage;
+            item["truth_m"] = match.truth_m;
+            item["truth_weight"] = match.truth_weight;
+            item["truth_expected_bits"] = match.truth_expected_bits;
+        }
         root["matches"].push_back(std::move(item));
     }
 

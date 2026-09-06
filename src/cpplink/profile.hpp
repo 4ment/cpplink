@@ -14,6 +14,8 @@
 
 namespace cpplink {
 
+struct TruthPairs;
+
 // What the data can be worth, before a model exists to be wrong about it.
 //
 // Every stage after this one costs an hour or a day, and every one of them
@@ -255,6 +257,17 @@ struct ColumnMatchProfile {
     // session where every anchor pair agreed, or none did.
     bool floored = false;
     bool estimated = false;
+
+    // The same rate read off known pairs rather than anchor pairs, where a truth
+    // file was given. Nothing above is fitted to it and nothing below it changes,
+    // so it is the answer to the only question the anchor estimate raises: how far
+    // up does selecting on a clean identifier move m.
+    bool truthed = false;
+    uint64_t truth_pairs = 0;  // known pairs carrying the column on both rows
+    double truth_coverage = 0.0;
+    double truth_m = 0.0;
+    double truth_weight = 0.0;
+    double truth_expected_bits = 0.0;
 };
 
 struct ProfileReport {
@@ -288,6 +301,15 @@ struct ProfileReport {
     size_t estimated_columns = 0;
     size_t scored_columns = 0;
 
+    // The ledger read a third time, off known pairs. Scored over exactly the
+    // columns the anchor estimate covers, so the two margins are comparable and
+    // the difference between them is the anchor bias in bits.
+    bool truthed = false;
+    uint64_t truth_pairs = 0;  // known pairs the mode admits
+    double truth_expected_bits = 0.0;
+    double truth_margin_bits = 0.0;
+    double truth_mean_error = 0.0;  // mean |m - truth m| over the estimated columns
+
     bool walked = false;  // whether the pairwise pass ran
     uint64_t sampled_rows = 0;
     bool sampled = false;
@@ -295,8 +317,12 @@ struct ProfileReport {
     double seconds = 0.0;
 };
 
+// `truth` is optional and changes nothing about the estimate: every m above is
+// read off anchor pairs whether it is given or not, and the truth reading is
+// scored beside it rather than fitted to.
 ProfileReport BuildProfile(const RecordStore& store, PairMode mode,
-                           const ProfileOptions& options);
+                           const ProfileOptions& options,
+                           const TruthPairs* truth = nullptr);
 
 // What one anchor's walk cost, for a caller that wants the pairs rather than the
 // agreement counts the profile folds out of them.

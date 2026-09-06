@@ -210,6 +210,72 @@ def main():
               f"{'-' if pc is None else f'{pc:.4f}'} | {error} | "
               f"{estimated.get('trusted', '-')} |")
 
+    # Both of these read the schema and the rows and never the model, so two
+    # tracks over one dataset usually produce the same numbers twice. Rows whose
+    # payload is identical are printed once against every track that produced it,
+    # which keeps the table short without asserting they must agree.
+    def collapse(key):
+        grouped = {}
+        for row in rows:
+            payload = row["analysis"].get(key) if row["tool"] == "cpplink" else None
+            if not payload:
+                continue
+            index = (row["dataset"], json.dumps(payload, sort_keys=True))
+            grouped.setdefault(index, []).append(row["track"])
+        return [(dataset, ", ".join(tracks), json.loads(payload))
+                for (dataset, payload), tracks in grouped.items()]
+
+    print("\n## What a matching pair scores, before a model exists\n")
+    print("| dataset | track | anchor pairs | ceiling | estimate | truth | "
+          "mean m error |")
+    print("|---|---|---:|---:|---:|---:|---:|")
+    for dataset, tracks, profile in collapse("profile"):
+        if not profile.get("anchored"):
+            print(f"| {dataset} | {tracks} | - | - | refused | - | - |")
+            continue
+        truth = profile.get("truth_margin_bits")
+        print(f"| {dataset} | {tracks} | {profile['anchor_pairs']:,} | "
+              f"{profile['margin_bits']:+.2f} | "
+              f"{profile['estimated_margin_bits']:+.2f} | "
+              f"{'-' if truth is None else f'{truth:+.2f}'} | "
+              f"{profile.get('truth_mean_error', 0.0):.3f} |")
+    print("\nCeiling takes m as 1, estimate reads it off anchor pairs, truth reads "
+          "the same\nrate off the known pairs the command is never given. The gap "
+          "between the last two\nis the anchor's own selection and runs one way.")
+
+    print("\n## What the fuzzy thresholds are worth, and what they could be\n")
+    print("| dataset | track | priced | current | proposed | gain | "
+          "current (T) | proposed (T) | gain (T) |")
+    print("|---|---|---:|---:|---:|---:|---:|---:|---:|")
+    refusals = []
+    for dataset, tracks, levels in collapse("levels"):
+        priced = [c for c in levels["comparisons"] if c.get("proposed")]
+        refused = [c for c in levels["comparisons"] if not c.get("proposed")]
+        if not priced:
+            print(f"| {dataset} | {tracks} | 0 of {len(refused)} | refused | - | - "
+                  f"| - | - | - |")
+            # Every reason rather than one: a dataset that prices nothing is the
+            # interesting case, and the reasons differ per comparison.
+            why = [f"  {c['name']}: {c.get('refusal', '')}" for c in refused]
+            if not why:
+                why = ["  " + levels.get("refusal", "")]
+            refusals.append(f"{dataset} priced nothing:\n" + "\n".join(why))
+            continue
+        gain = levels["proposed_bits"] - levels["bits"]
+        truth_gain = levels["proposed_truth_bits"] - levels["truth_bits"]
+        print(f"| {dataset} | {tracks} | "
+              f"{len(priced)} of {len(priced) + len(refused)} | "
+              f"{levels['bits']:.2f} | {levels['proposed_bits']:.2f} | {gain:+.2f} | "
+              f"{levels['truth_bits']:.2f} | {levels['proposed_truth_bits']:.2f} | "
+              f"{truth_gain:+.2f} |")
+    print("\nBits a matching pair gets from the comparisons the command could price, "
+          "under the\nschema's thresholds and under its own. (T) reads both partitions "
+          "against the known\npairs, which the proposal never saw, so a gain that "
+          "survives the move is a property\nof the column rather than of the anchor "
+          "it was fitted on.")
+    for line in refusals:
+        print(f"\n{line}")
+
     print("\n## Threshold sweep (F1)\n")
     header = " | ".join(str(t) for t in thresholds)
     print(f"| dataset | track | tool | {header} |")
