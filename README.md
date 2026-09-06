@@ -158,6 +158,12 @@ cpplink recall --schema examples/sample_schema.json --truth truth.csv data.parqu
 # Learn m, u and lambda and write the model
 cpplink estimate --schema examples/sample_schema.json --out model.json data.parquet
 
+# Merge adjacent levels a run of this size cannot tell apart, which narrows the
+# packed pattern; --min-gap decides on how much a level is worth rather than on
+# whether the difference is significant, which on a large file it always is
+cpplink simplify --schema examples/sample_schema.json --model model.json \
+                 --min-gap 1.0 --out simpler.json data.parquet
+
 # Score every candidate pair and write the edges above a threshold
 cpplink predict --schema examples/sample_schema.json --model model.json \
                 --out edges/ --threshold 20 data.parquet
