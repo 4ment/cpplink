@@ -61,6 +61,18 @@ constexpr KindName kKindNames[] = {
     {"sorted_neighbourhood", SourceKind::kSortedNeighbourhood},
 };
 
+struct TransformName_ {
+    const char* name;
+    Transform transform;
+};
+
+constexpr TransformName_ kTransformNames[] = {
+    {"normalize", Transform::kNormalize},  {"sorted_tokens", Transform::kSortedTokens},
+    {"soundex", Transform::kSoundex},      {"year", Transform::kYear},
+    {"month", Transform::kMonth},          {"day", Transform::kDay},
+    {"year_month", Transform::kYearMonth},
+};
+
 constexpr TypeName kTypeNames[] = {
     {"string", ColumnType::kString},
     {"string_list", ColumnType::kStringList},
@@ -88,6 +100,65 @@ bool ParseColumnType(const std::string& name, ColumnType* type) {
 }
 
 bool HasTermFrequencies(ColumnType type) { return type != ColumnType::kDouble; }
+
+const char* TransformName(Transform transform) {
+    for (const TransformName_& entry : kTransformNames) {
+        if (entry.transform == transform) return entry.name;
+    }
+    return "unknown";
+}
+
+bool ParseTransform(const std::string& name, Transform* transform) {
+    for (const TransformName_& entry : kTransformNames) {
+        if (name == entry.name) {
+            *transform = entry.transform;
+            return true;
+        }
+    }
+    return false;
+}
+
+ColumnType TransformInput(Transform transform) {
+    switch (transform) {
+        case Transform::kNormalize:
+        case Transform::kSortedTokens:
+        case Transform::kSoundex:
+            return ColumnType::kString;
+        case Transform::kYear:
+        case Transform::kMonth:
+        case Transform::kDay:
+        case Transform::kYearMonth:
+            return ColumnType::kDate;
+    }
+    return ColumnType::kString;
+}
+
+// Every transform so far produces a string, which is the point of them: an exact
+// level on an interned key is an integer equality. The function exists so that a
+// transform producing anything else type-checks rather than being assumed.
+ColumnType TransformOutput(Transform transform) {
+    switch (transform) {
+        case Transform::kNormalize:
+        case Transform::kSortedTokens:
+        case Transform::kSoundex:
+        case Transform::kYear:
+        case Transform::kMonth:
+        case Transform::kDay:
+        case Transform::kYearMonth:
+            return ColumnType::kString;
+    }
+    return ColumnType::kString;
+}
+
+std::string DeriveSpec::Describe() const {
+    if (transforms.empty()) return std::string();
+    std::string text = from;
+    for (const Transform transform : transforms) {
+        text += " -> ";
+        text += TransformName(transform);
+    }
+    return text;
+}
 
 const char* LevelTypeName(LevelType type) {
     for (const LevelName& entry : kLevelNames) {
@@ -179,6 +250,24 @@ const ColumnSpec* Schema::Find(const std::string& name) const {
         if (spec.name == name) return &spec;
     }
     return nullptr;
+}
+
+bool Schema::IsDerived(const std::string& name) const {
+    const ColumnSpec* spec = Find(name);
+    return spec != nullptr && spec->IsDerived();
+}
+
+bool SameSource(const Schema& schema, const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    const ColumnSpec* left = schema.Find(a);
+    const ColumnSpec* right = schema.Find(b);
+    if (left == nullptr || right == nullptr) return false;
+    // A derivation is one level deep by construction, so the whole relation is
+    // these three cases and no walk up a chain is needed.
+    if (left->IsDerived() && left->derive.from == b) return true;
+    if (right->IsDerived() && right->derive.from == a) return true;
+    return left->IsDerived() && right->IsDerived() &&
+           left->derive.from == right->derive.from;
 }
 
 namespace {
@@ -434,6 +523,109 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
 
 namespace {
 
+std::string KnownTransforms() {
+    std::string text;
+    for (const TransformName_& entry : kTransformNames) {
+        if (!text.empty()) text += ", ";
+        text += entry.name;
+    }
+    return text;
+}
+
+// "derive": {"from": "surname", "transform": "soundex"}, or an array of transform
+// names applied in order. A chain is how "the sorted tokens of a normalised name"
+// is written, which is why one column may not derive from another: composition
+// belongs in the list, where it type-checks in one place and the load stays a
+// single pass over the source dictionary.
+bool ParseDerive(const nlohmann::json& item, const std::string& column,
+                 DeriveSpec* derive, std::string* error) {
+    if (!item.is_object() || !item.contains("from") || !item["from"].is_string()) {
+        *error = "column \"" + column + "\" has a \"derive\" without a string \"from\"";
+        return false;
+    }
+    derive->from = item["from"].get<std::string>();
+    if (!item.contains("transform")) {
+        *error = "column \"" + column + "\" derives from \"" + derive->from +
+                 "\" without a \"transform\"";
+        return false;
+    }
+    std::vector<std::string> names;
+    if (item["transform"].is_string()) {
+        names.push_back(item["transform"].get<std::string>());
+    } else if (item["transform"].is_array()) {
+        for (const nlohmann::json& entry : item["transform"]) {
+            if (!entry.is_string()) {
+                *error = "column \"" + column + "\" has a transform that is not a name";
+                return false;
+            }
+            names.push_back(entry.get<std::string>());
+        }
+    } else {
+        *error = "column \"" + column +
+                 "\" needs \"transform\" to be a name or an array of names";
+        return false;
+    }
+    if (names.empty()) {
+        *error = "column \"" + column + "\" names no transform to derive it";
+        return false;
+    }
+    for (const std::string& name : names) {
+        Transform transform = Transform::kNormalize;
+        if (!ParseTransform(name, &transform)) {
+            *error = "column \"" + column + "\" has unknown transform \"" + name +
+                     "\" (expected " + KnownTransforms() + ")";
+            return false;
+        }
+        derive->transforms.push_back(transform);
+    }
+    return true;
+}
+
+// Resolved once every column is parsed, so "from" may name a column declared
+// later, and checked here rather than at load: a chain that cannot type-check is a
+// configuration error and should fail before a file is opened.
+bool ResolveDerived(Schema* schema, const std::vector<bool>& type_declared,
+                    std::string* error) {
+    for (size_t i = 0; i < schema->columns.size(); ++i) {
+        ColumnSpec& spec = schema->columns[i];
+        if (!spec.IsDerived()) continue;
+        if (spec.derive.from == spec.name) {
+            *error = "column \"" + spec.name + "\" derives from itself";
+            return false;
+        }
+        const ColumnSpec* source = schema->Find(spec.derive.from);
+        if (source == nullptr) {
+            *error = "column \"" + spec.name + "\" derives from \"" + spec.derive.from +
+                     "\", which is not declared";
+            return false;
+        }
+        if (source->IsDerived()) {
+            *error = "column \"" + spec.name + "\" derives from \"" + spec.derive.from +
+                     "\", which is itself derived; derive from a column the file "
+                     "holds and chain the transforms instead";
+            return false;
+        }
+        ColumnType current = source->type;
+        for (const Transform transform : spec.derive.transforms) {
+            if (TransformInput(transform) != current) {
+                *error = "column \"" + spec.name + "\" applies transform \"" +
+                         TransformName(transform) + "\" to a " + ColumnTypeName(current) +
+                         " value, which it cannot read";
+                return false;
+            }
+            current = TransformOutput(transform);
+        }
+        if (type_declared[i] && spec.type != current) {
+            *error = "column \"" + spec.name + "\" is declared " +
+                     ColumnTypeName(spec.type) + ", but its transforms produce a " +
+                     ColumnTypeName(current) + " value";
+            return false;
+        }
+        spec.type = current;
+    }
+    return true;
+}
+
 uint32_t ReadUnsigned(const nlohmann::json& item, const char* key, uint32_t fallback) {
     if (!item.contains(key) || !item[key].is_number()) return fallback;
     const double value = item[key].get<double>();
@@ -529,6 +721,7 @@ bool ParseSchema(const std::string& json_text, Schema* schema, std::string* erro
 
     Schema parsed;
     std::unordered_set<std::string> seen;
+    std::vector<bool> type_declared;
     for (const nlohmann::json& item : root["columns"]) {
         if (!item.is_object() || !item.contains("name") || !item["name"].is_string()) {
             *error = "every column needs a string \"name\"";
@@ -540,14 +733,19 @@ bool ParseSchema(const std::string& json_text, Schema* schema, std::string* erro
             *error = "column \"" + spec.name + "\" is declared twice";
             return false;
         }
-        const std::string type_name = item.contains("type") && item["type"].is_string()
-                                          ? item["type"].get<std::string>()
-                                          : std::string("string");
+        const bool declared = item.contains("type") && item["type"].is_string();
+        const std::string type_name =
+            declared ? item["type"].get<std::string>() : std::string("string");
         if (!ParseColumnType(type_name, &spec.type)) {
             *error = "column \"" + spec.name + "\" has unknown type \"" + type_name +
                      "\" (expected string, string_list, date or double)";
             return false;
         }
+        if (item.contains("derive") &&
+            !ParseDerive(item["derive"], spec.name, &spec.derive, error)) {
+            return false;
+        }
+        type_declared.push_back(declared);
         parsed.columns.push_back(spec);
     }
     if (parsed.columns.empty()) {
@@ -568,6 +766,9 @@ bool ParseSchema(const std::string& json_text, Schema* schema, std::string* erro
         }
     }
 
+    // Before the comparisons, which check the types a derived column only has once
+    // its transforms have been resolved.
+    if (!ResolveDerived(&parsed, type_declared, error)) return false;
     if (!ParseComparisons(root, &parsed, error)) return false;
     if (!ParseBlocking(root, &parsed, error)) return false;
 

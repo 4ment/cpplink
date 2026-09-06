@@ -291,6 +291,17 @@ bool SameEvidence(const ColumnPairProfile& pair) {
     return pair.containment >= kContainedShare;
 }
 
+// The same question answered from the schema rather than from the rows. A derived
+// column is a functional dependency its declaration already states, and the test
+// above can miss one: the determination share refuses a near-unique determinant,
+// and the u-side overlap is refused wherever the file's own duplicates swamp the
+// joint the two columns would have been read from. Neither refusal makes the
+// derivation any less of one, and an anchor that holds a column beside the key it
+// was derived from has counted the same agreement twice.
+bool SameEvidence(const Schema& schema, const ProfileReport& report, size_t a, size_t b) {
+    return SameSource(schema, report.columns[a].name, report.columns[b].name);
+}
+
 // `report.pairs` by the two column indices it was built from, which is how the
 // anchor pass reaches the U-side results. Valid only before the table is sorted.
 class PairIndex {
@@ -322,13 +333,14 @@ class PairIndex {
 // anything the target or an already-chosen column has said, and charging every
 // addition the pairwise overlap it brings with it so the bits are not counted twice
 // in the very check that is meant to make them trustworthy.
-std::vector<size_t> BuildAnchor(const ProfileReport& report, const PairIndex& index,
-                                const std::vector<size_t>& order, size_t target,
-                                double need, double* bits) {
+std::vector<size_t> BuildAnchor(const Schema& schema, const ProfileReport& report,
+                                const PairIndex& index, const std::vector<size_t>& order,
+                                size_t target, double need, double* bits) {
     std::vector<size_t> anchor;
     *bits = 0.0;
     for (size_t column : order) {
         if (column == target) continue;
+        if (SameEvidence(schema, report, column, target)) continue;
         const size_t against = index.Find(column, target);
         if (against != PairIndex::kNoPair && SameEvidence(report.pairs[against])) {
             continue;
@@ -336,6 +348,10 @@ std::vector<size_t> BuildAnchor(const ProfileReport& report, const PairIndex& in
         double overlap = 0.0;
         bool shared = false;
         for (size_t chosen : anchor) {
+            if (SameEvidence(schema, report, column, chosen)) {
+                shared = true;
+                break;
+            }
             const size_t entry = index.Find(column, chosen);
             if (entry == PairIndex::kNoPair) continue;
             const ColumnPairProfile& pair = report.pairs[entry];
@@ -474,7 +490,7 @@ void BuildMatchSide(const RecordStore& store, const ProfileOptions& options,
     for (size_t target : order) {
         double bits = 0.0;
         std::vector<size_t> anchor =
-            BuildAnchor(*report, index, order, target, need, &bits);
+            BuildAnchor(store.schema(), *report, index, order, target, need, &bits);
         best = std::max(best, bits);
         if (anchor.empty() || bits < need) continue;
         std::sort(anchor.begin(), anchor.end());
@@ -497,6 +513,10 @@ void BuildMatchSide(const RecordStore& store, const ProfileOptions& options,
             if (Holds(session.anchor, column)) continue;
             bool forced = false;
             for (size_t chosen : session.anchor) {
+                if (SameEvidence(store.schema(), *report, column, chosen)) {
+                    forced = true;
+                    break;
+                }
                 const size_t entry = index.Find(column, chosen);
                 forced = forced || (entry != PairIndex::kNoPair &&
                                     SameEvidence(report->pairs[entry]));

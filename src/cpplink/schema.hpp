@@ -25,9 +25,52 @@ bool ParseColumnType(const std::string& name, ColumnType* type);
 // so kDouble carries no counts and cannot drive rare-value blocking.
 bool HasTermFrequencies(ColumnType type);
 
+// A value transform applied at load to build a derived column. Each has an input
+// type and an output type, so a chain of them type-checks like a pipeline and the
+// derived column's type is decided by the last one rather than declared.
+enum class Transform {
+    kNormalize,     // lowercase, and every byte that is not alphanumeric a space
+    kSortedTokens,  // whitespace-separated tokens, sorted and rejoined
+    kSoundex,       // the four-character American Soundex key
+    kYear,          // a date's year
+    kMonth,         // its month, zero-padded
+    kDay,           // its day of the month, zero-padded
+    kYearMonth,     // its year and month, as "1987-03"
+};
+
+const char* TransformName(Transform transform);
+bool ParseTransform(const std::string& name, Transform* transform);
+ColumnType TransformInput(Transform transform);
+ColumnType TransformOutput(Transform transform);
+
+// A column computed at load from another column rather than read from the file.
+//
+// Interning is what makes this the cheap end of feature engineering: the
+// transform runs once per distinct value of the source dictionary rather than
+// once per row, so a phonetic key over 18M records costs one pass over 149k
+// surnames and a gather. What it buys is an exact level -- an integer equality --
+// sitting between the exact and the fuzzy level of the column it came from, and a
+// blocking source that is EM-safe by the same single-column argument every other
+// source here is.
+//
+// A derivation is a functional dependency the schema declares, which is why
+// `SameSource` exists. The estimate's tie hold-out and the profile's anchor
+// sessions have to treat a derived column and its source as one piece of
+// evidence, and here that is knowledge rather than something a pairwise pass must
+// rediscover from the rows and may refuse to.
+struct DeriveSpec {
+    std::string from;
+    std::vector<Transform> transforms;  // applied in order
+
+    std::string Describe() const;
+};
+
 struct ColumnSpec {
     std::string name;
     ColumnType type = ColumnType::kString;
+    DeriveSpec derive;  // an empty transform list means the column is read
+
+    bool IsDerived() const { return !derive.transforms.empty(); }
 };
 
 // What a comparison level tests. Levels are evaluated top-down, first hit wins,
@@ -109,9 +152,18 @@ struct Schema {
     std::vector<BlockingSpec> blocking;       // optional until phase 2 is used
 
     const ColumnSpec* Find(const std::string& name) const;
+    // The columns a file is actually read for: everything but the derived ones.
+    bool IsDerived(const std::string& name) const;
     // Total packed width in bits. Must fit in a uint32.
     uint8_t GammaWidth() const;
 };
+
+// Whether two columns are one piece of evidence by construction: either derives
+// from the other, or both derive from the same column. Unlike containment or a
+// u-side overlap this needs no rows to see and cannot be refused for want of
+// them, which matters because a derived column's collision rate with its source
+// is exactly the rate a file's own duplicates swamp.
+bool SameSource(const Schema& schema, const std::string& a, const std::string& b);
 
 bool ParseSchema(const std::string& json_text, Schema* schema, std::string* error);
 bool LoadSchema(const std::string& path, Schema* schema, std::string* error);

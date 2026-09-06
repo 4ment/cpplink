@@ -8,6 +8,8 @@
 #include <cstring>
 #include <utility>
 
+#include "cpplink/derive.hpp"
+
 namespace cpplink {
 namespace {
 
@@ -68,6 +70,12 @@ RecordStore::RecordStore(Schema schema) : schema_(std::move(schema)) {
 }
 
 void RecordStore::Finalize() {
+    // Derived columns are filled in before anything is counted, so a phonetic key
+    // or a normalised name carries term frequencies, blocks and compares exactly
+    // as a column read from the file does. Doing it here rather than in the loader
+    // is what makes that true of every path that builds a store.
+    BuildDerivedColumns(this);
+
     for (size_t i = 0; i < columns_.size(); ++i) {
         if (!HasTermFrequencies(schema_.columns[i].type)) continue;
 

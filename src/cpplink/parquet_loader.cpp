@@ -211,9 +211,13 @@ bool AppendOneFile(const std::string& path, const Schema& schema, RecordStore* s
         return false;
     }
 
-    // Resolve every column up front so a typo fails before any work is done.
+    // Resolve every column up front so a typo fails before any work is done. A
+    // derived column is not among them: it is computed from another column when
+    // the store is finalized, and the file is not expected to hold it.
+    constexpr size_t kIdTarget = static_cast<size_t>(-1);
     std::vector<int> indices;
     std::vector<std::string> names;
+    std::vector<size_t> targets;  // the store column each name fills
     int id_index = -1;
     if (!schema.unique_id.empty()) {
         id_index = file_schema->GetFieldIndex(schema.unique_id);
@@ -223,8 +227,11 @@ bool AppendOneFile(const std::string& path, const Schema& schema, RecordStore* s
         }
         indices.push_back(id_index);
         names.push_back(schema.unique_id);
+        targets.push_back(kIdTarget);
     }
-    for (const ColumnSpec& spec : schema.columns) {
+    for (size_t i = 0; i < schema.columns.size(); ++i) {
+        const ColumnSpec& spec = schema.columns[i];
+        if (spec.IsDerived()) continue;
         const int index = file_schema->GetFieldIndex(spec.name);
         if (index < 0) {
             *error = "column \"" + spec.name + "\" is not in the file";
@@ -232,6 +239,7 @@ bool AppendOneFile(const std::string& path, const Schema& schema, RecordStore* s
         }
         indices.push_back(index);
         names.push_back(spec.name);
+        targets.push_back(i);
     }
 
     const int row_groups = reader->num_row_groups();
@@ -251,7 +259,7 @@ bool AppendOneFile(const std::string& path, const Schema& schema, RecordStore* s
                          std::to_string(group);
                 return false;
             }
-            if (id_index >= 0 && i == 0) {
+            if (targets[i] == kIdTarget) {
                 for (const auto& chunk : chunked->chunks()) {
                     if (!AppendIds(*chunk, &store->mutable_ids(), error)) {
                         *error = schema.unique_id + ": " + *error;
@@ -260,7 +268,7 @@ bool AppendOneFile(const std::string& path, const Schema& schema, RecordStore* s
                 }
                 continue;
             }
-            const size_t column_index = id_index >= 0 ? i - 1 : i;
+            const size_t column_index = targets[i];
             if (!AppendColumn(*chunked, schema.columns[column_index].type,
                               &store->mutable_column(column_index), error)) {
                 *error = names[i] + ": " + *error;
