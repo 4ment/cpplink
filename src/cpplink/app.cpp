@@ -3,6 +3,8 @@
 
 #include "cpplink/app.hpp"
 
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <ostream>
 
@@ -14,6 +16,7 @@
 #include "cpplink/explain.hpp"
 #include "cpplink/explain_blocking.hpp"
 #include "cpplink/inspect.hpp"
+#include "cpplink/levels.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/neighbourhood.hpp"
 #include "cpplink/parquet_loader.hpp"
@@ -41,6 +44,9 @@ void PrintUsage(std::ostream& out) {
            "will\n"
         << "              score, and which pairs of them are the same evidence "
            "twice\n"
+        << "  levels      check the schema's fuzzy thresholds against the column "
+           "they\n"
+        << "              run on, and propose better ones\n"
         << "  explain     show the levels a single pair lands on, and with a "
            "model\n"
         << "              the waterfall of bits behind its score\n"
@@ -72,6 +78,13 @@ void PrintUsage(std::ostream& out) {
            "[--mode MODE]\n"
         << "                [--no-anchors] [--anchor-rows N] [--anchor-margin BITS]\n"
         << "                [--anchor-pairs N] <file.parquet>...\n"
+        << "cpplink levels --schema <schema.json> [--out <schema.json>] [--json]\n"
+        << "               [--truth <pairs.csv>]\n"
+        << "               [--levels N] [--max-levels N] [--jaro-floor F]\n"
+        << "               [--jaro-step F] [--edit-max N] [--min-match-pairs N]\n"
+        << "               [--anchor-margin BITS] [--anchor-rows N]\n"
+        << "               [--anchor-pairs N] [--ball-budget N] [--threads N]\n"
+        << "               [--mode MODE] <file.parquet>...\n"
         << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b>\n"
         << "                [--rows <i>,<j>] [--model <model.json>] "
            "[--threshold BITS]\n"
@@ -265,6 +278,145 @@ int RunProfile(const std::vector<std::string>& args, std::ostream& out,
     } else {
         PrintProfileReport(report, out);
     }
+    return 0;
+}
+
+int RunLevels(const std::vector<std::string>& args, std::ostream& out,
+              std::ostream& err) {
+    std::string schema_path;
+    std::string out_path;
+    std::string truth_path;
+    std::string value;
+    std::vector<std::string> data_paths;
+    LevelsOptions options;
+    bool as_json = false;
+    PairMode mode = PairMode::kAll;
+    bool mode_given = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &out_path, err)) return 1;
+        } else if (args[i] == "--truth") {
+            if (!TakeValue(args, &i, &truth_path, err)) return 1;
+        } else if (args[i] == "--mode") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (!ParseMode(value, &mode, err)) return 1;
+            mode_given = true;
+        } else if (args[i] == "--jaro-floor") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.jaro_floor = std::stod(value);
+        } else if (args[i] == "--jaro-step") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.jaro_step = std::stod(value);
+        } else if (args[i] == "--edit-max") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.edit_max = static_cast<uint32_t>(std::stoul(value));
+        } else if (args[i] == "--max-levels") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.max_levels = static_cast<size_t>(std::stoul(value));
+        } else if (args[i] == "--levels") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.levels = static_cast<size_t>(std::stoul(value));
+        } else if (args[i] == "--min-match-pairs") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.min_match_pairs = std::stoull(value);
+        } else if (args[i] == "--anchor-margin") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.profile.anchor_margin = std::stod(value);
+        } else if (args[i] == "--anchor-rows") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.profile.anchor_rows = std::stoull(value);
+        } else if (args[i] == "--anchor-pairs") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.profile.anchor_pairs = std::stoull(value);
+        } else if (args[i] == "--expected-matches") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.profile.expected_matches = std::stoull(value);
+        } else if (args[i] == "--ball-budget") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.ball.budget = std::stoull(value);
+        } else if (args[i] == "--threads") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threads = static_cast<unsigned>(std::stoul(value));
+            options.profile.threads = options.threads;
+        } else if (args[i] == "--json") {
+            as_json = true;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink levels: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else {
+            data_paths.push_back(args[i]);
+        }
+    }
+    if (schema_path.empty() || data_paths.empty()) {
+        err << "cpplink levels: --schema <schema.json> and a parquet file are "
+               "required\n";
+        return 1;
+    }
+    if (options.max_levels < 2) {
+        err << "cpplink levels: --max-levels must be at least 2\n";
+        return 1;
+    }
+
+    Schema schema;
+    std::string error;
+    if (!LoadSchema(schema_path, &schema, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    if (schema.comparisons.empty()) {
+        err << "cpplink levels: the schema declares no comparisons\n";
+        return 1;
+    }
+
+    RecordStore store(schema);
+    LoadStats stats;
+    if (!LoadParquetFiles(data_paths, schema, &store, &stats, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    ComparisonSet comparisons;
+    if (!comparisons.Bind(schema, store, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
+    TruthPairs truth;
+    if (!truth_path.empty() && !LoadTruthPairs(truth_path, store, &truth, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    const LevelsReport report =
+        BuildLevels(store, comparisons, DefaultMode(mode_given, mode, data_paths.size()),
+                    options, truth_path.empty() ? nullptr : &truth);
+    if (as_json) {
+        WriteLevelsJson(report, out);
+    } else {
+        PrintLevelsReport(report, out);
+    }
+
+    if (out_path.empty()) return 0;
+    std::ifstream source(schema_path);
+    if (!source) {
+        err << "cpplink levels: cannot reread " << schema_path << "\n";
+        return 1;
+    }
+    const std::string text((std::istreambuf_iterator<char>(source)),
+                           std::istreambuf_iterator<char>());
+    std::string rewritten;
+    if (!RewriteSchema(text, report, &rewritten, &error)) {
+        err << "cpplink levels: " << error << "\n";
+        return 1;
+    }
+    std::ofstream target(out_path);
+    if (!target) {
+        err << "cpplink levels: cannot write " << out_path << "\n";
+        return 1;
+    }
+    target << rewritten;
+    if (!as_json) out << "\nWrote the proposal to " << out_path << "\n";
     return 0;
 }
 
@@ -1196,6 +1348,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     const std::vector<std::string> rest(args.begin() + 1, args.end());
     if (first == "inspect") return RunInspect(rest, out, err);
     if (first == "profile") return RunProfile(rest, out, err);
+    if (first == "levels") return RunLevels(rest, out, err);
     if (first == "explain") return RunExplain(rest, out, err);
     if (first == "explain-blocking") return RunExplainBlocking(rest, out, err);
     if (first == "recall") return RunRecall(rest, out, err);

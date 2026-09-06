@@ -395,89 +395,40 @@ struct LearnPair {
     size_t entry = 0;   // position in `report.pairs`
 };
 
-// Walks one anchor's pairs and folds every other column's agreement into `counts`.
-//
-// The key is near-unique by construction, so almost every group is one row long and
-// the sort is what the pass costs. Hash equality is not taken as agreement: the
-// group is a candidate list and every pair in it is verified against the anchor
-// columns, because a 64-bit collision over 18M rows is not rare enough to ignore
-// when what it would corrupt is the estimate itself.
+// Folds every learnable column's agreement over one anchor's pairs into `counts`.
 void WalkAnchor(const RecordStore& store, const std::vector<ScalarView>& views,
-                const std::vector<uint64_t>& rows, bool sampled, PairMode mode,
+                const std::vector<uint64_t>& rows, PairMode mode,
                 const std::vector<LearnPair>& learn_pairs, uint64_t budget,
                 AnchorSession* session, AnchorCounts* counts) {
-    std::vector<AnchorRow> keyed;
-    const uint64_t count = sampled ? rows.size() : store.NumRecords();
-    keyed.reserve(count);
-    for (uint64_t k = 0; k < count; ++k) {
-        const uint64_t row = sampled ? rows[k] : k;
-        uint64_t key = 0x243f6a8885a308d3ull;
-        bool present = true;
-        for (size_t column : session->anchor) {
-            const uint32_t id = views[column].Key(row);
-            if (id == kNullId) {
-                present = false;
-                break;
-            }
-            key = Mix(key ^ (static_cast<uint64_t>(id) + 0x9e3779b97f4a7c15ull));
-        }
-        if (present) keyed.push_back({key, row});
-    }
-    std::sort(keyed.begin(), keyed.end(), [](const AnchorRow& a, const AnchorRow& b) {
-        return a.key != b.key ? a.key < b.key : a.row < b.row;
-    });
-
     const std::vector<size_t>& learns = session->learns;
     std::vector<uint8_t> has(learns.size(), 0);
     std::vector<uint8_t> same(learns.size(), 0);
-    size_t start = 0;
-    while (start < keyed.size() && session->pairs < budget) {
-        size_t end = start + 1;
-        while (end < keyed.size() && keyed[end].key == keyed[start].key) ++end;
-        const size_t size = end - start;
-        if (size < 2) {
-            start = end;
-            continue;
-        }
-        if (size > kMaxAnchorGroup) {
-            ++session->oversized;
-            start = end;
-            continue;
-        }
-        ++session->groups;
-        for (size_t i = start; i + 1 < end && session->pairs < budget; ++i) {
-            for (size_t j = i + 1; j < end && session->pairs < budget; ++j) {
-                const uint64_t a = keyed[i].row;
-                const uint64_t b = keyed[j].row;
-                if (mode == PairMode::kCrossDataset && store.DatasetEndFor(a) > b) {
-                    continue;
-                }
-                if (!AgreesOn(views, session->anchor, a, b)) continue;
-                ++session->pairs;
-                for (size_t k = 0; k < learns.size(); ++k) {
-                    const ScalarView& view = views[learns[k]];
-                    const uint32_t first = view.Key(a);
-                    const uint32_t second = view.Key(b);
-                    has[k] = first != kNullId && second != kNullId;
-                    same[k] = has[k] && first == second;
-                    if (has[k] == 0) continue;
-                    ++counts->both[learns[k]];
-                    if (same[k] != 0) ++counts->agree[learns[k]];
-                }
-                for (const LearnPair& learn : learn_pairs) {
-                    if (has[learn.first] == 0 || has[learn.second] == 0) continue;
-                    ++counts->pair_both[learn.entry];
-                    if (same[learn.first] != 0) ++counts->pair_left[learn.entry];
-                    if (same[learn.second] != 0) ++counts->pair_right[learn.entry];
-                    if (same[learn.first] != 0 && same[learn.second] != 0) {
-                        ++counts->pair_joint[learn.entry];
-                    }
+    const AnchorWalk walk = WalkAnchorPairs(
+        store, mode, session->anchor, rows, budget, [&](uint64_t a, uint64_t b) {
+            for (size_t k = 0; k < learns.size(); ++k) {
+                const ScalarView& view = views[learns[k]];
+                const uint32_t first = view.Key(a);
+                const uint32_t second = view.Key(b);
+                has[k] = first != kNullId && second != kNullId;
+                same[k] = has[k] && first == second;
+                if (has[k] == 0) continue;
+                ++counts->both[learns[k]];
+                if (same[k] != 0) ++counts->agree[learns[k]];
+            }
+            for (const LearnPair& learn : learn_pairs) {
+                if (has[learn.first] == 0 || has[learn.second] == 0) continue;
+                ++counts->pair_both[learn.entry];
+                if (same[learn.first] != 0) ++counts->pair_left[learn.entry];
+                if (same[learn.second] != 0) ++counts->pair_right[learn.entry];
+                if (same[learn.first] != 0 && same[learn.second] != 0) {
+                    ++counts->pair_joint[learn.entry];
                 }
             }
-        }
-        start = end;
-    }
-    session->capped = session->pairs >= budget;
+        });
+    session->groups = walk.groups;
+    session->pairs = walk.pairs;
+    session->oversized = walk.oversized;
+    session->capped = walk.capped;
 }
 
 bool Holds(const std::vector<size_t>& values, size_t value) {
@@ -563,17 +514,8 @@ void BuildMatchSide(const RecordStore& store, const ProfileOptions& options,
         return;
     }
 
-    std::vector<uint64_t> rows;
-    const bool sampled = options.anchor_rows > 0 && options.anchor_rows < report->records;
-    if (sampled) {
-        rows.reserve(options.anchor_rows + options.anchor_rows / 8);
-        for (uint64_t row = 0; row < report->records; ++row) {
-            if (Mix(row ^ options.seed) % report->records < options.anchor_rows) {
-                rows.push_back(row);
-            }
-        }
-    }
-    report->anchor_rows = sampled ? rows.size() : report->records;
+    const std::vector<uint64_t> rows = AnchorRows(report->records, options);
+    report->anchor_rows = rows.empty() ? report->records : rows.size();
 
     std::vector<ScalarView> views;
     views.reserve(store.NumColumns());
@@ -592,8 +534,8 @@ void BuildMatchSide(const RecordStore& store, const ProfileOptions& options,
             }
         }
         counts.emplace_back(report->columns.size(), report->pairs.size());
-        WalkAnchor(store, views, rows, sampled, report->mode, learn_pairs,
-                   options.anchor_pairs, &session, &counts.back());
+        WalkAnchor(store, views, rows, report->mode, learn_pairs, options.anchor_pairs,
+                   &session, &counts.back());
         session.used = session.pairs >= kMinAnchorPairs;
         if (session.used) report->anchor_pairs += session.pairs;
     }
@@ -765,6 +707,88 @@ void BuildMatchSide(const RecordStore& store, const ProfileOptions& options,
 }
 
 }  // namespace
+
+std::vector<uint64_t> AnchorRows(uint64_t records, const ProfileOptions& options) {
+    std::vector<uint64_t> rows;
+    if (options.anchor_rows == 0 || options.anchor_rows >= records) return rows;
+    rows.reserve(options.anchor_rows + options.anchor_rows / 8);
+    for (uint64_t row = 0; row < records; ++row) {
+        if (Mix(row ^ options.seed) % records < options.anchor_rows) rows.push_back(row);
+    }
+    return rows;
+}
+
+// The key is near-unique by construction, so almost every group is one row long and
+// the sort is what the pass costs. Hash equality is not taken as agreement: a group
+// is a candidate list and every pair in it is verified against the anchor columns,
+// because a 64-bit collision over 18M rows is not rare enough to ignore when what it
+// would corrupt is the estimate itself.
+AnchorWalk WalkAnchorPairs(const RecordStore& store, PairMode mode,
+                           const std::vector<size_t>& anchor,
+                           const std::vector<uint64_t>& rows, uint64_t budget,
+                           const std::function<void(uint64_t, uint64_t)>& visit) {
+    AnchorWalk walk;
+    if (anchor.empty() || budget == 0) return walk;
+    std::vector<ScalarView> views;
+    views.reserve(store.NumColumns());
+    for (size_t i = 0; i < store.NumColumns(); ++i) {
+        views.push_back(ViewOf(store.column(i)));
+    }
+
+    const bool sampled = !rows.empty();
+    const uint64_t count = sampled ? rows.size() : store.NumRecords();
+    std::vector<AnchorRow> keyed;
+    keyed.reserve(count);
+    for (uint64_t k = 0; k < count; ++k) {
+        const uint64_t row = sampled ? rows[k] : k;
+        uint64_t key = 0x243f6a8885a308d3ull;
+        bool present = true;
+        for (size_t column : anchor) {
+            const uint32_t id = views[column].Key(row);
+            if (id == kNullId) {
+                present = false;
+                break;
+            }
+            key = Mix(key ^ (static_cast<uint64_t>(id) + 0x9e3779b97f4a7c15ull));
+        }
+        if (present) keyed.push_back({key, row});
+    }
+    std::sort(keyed.begin(), keyed.end(), [](const AnchorRow& a, const AnchorRow& b) {
+        return a.key != b.key ? a.key < b.key : a.row < b.row;
+    });
+
+    size_t start = 0;
+    while (start < keyed.size() && walk.pairs < budget) {
+        size_t end = start + 1;
+        while (end < keyed.size() && keyed[end].key == keyed[start].key) ++end;
+        const size_t size = end - start;
+        if (size < 2) {
+            start = end;
+            continue;
+        }
+        if (size > kMaxAnchorGroup) {
+            ++walk.oversized;
+            start = end;
+            continue;
+        }
+        ++walk.groups;
+        for (size_t i = start; i + 1 < end && walk.pairs < budget; ++i) {
+            for (size_t j = i + 1; j < end && walk.pairs < budget; ++j) {
+                const uint64_t a = keyed[i].row;
+                const uint64_t b = keyed[j].row;
+                if (mode == PairMode::kCrossDataset && store.DatasetEndFor(a) > b) {
+                    continue;
+                }
+                if (!AgreesOn(views, anchor, a, b)) continue;
+                ++walk.pairs;
+                visit(a, b);
+            }
+        }
+        start = end;
+    }
+    walk.capped = walk.pairs >= budget;
+    return walk;
+}
 
 bool ColumnPairProfile::Suspect() const {
     if (rows == 0) return false;

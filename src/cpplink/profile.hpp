@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <iosfwd>
 #include <string>
 #include <vector>
@@ -296,6 +297,30 @@ struct ProfileReport {
 
 ProfileReport BuildProfile(const RecordStore& store, PairMode mode,
                            const ProfileOptions& options);
+
+// What one anchor's walk cost, for a caller that wants the pairs rather than the
+// agreement counts the profile folds out of them.
+struct AnchorWalk {
+    uint64_t groups = 0;     // key groups holding two rows or more
+    uint64_t pairs = 0;      // pairs visited
+    uint64_t oversized = 0;  // groups too large to be a match cluster, skipped
+    bool capped = false;     // the budget stopped the walk
+};
+
+// The rows an anchor pass reads: empty when it reads every row, and otherwise the
+// hash-selected sample `options.anchor_rows` asks for.
+std::vector<uint64_t> AnchorRows(uint64_t records, const ProfileOptions& options);
+
+// Walks the pairs of one anchor, two distinct rows agreeing exactly on every column
+// of `anchor` in the mode's pair space, and calls `visit` on each.
+//
+// This is the only source of matching pairs that exists before a model does, which
+// is why it is public rather than private to the report above: the M side folds
+// agreement counts through it, and the level proposal folds a similarity histogram.
+AnchorWalk WalkAnchorPairs(const RecordStore& store, PairMode mode,
+                           const std::vector<size_t>& anchor,
+                           const std::vector<uint64_t>& rows, uint64_t budget,
+                           const std::function<void(uint64_t, uint64_t)>& visit);
 
 void PrintProfileReport(const ProfileReport& report, std::ostream& out);
 void WriteProfileJson(const ProfileReport& report, std::ostream& out);
