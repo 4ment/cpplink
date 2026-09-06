@@ -43,6 +43,7 @@ nav:
   - Commands:
       - Overview: commands/index.md
       - inspect: commands/inspect.md
+      - profile: commands/profile.md
       - explain: commands/explain.md
       - explain-blocking: commands/explain-blocking.md
       - recall: commands/recall.md

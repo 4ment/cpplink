@@ -121,6 +121,10 @@ selects on a single column, which is what makes it usable for estimating `m`:
 # Report cardinality, null rates and the memory each structure costs
 cpplink inspect --schema examples/sample_schema.json data.parquet
 
+# Ledger what the columns can be worth, and name the pairs that are the same
+# evidence twice; no model, no blocking plan, no known pairs
+cpplink profile --schema examples/sample_schema.json data.parquet
+
 # Show which level each comparison assigns to one pair, and the packed pattern
 cpplink explain --schema examples/sample_schema.json --pair r17,r19 data.parquet
 
