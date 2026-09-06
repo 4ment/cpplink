@@ -261,7 +261,7 @@ TEST_F(EstimateFixture, CitySessionSeparatesMatchesFromABlockOfMostlyNonMatches)
     // trade shows up as m for surname and postcode moving *towards* their known
     // rates, which is the direction that matters.
     EXPECT_GT(Comparison("email").levels[1].m, 0.8);
-    EXPECT_NEAR(Comparison("surname").levels[1].m, 0.8, 0.05);   // 4 pairs in 5
+    EXPECT_NEAR(Comparison("surname").levels[1].m, 0.8, 0.05);  // 4 pairs in 5
     EXPECT_NEAR(Comparison("postcode").levels[0].m, 6.0 / 7.0, 0.05);
 }
 

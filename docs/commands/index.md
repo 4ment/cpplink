@@ -5,8 +5,8 @@ usage: cpplink <command> [options]
 
 commands:
   inspect     load a parquet file and report cardinality and memory
-  profile     what the columns can be worth, and which pairs of them are
-              the same evidence twice
+  profile     what the columns can be worth, what a matching pair will
+              score, and which pairs of them are the same evidence twice
   explain     show the levels a single pair lands on, and with a model
               the waterfall of bits behind its score
   explain-blocking  price every blocking source without enumerating
@@ -33,7 +33,7 @@ one store and each becomes a dataset, so two files mean linking rather than dedu
 | Command | Answers | Reads | Writes |
 | --- | --- | --- | --- |
 | [`inspect`](inspect.md) | Did the data load as I expected, and what does it cost in memory? | parquet + schema | stdout |
-| [`profile`](profile.md) | What can these columns be worth, and which pairs of them are the same evidence twice? | parquet + schema | stdout |
+| [`profile`](profile.md) | What can these columns be worth, what will a matching pair score, and which pairs of them are the same evidence twice? | parquet + schema | stdout |
 | [`explain`](explain.md) | Why did *this* pair get *that* pattern, and with `--model`, that score? | parquet + schema (+ model) | stdout |
 | [`explain-blocking`](explain-blocking.md) | How many candidate pairs will this plan cost me? | parquet + schema | stdout |
 | [`recall`](recall.md) | What fraction of true matches does blocking even reach? | parquet + schema + truth | stdout |

@@ -37,9 +37,10 @@ void PrintUsage(std::ostream& out) {
         << "\n"
         << "commands:\n"
         << "  inspect     load a parquet file and report cardinality and memory\n"
-        << "  profile     what the columns can be worth, and which pairs of them "
-           "are\n"
-        << "              the same evidence twice\n"
+        << "  profile     what the columns can be worth, what a matching pair "
+           "will\n"
+        << "              score, and which pairs of them are the same evidence "
+           "twice\n"
         << "  explain     show the levels a single pair lands on, and with a "
            "model\n"
         << "              the waterfall of bits behind its score\n"
@@ -69,7 +70,8 @@ void PrintUsage(std::ostream& out) {
         << "cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]\n"
         << "                [--expected-matches N] [--threads N] [--json] "
            "[--mode MODE]\n"
-        << "                <file.parquet>...\n"
+        << "                [--no-anchors] [--anchor-rows N] [--anchor-margin BITS]\n"
+        << "                [--anchor-pairs N] <file.parquet>...\n"
         << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b>\n"
         << "                [--rows <i>,<j>] [--model <model.json>] "
            "[--threshold BITS]\n"
@@ -214,8 +216,19 @@ int RunProfile(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--threads") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.threads = static_cast<unsigned>(std::stoul(value));
+        } else if (args[i] == "--anchor-rows") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.anchor_rows = std::stoull(value);
+        } else if (args[i] == "--anchor-pairs") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.anchor_pairs = std::stoull(value);
+        } else if (args[i] == "--anchor-margin") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.anchor_margin = std::stod(value);
         } else if (args[i] == "--no-pairs") {
             options.pairs = false;
+        } else if (args[i] == "--no-anchors") {
+            options.anchors = false;
         } else if (args[i] == "--json") {
             as_json = true;
         } else if (!args[i].empty() && args[i][0] == '-') {

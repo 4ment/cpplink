@@ -67,7 +67,26 @@ namespace cpplink {
 // rate, and refused where it does not. The row-level measures below are immune to
 // this, because a duplicate row is one row and not one pair.
 //
-// The M half needs matches and is not estimated here.
+// The M half needs matching pairs, and gets them without a model or a truth file
+// from *anchor pairs*: two rows agreeing exactly on a subset of columns whose joint
+// collision rate is far enough below the match rate that agreement alone puts the
+// posterior near one. Hold that subset out and every other column's agreement rate
+// over those pairs is m, measured rather than assumed. The same pairs give the
+// M-side half of the dependence map, which is the larger of the two correlations
+// and the one the U-side table above cannot see.
+//
+// The bias is real and is stated rather than buried: anchors are the matches that
+// happened to agree on a clean identifier, and agreement is positively correlated
+// among matches, so every m here reads high. The spread across sessions built on
+// different anchors is what that bias looks like from the inside, so it is
+// reported next to the mean rather than averaged away.
+//
+// Two disciplines make the estimate mean what it says, and both are the ones the
+// per-column EM sessions already run. A column is never estimated from a session
+// whose anchor contains it, and never from one whose anchor contains a column that
+// determines it or occurs inside it, because either way the anchor has already
+// forced the agreement being measured. That check is what the pairwise pass above
+// is for, which is why the M side is refused outright when it has not run.
 
 struct ProfileOptions {
     // Rows the pairwise pass reads, selected by a hash of the row index so the
@@ -82,6 +101,23 @@ struct ProfileOptions {
     uint64_t expected_matches = 0;
     unsigned threads = 0;
     uint64_t seed = 20260906;
+
+    // The M side. Anchor pairs are rare by construction, and a row sample keeps
+    // only the square of its own fraction of them, so this pass gets its own and
+    // much larger budget rather than sharing the pairwise one. Zero reads every row.
+    bool anchors = true;
+    uint64_t anchor_rows = 4'000'000;
+    // Posterior bits an anchor has to clear before the pairs it selects are read as
+    // matches: the joint exact-agreement bits of the anchor columns, less the
+    // pairwise overlap between them, set against the prior odds. Six is odds of
+    // about 64 to 1 under m <= 1, and every anchor it admits on the three benchmark
+    // datasets holds 99.6% true pairs or better. Raising it buys no precision that
+    // was there to buy and costs accuracy: a stronger anchor selects a cleaner
+    // subset of the matches, and every m read off it moves further up.
+    double anchor_margin = 6.0;
+    // Anchor pairs one session walks before it stops. m to a hundredth needs about
+    // ten thousand, so this is loose enough not to bind on any real file.
+    uint64_t anchor_pairs = 1'000'000;
 };
 
 // One column, from its term frequencies alone.
@@ -152,6 +188,25 @@ struct ColumnPairProfile {
     // file's own duplicates are not what is being measured.
     bool resolved = false;
 
+    // The same question under M, from the anchor pairs: how often two matching
+    // rows agree on both columns against how often independence says they would.
+    // This is the correlation the U side above cannot see, and normally the larger
+    // of the two.
+    uint64_t m_pairs = 0;  // anchor pairs carrying both columns on both rows
+    double m_left = 0.0;   // P(left agrees | match), over those pairs
+    double m_right = 0.0;
+    double m_joint = 0.0;
+    // log2(m_joint / (m_left * m_right)): bits the score double-counts under M.
+    double m_redundant_bits = 0.0;
+    bool m_resolved = false;
+
+    // What the weight actually double-counts when both columns agree, which is the
+    // M-side overlap less the U-side one: the score adds log2(m/u) twice, and only
+    // the difference of the two corrections is wrong. Zero unless both sides read.
+    double NetRedundantBits() const {
+        return m_resolved && resolved ? m_redundant_bits - redundant_bits : 0.0;
+    }
+
     // How much the determinant buys over ignoring it, which is what ranks a pair:
     // a determination that only matches the target's own commonest value is not
     // one. Zero where the direction is not readable at all.
@@ -165,6 +220,40 @@ struct ColumnPairProfile {
     // Whether this pair is worth a line in the suspects table, and why.
     bool Suspect() const;
     std::string Verdict() const;
+};
+
+// One anchor: a column subset whose exact agreement makes a pair a match, and the
+// pairs it selected. A session learns every column the anchor neither contains nor
+// determines.
+struct AnchorSession {
+    std::vector<size_t> anchor;  // column indices, strongest first
+    std::vector<std::string> anchor_names;
+    std::vector<size_t> learns;   // columns this session may be read for
+    double bits = 0.0;            // joint exact-agreement bits, pairwise overlap removed
+    double posterior_bits = 0.0;  // bits + the prior: the odds a pair here is a match
+    uint64_t groups = 0;          // key groups holding two rows or more
+    uint64_t pairs = 0;           // anchor pairs walked
+    uint64_t oversized = 0;       // groups too large to be a match cluster, skipped
+    bool capped = false;          // the pair budget stopped the walk
+    bool used = false;            // whether it produced enough pairs to be read
+};
+
+// One column's m, averaged over the sessions that could hold it out.
+struct ColumnMatchProfile {
+    size_t column = 0;
+    std::string name;
+    unsigned sessions = 0;
+    uint64_t pairs = 0;     // anchor pairs carrying the column on both rows
+    double coverage = 0.0;  // share of anchor pairs that do
+    double m = 0.0;         // mean over sessions
+    double m_low = 0.0;     // the spread across anchors, which is the bias showing
+    double m_high = 0.0;
+    double weight = 0.0;         // log2(m / u): what an agreement is worth
+    double expected_bits = 0.0;  // what this column contributes to a match, on average
+    // Whether m hit the continuity floor rather than being measured there: a
+    // session where every anchor pair agreed, or none did.
+    bool floored = false;
+    bool estimated = false;
 };
 
 struct ProfileReport {
@@ -182,6 +271,21 @@ struct ProfileReport {
     std::vector<ColumnProfile> columns;
     std::vector<ColumnPairProfile> pairs;  // worst redundancy first
     uint64_t unresolved_pairs = 0;         // pairs the match rate swamps
+
+    std::vector<AnchorSession> sessions;
+    std::vector<ColumnMatchProfile> matches;
+    bool anchored = false;       // whether the M side produced anything
+    std::string anchor_refusal;  // why it did not, when it did not
+    uint64_t anchor_rows = 0;
+    uint64_t anchor_pairs = 0;
+    // The ledger's second half: what a matching pair is expected to score, rather
+    // than the most it could. Estimated over the columns m was learned for, so an
+    // unestimated column contributes nothing and the margin is a floor.
+    double expected_bits = 0.0;
+    double double_counted_bits = 0.0;
+    double estimated_margin_bits = 0.0;
+    size_t estimated_columns = 0;
+    size_t scored_columns = 0;
 
     bool walked = false;  // whether the pairwise pass ran
     uint64_t sampled_rows = 0;

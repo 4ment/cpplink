@@ -43,6 +43,29 @@ constexpr double kMinCollisions = 32.0;
 // what is measured is the columns rather than the duplicates the file holds.
 constexpr double kMatchMargin = 8.0;
 
+// A key group larger than this, under a key chosen for being near-unique, is a
+// placeholder value rather than a cluster of duplicates, and the pairs it holds are
+// the one thing the anchor was picked to exclude.
+constexpr size_t kMaxAnchorGroup = 64;
+// Anchor pairs a session, or a column within one, needs before anything is read off
+// it. m to a hundredth wants ten thousand of them; this is the point below which
+// the number is not evidence at all.
+constexpr uint64_t kMinAnchorPairs = 100;
+// Columns in one anchor. Every one costs coverage on the pairs the anchor selects,
+// and the bits are there long before the coverage runs out.
+constexpr size_t kMaxAnchorColumns = 4;
+// Distinct anchors built. Sessions run one after another over the whole row budget,
+// so this is what bounds what the M side costs.
+constexpr size_t kMaxAnchorSessions = 4;
+// Agreement coupling between a column and an anchor column, in bits, past which
+// the session may not be read for that column. This is determination's pairwise
+// twin: the row-level check catches a column derived from another, and this one
+// catches a column corrupted by whatever corrupted another, which is invisible in
+// the rows and shows up only among matches. The threshold is well under the bit a
+// redundancy has to be worth to be acted on, because the question here is not what
+// to spend the bits on but whether the number means anything at all.
+constexpr double kAnchorCoupling = 0.1;
+
 double Log2(double value) { return std::log(value) / std::log(2.0); }
 
 // Which rows the pairwise pass reads. Selecting by a hash of the row index rather
@@ -255,6 +278,492 @@ void Summarise(const JointTable& table, double match_rate, ColumnPairProfile* pa
     pair->containment = std::max(left_in, right_in);
 }
 
+// ---------------------------------------------------------------------------
+// The M side: matching pairs, from anchors rather than from a model.
+
+// Whether one column has already said whatever the other would say. An anchor
+// column standing in this relation to a column the session would estimate has
+// forced the very agreement being measured, so the session may not be read for it.
+bool SameEvidence(const ColumnPairProfile& pair) {
+    if (pair.left_informative && pair.determines_right >= kDeterminedShare) return true;
+    if (pair.right_informative && pair.determines_left >= kDeterminedShare) return true;
+    return pair.containment >= kContainedShare;
+}
+
+// `report.pairs` by the two column indices it was built from, which is how the
+// anchor pass reaches the U-side results. Valid only before the table is sorted.
+class PairIndex {
+   public:
+    static constexpr size_t kNoPair = static_cast<size_t>(-1);
+
+    explicit PairIndex(const std::vector<ColumnPairProfile>& pairs) {
+        for (size_t i = 0; i < pairs.size(); ++i) {
+            index_[KeyFor(pairs[i].left, pairs[i].right)] = i;
+        }
+    }
+
+    // kNoPair when the two are the same column, or either is not scalar.
+    size_t Find(size_t a, size_t b) const {
+        const auto found = index_.find(KeyFor(a, b));
+        return found == index_.end() ? kNoPair : found->second;
+    }
+
+   private:
+    static uint64_t KeyFor(size_t a, size_t b) {
+        const uint64_t low = std::min(a, b);
+        const uint64_t high = std::max(a, b);
+        return (low << 32) | high;
+    }
+    std::unordered_map<uint64_t, size_t> index_;
+};
+
+// The strongest anchor that holds `target` out: columns by their own bits, skipping
+// anything the target or an already-chosen column has said, and charging every
+// addition the pairwise overlap it brings with it so the bits are not counted twice
+// in the very check that is meant to make them trustworthy.
+std::vector<size_t> BuildAnchor(const ProfileReport& report, const PairIndex& index,
+                                const std::vector<size_t>& order, size_t target,
+                                double need, double* bits) {
+    std::vector<size_t> anchor;
+    *bits = 0.0;
+    for (size_t column : order) {
+        if (column == target) continue;
+        const size_t against = index.Find(column, target);
+        if (against != PairIndex::kNoPair && SameEvidence(report.pairs[against])) {
+            continue;
+        }
+        double overlap = 0.0;
+        bool shared = false;
+        for (size_t chosen : anchor) {
+            const size_t entry = index.Find(column, chosen);
+            if (entry == PairIndex::kNoPair) continue;
+            const ColumnPairProfile& pair = report.pairs[entry];
+            if (SameEvidence(pair)) {
+                shared = true;
+                break;
+            }
+            if (pair.resolved && pair.redundant_bits > 0.0)
+                overlap += pair.redundant_bits;
+        }
+        if (shared) continue;
+        const double gain = report.columns[column].bits - overlap;
+        if (gain <= 0.0) continue;
+        anchor.push_back(column);
+        *bits += gain;
+        if (*bits >= need || anchor.size() >= kMaxAnchorColumns) break;
+    }
+    return anchor;
+}
+
+// One row of an anchor's key, ready to be sorted into groups.
+struct AnchorRow {
+    uint64_t key = 0;
+    uint64_t row = 0;
+};
+
+// What one session counts as it walks its pairs, indexed by column and by position
+// in `report.pairs` so the merge is an addition and needs no lookup.
+struct AnchorCounts {
+    std::vector<uint64_t> both;   // pairs carrying the column on both rows
+    std::vector<uint64_t> agree;  // of those, pairs whose values are equal
+    std::vector<uint64_t> pair_both;
+    std::vector<uint64_t> pair_left;
+    std::vector<uint64_t> pair_right;
+    std::vector<uint64_t> pair_joint;
+
+    AnchorCounts(size_t columns, size_t pairs)
+        : both(columns, 0),
+          agree(columns, 0),
+          pair_both(pairs, 0),
+          pair_left(pairs, 0),
+          pair_right(pairs, 0),
+          pair_joint(pairs, 0) {}
+};
+
+bool AgreesOn(const std::vector<ScalarView>& views, const std::vector<size_t>& anchor,
+              uint64_t a, uint64_t b) {
+    for (size_t column : anchor) {
+        if (views[column].Key(a) != views[column].Key(b)) return false;
+    }
+    return true;
+}
+
+// Two columns of a session's learnable set, and where their counts belong.
+struct LearnPair {
+    size_t first = 0;   // position in `learns`, and so the pair's left column
+    size_t second = 0;  // position in `learns`, and so its right
+    size_t entry = 0;   // position in `report.pairs`
+};
+
+// Walks one anchor's pairs and folds every other column's agreement into `counts`.
+//
+// The key is near-unique by construction, so almost every group is one row long and
+// the sort is what the pass costs. Hash equality is not taken as agreement: the
+// group is a candidate list and every pair in it is verified against the anchor
+// columns, because a 64-bit collision over 18M rows is not rare enough to ignore
+// when what it would corrupt is the estimate itself.
+void WalkAnchor(const RecordStore& store, const std::vector<ScalarView>& views,
+                const std::vector<uint64_t>& rows, bool sampled, PairMode mode,
+                const std::vector<LearnPair>& learn_pairs, uint64_t budget,
+                AnchorSession* session, AnchorCounts* counts) {
+    std::vector<AnchorRow> keyed;
+    const uint64_t count = sampled ? rows.size() : store.NumRecords();
+    keyed.reserve(count);
+    for (uint64_t k = 0; k < count; ++k) {
+        const uint64_t row = sampled ? rows[k] : k;
+        uint64_t key = 0x243f6a8885a308d3ull;
+        bool present = true;
+        for (size_t column : session->anchor) {
+            const uint32_t id = views[column].Key(row);
+            if (id == kNullId) {
+                present = false;
+                break;
+            }
+            key = Mix(key ^ (static_cast<uint64_t>(id) + 0x9e3779b97f4a7c15ull));
+        }
+        if (present) keyed.push_back({key, row});
+    }
+    std::sort(keyed.begin(), keyed.end(), [](const AnchorRow& a, const AnchorRow& b) {
+        return a.key != b.key ? a.key < b.key : a.row < b.row;
+    });
+
+    const std::vector<size_t>& learns = session->learns;
+    std::vector<uint8_t> has(learns.size(), 0);
+    std::vector<uint8_t> same(learns.size(), 0);
+    size_t start = 0;
+    while (start < keyed.size() && session->pairs < budget) {
+        size_t end = start + 1;
+        while (end < keyed.size() && keyed[end].key == keyed[start].key) ++end;
+        const size_t size = end - start;
+        if (size < 2) {
+            start = end;
+            continue;
+        }
+        if (size > kMaxAnchorGroup) {
+            ++session->oversized;
+            start = end;
+            continue;
+        }
+        ++session->groups;
+        for (size_t i = start; i + 1 < end && session->pairs < budget; ++i) {
+            for (size_t j = i + 1; j < end && session->pairs < budget; ++j) {
+                const uint64_t a = keyed[i].row;
+                const uint64_t b = keyed[j].row;
+                if (mode == PairMode::kCrossDataset && store.DatasetEndFor(a) > b) {
+                    continue;
+                }
+                if (!AgreesOn(views, session->anchor, a, b)) continue;
+                ++session->pairs;
+                for (size_t k = 0; k < learns.size(); ++k) {
+                    const ScalarView& view = views[learns[k]];
+                    const uint32_t first = view.Key(a);
+                    const uint32_t second = view.Key(b);
+                    has[k] = first != kNullId && second != kNullId;
+                    same[k] = has[k] && first == second;
+                    if (has[k] == 0) continue;
+                    ++counts->both[learns[k]];
+                    if (same[k] != 0) ++counts->agree[learns[k]];
+                }
+                for (const LearnPair& learn : learn_pairs) {
+                    if (has[learn.first] == 0 || has[learn.second] == 0) continue;
+                    ++counts->pair_both[learn.entry];
+                    if (same[learn.first] != 0) ++counts->pair_left[learn.entry];
+                    if (same[learn.second] != 0) ++counts->pair_right[learn.entry];
+                    if (same[learn.first] != 0 && same[learn.second] != 0) {
+                        ++counts->pair_joint[learn.entry];
+                    }
+                }
+            }
+        }
+        start = end;
+    }
+    session->capped = session->pairs >= budget;
+}
+
+bool Holds(const std::vector<size_t>& values, size_t value) {
+    return std::find(values.begin(), values.end(), value) != values.end();
+}
+
+// The whole M side: choose the anchors, walk their pairs, and turn the counts into
+// m per column, the M half of the dependence map, and the ledger's second half.
+void BuildMatchSide(const RecordStore& store, const ProfileOptions& options,
+                    ProfileReport* report) {
+    if (!options.anchors) return;
+    if (!report->walked) {
+        report->anchor_refusal =
+            "the pairwise pass is what tells an anchor from a column it determines, "
+            "and --no-pairs turned it off";
+        return;
+    }
+
+    std::vector<size_t> order;
+    for (size_t i = 0; i < report->columns.size(); ++i) {
+        if (report->columns[i].scored && ViewOf(store.column(i)).Valid()) {
+            order.push_back(i);
+        }
+    }
+    report->scored_columns = order.size();
+    if (order.empty()) {
+        report->anchor_refusal = "no column carries an exact-match ceiling to anchor on";
+        return;
+    }
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return report->columns[a].bits > report->columns[b].bits;
+    });
+
+    // An anchor is admissible when agreement on it alone would put the posterior
+    // this far above even odds, which is the whole of the claim that its pairs are
+    // matches. m <= 1 on every column, so the bits are an upper bound on the
+    // posterior and the margin is what pays for the overlap the pairwise table
+    // refused to resolve.
+    const PairIndex index(report->pairs);
+    const double need = -report->prior_bits + options.anchor_margin;
+    double best = 0.0;
+    for (size_t target : order) {
+        double bits = 0.0;
+        std::vector<size_t> anchor =
+            BuildAnchor(*report, index, order, target, need, &bits);
+        best = std::max(best, bits);
+        if (anchor.empty() || bits < need) continue;
+        std::sort(anchor.begin(), anchor.end());
+        bool seen = false;
+        for (const AnchorSession& existing : report->sessions) {
+            seen = seen || existing.anchor == anchor;
+        }
+        if (seen) continue;
+        AnchorSession session;
+        session.anchor = std::move(anchor);
+        session.bits = bits;
+        session.posterior_bits = report->prior_bits + bits;
+        for (size_t column : session.anchor) {
+            session.anchor_names.push_back(report->columns[column].name);
+        }
+        // Every scored column the anchor neither contains nor has already spoken
+        // for. `learns` stays in column order, which is the order `report.pairs`
+        // was built in, so a learnable pair's first column is that pair's left.
+        for (size_t column : order) {
+            if (Holds(session.anchor, column)) continue;
+            bool forced = false;
+            for (size_t chosen : session.anchor) {
+                const size_t entry = index.Find(column, chosen);
+                forced = forced || (entry != PairIndex::kNoPair &&
+                                    SameEvidence(report->pairs[entry]));
+            }
+            if (!forced) session.learns.push_back(column);
+        }
+        std::sort(session.learns.begin(), session.learns.end());
+        if (!session.learns.empty()) report->sessions.push_back(std::move(session));
+        if (report->sessions.size() >= kMaxAnchorSessions) break;
+    }
+
+    if (report->sessions.empty()) {
+        report->anchor_refusal = "the strongest admissible column set is worth " +
+                                 Fixed(best, 2) + " bits against the " + Fixed(need, 2) +
+                                 " a pair needs to be a match on agreement alone";
+        return;
+    }
+
+    std::vector<uint64_t> rows;
+    const bool sampled = options.anchor_rows > 0 && options.anchor_rows < report->records;
+    if (sampled) {
+        rows.reserve(options.anchor_rows + options.anchor_rows / 8);
+        for (uint64_t row = 0; row < report->records; ++row) {
+            if (Mix(row ^ options.seed) % report->records < options.anchor_rows) {
+                rows.push_back(row);
+            }
+        }
+    }
+    report->anchor_rows = sampled ? rows.size() : report->records;
+
+    std::vector<ScalarView> views;
+    views.reserve(store.NumColumns());
+    for (size_t i = 0; i < store.NumColumns(); ++i)
+        views.push_back(ViewOf(store.column(i)));
+
+    // One session at a time: each holds a keyed copy of the row budget, and running
+    // them side by side would multiply the only large allocation the command makes.
+    std::vector<AnchorCounts> counts;
+    for (AnchorSession& session : report->sessions) {
+        std::vector<LearnPair> learn_pairs;
+        for (size_t i = 0; i + 1 < session.learns.size(); ++i) {
+            for (size_t j = i + 1; j < session.learns.size(); ++j) {
+                const size_t entry = index.Find(session.learns[i], session.learns[j]);
+                if (entry != PairIndex::kNoPair) learn_pairs.push_back({i, j, entry});
+            }
+        }
+        counts.emplace_back(report->columns.size(), report->pairs.size());
+        WalkAnchor(store, views, rows, sampled, report->mode, learn_pairs,
+                   options.anchor_pairs, &session, &counts.back());
+        session.used = session.pairs >= kMinAnchorPairs;
+        if (session.used) report->anchor_pairs += session.pairs;
+    }
+
+    if (report->anchor_pairs == 0) {
+        report->anchor_refusal = "the anchors selected fewer than " +
+                                 std::to_string(kMinAnchorPairs) +
+                                 " pairs, which is too few to read an agreement rate off";
+        return;
+    }
+    report->anchored = true;
+
+    // Round one: what agrees with what among matches, pooled over the sessions that
+    // measured it. A pair is only ever counted in a session that anchors on neither
+    // of its columns, so these readings are already clear of the conditioning that
+    // is about to be checked against them.
+    std::vector<double> coupling(report->pairs.size(), 0.0);
+    std::vector<char> known(report->pairs.size(), 0);
+    for (size_t p = 0; p < report->pairs.size(); ++p) {
+        uint64_t both = 0;
+        uint64_t left = 0;
+        uint64_t right = 0;
+        uint64_t joint = 0;
+        for (size_t sess = 0; sess < report->sessions.size(); ++sess) {
+            if (!report->sessions[sess].used) continue;
+            both += counts[sess].pair_both[p];
+            left += counts[sess].pair_left[p];
+            right += counts[sess].pair_right[p];
+            joint += counts[sess].pair_joint[p];
+        }
+        if (both < kMinAnchorPairs || left == 0 || right == 0 || joint == 0) continue;
+        const double total = static_cast<double>(both);
+        known[p] = 1;
+        coupling[p] = Log2((static_cast<double>(joint) * total) /
+                           (static_cast<double>(left) * static_cast<double>(right)));
+    }
+
+    // A column whose agreement moves with an anchor column's has had that agreement
+    // forced, and the session cannot be read for it however independent the two
+    // columns look row by row.
+    for (AnchorSession& session : report->sessions) {
+        std::vector<size_t> kept;
+        for (size_t column : session.learns) {
+            bool forced = false;
+            for (size_t chosen : session.anchor) {
+                const size_t entry = index.Find(column, chosen);
+                forced = forced || (entry != PairIndex::kNoPair && known[entry] != 0 &&
+                                    std::abs(coupling[entry]) >= kAnchorCoupling);
+            }
+            if (!forced) kept.push_back(column);
+        }
+        session.learns = std::move(kept);
+    }
+
+    for (size_t column : order) {
+        ColumnMatchProfile match;
+        match.column = column;
+        match.name = report->columns[column].name;
+        double sum = 0.0;
+        double low = 1.0;
+        double high = 0.0;
+        uint64_t present = 0;
+        uint64_t walked = 0;
+        for (size_t s = 0; s < report->sessions.size(); ++s) {
+            const AnchorSession& session = report->sessions[s];
+            if (!session.used || !Holds(session.learns, column)) continue;
+            const uint64_t both = counts[s].both[column];
+            if (both < kMinAnchorPairs) continue;
+            const double rate =
+                static_cast<double>(counts[s].agree[column]) / static_cast<double>(both);
+            sum += rate;
+            low = std::min(low, rate);
+            high = std::max(high, rate);
+            ++match.sessions;
+            present += both;
+            walked += session.pairs;
+        }
+        if (match.sessions > 0) {
+            match.estimated = true;
+            match.pairs = present;
+            match.coverage =
+                walked > 0 ? static_cast<double>(present) / static_cast<double>(walked)
+                           : 0.0;
+            match.m = sum / match.sessions;
+            match.m_low = low;
+            match.m_high = high;
+            // A session where every pair agreed, or none did, is a rate of exactly
+            // one or zero, and log2(m/u) is not finite at either. Half a pair is
+            // the usual continuity correction and it is reported rather than
+            // quietly applied, because a floored m is a statement about the sample
+            // size and not about the column.
+            const double edge = 0.5 / static_cast<double>(present);
+            if (match.m < edge) {
+                match.m = edge;
+                match.floored = true;
+            } else if (match.m > 1.0 - edge) {
+                match.m = 1.0 - edge;
+                match.floored = true;
+            }
+            const double u = report->columns[column].collision;
+            match.weight = Log2(match.m / u);
+            // What the column contributes to a matching pair on average: the
+            // agreement weight when it agrees, the disagreement penalty when it
+            // does not, and nothing at all when one side is missing, which is the
+            // same convention the ceiling's coverage term uses.
+            match.expected_bits =
+                match.coverage * (match.m * match.weight +
+                                  (1.0 - match.m) * Log2((1.0 - match.m) / (1.0 - u)));
+            report->expected_bits += match.expected_bits;
+            ++report->estimated_columns;
+        }
+        report->matches.push_back(std::move(match));
+    }
+
+    // Anchors that select pairs but leave no column with enough of them are the
+    // shape a narrow file takes: every strong column ends up inside an anchor, and
+    // what is left is read off too few pairs to be a rate.
+    if (report->estimated_columns == 0) {
+        report->anchored = false;
+        report->matches.clear();
+        report->anchor_refusal =
+            "an agreement rate needs " + std::to_string(kMinAnchorPairs) +
+            " anchor pairs carrying the column on both rows, and no column has them "
+            "among the " +
+            WithThousands(report->anchor_pairs) + " the anchors selected";
+        return;
+    }
+
+    // Round two, over what survived the prune: the counts a pruned session gathered
+    // for a column are exactly the ones its anchor forced, and they have no more
+    // business in the dependence table than they had in m.
+    for (size_t p = 0; p < report->pairs.size(); ++p) {
+        ColumnPairProfile& pair = report->pairs[p];
+        uint64_t both = 0;
+        uint64_t left = 0;
+        uint64_t right = 0;
+        uint64_t joint = 0;
+        for (size_t s = 0; s < report->sessions.size(); ++s) {
+            const AnchorSession& session = report->sessions[s];
+            if (!session.used) continue;
+            if (!Holds(session.learns, pair.left) || !Holds(session.learns, pair.right)) {
+                continue;
+            }
+            both += counts[s].pair_both[p];
+            left += counts[s].pair_left[p];
+            right += counts[s].pair_right[p];
+            joint += counts[s].pair_joint[p];
+        }
+        pair.m_pairs = both;
+        if (both < kMinAnchorPairs) continue;
+        const double total = static_cast<double>(both);
+        pair.m_left = static_cast<double>(left) / total;
+        pair.m_right = static_cast<double>(right) / total;
+        pair.m_joint = static_cast<double>(joint) / total;
+        if (pair.m_left > 0.0 && pair.m_right > 0.0 && pair.m_joint > 0.0) {
+            pair.m_resolved = true;
+            pair.m_redundant_bits = Log2(pair.m_joint / (pair.m_left * pair.m_right));
+        }
+    }
+
+    // The score adds log2(m/u) for both columns, so only the difference between the
+    // two overlaps is wrong, and it is only wrong on the pairs where both agree.
+    for (const ColumnPairProfile& pair : report->pairs) {
+        const double net = pair.NetRedundantBits();
+        if (net > 0.0) report->double_counted_bits -= pair.m_joint * net;
+    }
+    report->estimated_margin_bits =
+        report->prior_bits + report->expected_bits + report->double_counted_bits;
+}
+
 }  // namespace
 
 bool ColumnPairProfile::Suspect() const {
@@ -262,6 +771,7 @@ bool ColumnPairProfile::Suspect() const {
     if (left_informative && determines_right >= kDeterminedShare) return true;
     if (right_informative && determines_left >= kDeterminedShare) return true;
     if (containment >= kContainedShare) return true;
+    if (NetRedundantBits() >= kRedundantBits) return true;
     return resolved && redundant_bits >= kRedundantBits;
 }
 
@@ -286,6 +796,11 @@ std::string ColumnPairProfile::Verdict() const {
         const std::string& outer = left_inside_right ? right_name : left_name;
         return inner + " occurs inside " + outer + ": make the two one comparison";
     }
+    if (NetRedundantBits() >= kRedundantBits) {
+        return left_name + " and " + right_name +
+               " agree together among matches beyond what agreeing apart would give: " +
+               Fixed(NetRedundantBits(), 2) + " bits counted twice, u side netted off";
+    }
     return left_name + " and " + right_name +
            " are correlated under u: " + Fixed(redundant_bits, 2) + " bits counted twice";
 }
@@ -302,6 +817,11 @@ ProfileReport BuildProfile(const RecordStore& store, PairMode mode,
     if (report.pair_space > 0.0) {
         report.match_rate =
             static_cast<double>(report.expected_matches) / report.pair_space;
+        report.space_bits = Log2(report.pair_space);
+        if (report.expected_matches > 0) {
+            report.prior_bits =
+                Log2(static_cast<double>(report.expected_matches) / report.pair_space);
+        }
     }
 
     for (size_t i = 0; i < store.NumColumns(); ++i) {
@@ -409,26 +929,27 @@ ProfileReport BuildProfile(const RecordStore& store, PairMode mode,
                 report.redundant_bits -= pair.redundant_bits;
             }
         }
-        // Suspects first, then whatever evidence each pair does carry: a refused
-        // joint still has a determination share and a containment rate, and those
-        // are what the top of the table should be sorted on when it has nothing
-        // else.
-        std::sort(
-            report.pairs.begin(), report.pairs.end(),
-            [](const ColumnPairProfile& a, const ColumnPairProfile& b) {
-                const double left = std::max({a.containment, a.LeftLift(), a.RightLift(),
-                                              a.resolved ? a.redundant_bits : 0.0});
-                const double right = std::max({b.containment, b.LeftLift(), b.RightLift(),
-                                               b.resolved ? b.redundant_bits : 0.0});
-                return left > right;
-            });
     }
 
-    if (report.pair_space > 0.0) report.space_bits = Log2(report.pair_space);
-    if (report.pair_space > 0.0 && report.expected_matches > 0) {
-        report.prior_bits =
-            Log2(static_cast<double>(report.expected_matches) / report.pair_space);
-    }
+    // The M side reads the pairwise results by column index, so it runs while the
+    // table is still in the order it was built in.
+    BuildMatchSide(store, options, &report);
+
+    // Suspects first, then whatever evidence each pair does carry: a refused joint
+    // still has a determination share and a containment rate, and those are what
+    // the top of the table should be sorted on when it has nothing else.
+    std::sort(
+        report.pairs.begin(), report.pairs.end(),
+        [](const ColumnPairProfile& a, const ColumnPairProfile& b) {
+            const double left =
+                std::max({a.containment, a.LeftLift(), a.RightLift(),
+                          a.resolved ? a.redundant_bits : 0.0, a.NetRedundantBits()});
+            const double right =
+                std::max({b.containment, b.LeftLift(), b.RightLift(),
+                          b.resolved ? b.redundant_bits : 0.0, b.NetRedundantBits()});
+            return left > right;
+        });
+
     report.margin_bits =
         report.prior_bits + report.available_bits + report.redundant_bits;
     report.seconds =
@@ -465,7 +986,21 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
             << " bits   (pairwise, u side only)\n";
     }
     out << "  " << std::left << std::setw(14) << "Margin" << std::right << std::setw(18)
-        << "" << std::setw(10) << Signed(report.margin_bits) << " bits\n\n";
+        << "" << std::setw(10) << Signed(report.margin_bits) << " bits\n";
+    if (report.anchored) {
+        out << "\n";
+        out << "  " << std::left << std::setw(14) << "Expected" << std::right
+            << std::setw(18) << "" << std::setw(10) << Signed(report.expected_bits)
+            << " bits   (m over " << WithThousands(report.anchor_pairs)
+            << " anchor pairs)\n";
+        out << "  " << std::left << std::setw(14) << "Double counted" << std::right
+            << std::setw(18) << "" << std::setw(10) << Signed(report.double_counted_bits)
+            << " bits   (pairwise, both sides)\n";
+        out << "  " << std::left << std::setw(14) << "Est. margin" << std::right
+            << std::setw(18) << "" << std::setw(10)
+            << Signed(report.estimated_margin_bits) << " bits\n";
+    }
+    out << "\n";
 
     out << std::left << std::setw(18) << "Column" << std::setw(12) << "Type" << std::right
         << std::setw(12) << "Distinct" << std::setw(9) << "Null" << std::setw(9)
@@ -498,6 +1033,77 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
             << "reads low:\n  " << floored << "\n\n";
     }
 
+    if (report.anchored) {
+        out << std::left << std::setw(18) << "Column" << std::right << std::setw(9)
+            << "Sessions" << std::setw(12) << "Pairs" << std::setw(8) << "Cov"
+            << std::setw(8) << "m" << std::setw(13) << "Spread" << std::setw(9)
+            << "Weight" << std::setw(10) << "Exp bits" << "\n";
+        out << std::string(87, '-') << "\n";
+        for (const ColumnMatchProfile& match : report.matches) {
+            out << std::left << std::setw(18) << Truncate(match.name, 17) << std::right;
+            if (!match.estimated) {
+                out << std::setw(9) << 0 << std::setw(12) << "-" << std::setw(8) << "-"
+                    << std::setw(8) << "-" << std::setw(13) << "-" << std::setw(9) << "-"
+                    << std::setw(10) << "-" << "\n";
+                continue;
+            }
+            const std::string spread =
+                match.sessions > 1 ? Fixed(match.m_low, 3) + "-" + Fixed(match.m_high, 3)
+                                   : std::string("-");
+            out << std::setw(9) << match.sessions << std::setw(12)
+                << WithThousands(match.pairs) << std::setw(8) << Percent(match.coverage)
+                << std::setw(8) << Fixed(match.m, 3) << std::setw(13) << spread
+                << std::setw(9) << Fixed(match.weight, 2) << std::setw(10)
+                << Fixed(match.expected_bits, 2) << "\n";
+        }
+        out << "\n";
+
+        out << "Anchors, over " << WithThousands(report.anchor_rows) << " rows\n";
+        for (const AnchorSession& session : report.sessions) {
+            std::string names;
+            for (const std::string& name : session.anchor_names) {
+                if (!names.empty()) names += " + ";
+                names += name;
+            }
+            out << "  " << std::left << std::setw(46) << Truncate(names, 45) << std::right
+                << std::setw(8) << Fixed(session.bits, 2) << " bits" << std::setw(9)
+                << Signed(session.posterior_bits) << " post" << std::setw(12)
+                << WithThousands(session.pairs) << " pairs";
+            if (!session.used) out << "   (too few to read)";
+            if (session.capped) out << "   (budget reached)";
+            out << "\n";
+        }
+        out << "\n";
+
+        std::string floored_m;
+        for (const ColumnMatchProfile& match : report.matches) {
+            if (!match.floored) continue;
+            if (!floored_m.empty()) floored_m += ", ";
+            floored_m += match.name;
+        }
+        if (!floored_m.empty()) {
+            out << "m hit the continuity floor for these columns, where every anchor "
+                   "pair agreed\nor none did, so what is reported is half a pair off "
+                   "the edge rather than a rate\nthe sample could resolve:\n  "
+                << floored_m << "\n\n";
+        }
+
+        if (report.estimated_columns < report.scored_columns) {
+            out << "m is not estimated for "
+                << report.scored_columns - report.estimated_columns << " of "
+                << report.scored_columns
+                << " scored columns: every anchor built either\ncontains the column or "
+                   "determines it. Those contribute nothing to Expected, so\nthe "
+                   "estimated margin is a floor.\n\n";
+        }
+    }
+
+    if (!report.anchored && !report.anchor_refusal.empty()) {
+        out << "No m: " << report.anchor_refusal
+            << ".\nThe ledger above is the "
+               "ceiling alone, which takes m = 1 on every column.\n\n";
+    }
+
     if (!report.walked) return;
 
     out << std::left << std::setw(18) << "Column" << std::setw(18) << "Against"
@@ -524,6 +1130,29 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
             << "duplicates rather than a dependence between the columns.\n\n";
     }
 
+    if (report.anchored) {
+        size_t rows = 0;
+        for (const ColumnPairProfile& pair : report.pairs) {
+            if (!pair.m_resolved) continue;
+            if (rows == 0) {
+                out << std::left << std::setw(18) << "Column" << std::setw(18)
+                    << "Against" << std::right << std::setw(11) << "M pairs"
+                    << std::setw(9) << "Both" << std::setw(9) << "M redu" << std::setw(9)
+                    << "U redu" << std::setw(9) << "Net" << "\n";
+                out << std::string(83, '-') << "\n";
+            }
+            ++rows;
+            out << std::left << std::setw(18) << Truncate(pair.left_name, 17)
+                << std::setw(18) << Truncate(pair.right_name, 17) << std::right
+                << std::setw(11) << WithThousands(pair.m_pairs) << std::setw(9)
+                << Fixed(pair.m_joint, 3) << std::setw(9)
+                << Fixed(pair.m_redundant_bits, 2) << std::setw(9)
+                << (pair.resolved ? Fixed(pair.redundant_bits, 2) : "-") << std::setw(9)
+                << (pair.resolved ? Signed(pair.NetRedundantBits()) : "-") << "\n";
+        }
+        if (rows > 0) out << "\n";
+    }
+
     size_t shown = 0;
     for (const ColumnPairProfile& pair : report.pairs) {
         if (!pair.Suspect()) continue;
@@ -548,10 +1177,24 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
         << "determines the right; a determinant that is near-unique, or a target with "
            "one\n"
         << "dominant value, reads 1 for saying nothing and is shown as -. Redund is the\n"
-        << "u-side overlap alone; agreement among matches is the larger correlation and\n"
-        << "needs matching pairs to measure. Both the prior odds and what Redund can be\n"
-        << "read on move with --expected-matches, which defaults to one duplicate per\n"
+        << "u-side overlap alone, and Net is what the weight actually double-counts "
+           "once\n"
+        << "the m-side overlap is set against it. Both the prior odds and what Redund "
+           "can\n"
+        << "be read on move with --expected-matches, which defaults to one duplicate "
+           "per\n"
         << "record.\n";
+    if (report.anchored) {
+        out << "\nm comes from anchor pairs: two rows agreeing on every column of an "
+               "anchor,\nwhich the anchor's bits make a match on that agreement alone. "
+               "The anchor is\nheld out of what the session is read for, and so is every "
+               "column it\ndetermines. The bias runs one way and is not removed by any "
+               "of "
+               "that: anchors\nare the matches that happened to agree on a clean "
+               "identifier, and agreement is\ncorrelated among matches, so every m here "
+               "reads high. Spread is the same m\nover different anchors, which is what "
+               "that bias looks like from the inside.\n";
+    }
 }
 
 void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
@@ -567,6 +1210,15 @@ void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
     root["available_bits"] = report.available_bits;
     root["redundant_bits"] = report.redundant_bits;
     root["margin_bits"] = report.margin_bits;
+    root["anchored"] = report.anchored;
+    root["anchor_refusal"] = report.anchor_refusal;
+    root["anchor_rows"] = report.anchor_rows;
+    root["anchor_pairs"] = report.anchor_pairs;
+    root["expected_bits"] = report.expected_bits;
+    root["double_counted_bits"] = report.double_counted_bits;
+    root["estimated_margin_bits"] = report.estimated_margin_bits;
+    root["estimated_columns"] = report.estimated_columns;
+    root["scored_columns"] = report.scored_columns;
     root["walked"] = report.walked;
     root["sampled"] = report.sampled;
     root["sampled_rows"] = report.sampled_rows;
@@ -588,6 +1240,41 @@ void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
         item["covered_bits"] = column.covered_bits;
         item["bits_floored"] = column.bits_floored;
         root["columns"].push_back(std::move(item));
+    }
+
+    root["sessions"] = nlohmann::json::array();
+    for (const AnchorSession& session : report.sessions) {
+        nlohmann::json item;
+        item["anchor"] = session.anchor_names;
+        item["bits"] = session.bits;
+        item["posterior_bits"] = session.posterior_bits;
+        item["groups"] = session.groups;
+        item["pairs"] = session.pairs;
+        item["oversized_groups"] = session.oversized;
+        item["capped"] = session.capped;
+        item["used"] = session.used;
+        item["learns"] = nlohmann::json::array();
+        for (size_t column : session.learns) {
+            item["learns"].push_back(report.columns[column].name);
+        }
+        root["sessions"].push_back(std::move(item));
+    }
+
+    root["matches"] = nlohmann::json::array();
+    for (const ColumnMatchProfile& match : report.matches) {
+        nlohmann::json item;
+        item["name"] = match.name;
+        item["estimated"] = match.estimated;
+        item["sessions"] = match.sessions;
+        item["pairs"] = match.pairs;
+        item["coverage"] = match.coverage;
+        item["m"] = match.m;
+        item["m_low"] = match.m_low;
+        item["m_high"] = match.m_high;
+        item["weight"] = match.weight;
+        item["expected_bits"] = match.expected_bits;
+        item["floored"] = match.floored;
+        root["matches"].push_back(std::move(item));
     }
 
     root["pairs"] = nlohmann::json::array();
@@ -613,6 +1300,13 @@ void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
         item["joint_collisions"] = pair.joint_collisions;
         item["expected_collisions"] = pair.expected_collisions;
         item["resolved"] = pair.resolved;
+        item["m_pairs"] = pair.m_pairs;
+        item["m_left"] = pair.m_left;
+        item["m_right"] = pair.m_right;
+        item["m_joint"] = pair.m_joint;
+        item["m_redundant_bits"] = pair.m_redundant_bits;
+        item["m_resolved"] = pair.m_resolved;
+        item["net_redundant_bits"] = pair.NetRedundantBits();
         item["suspect"] = pair.Suspect();
         if (pair.Suspect()) item["verdict"] = pair.Verdict();
         root["pairs"].push_back(std::move(item));
