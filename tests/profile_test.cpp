@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "cpplink/app.hpp"
+#include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 
@@ -386,8 +387,23 @@ class AnchorFixture : public ::testing::Test {
         return report.pairs.front();
     }
 
+    // Originals are emitted first and their duplicates after, so row i and row
+    // i + kPlantedPairs are the pair the fixture planted. That is exactly what
+    // `LoadTruthPairs` would resolve an "id_a,id_b" file to, without the file.
+    const cpplink::TruthPairs& Planted() const {
+        if (truth_.rows.empty()) {
+            for (uint64_t i = 0; i < kPlantedPairs; ++i) {
+                truth_.rows.emplace_back(static_cast<uint32_t>(i),
+                                         static_cast<uint32_t>(i + kPlantedPairs));
+            }
+            truth_.lines = kPlantedPairs;
+        }
+        return truth_;
+    }
+
     uint64_t emitted_ = 0;
     uint64_t seed_ = 987654321;
+    mutable cpplink::TruthPairs truth_;
     cpplink::Schema schema_;
     std::unique_ptr<cpplink::RecordStore> store_;
 };
@@ -406,6 +422,44 @@ TEST_F(AnchorFixture, AnchorMFindsThePlantedRate) {
     EXPECT_NEAR(MatchNamed(report, "soft").m, 0.6 + 0.4 / kSoftValues, 0.02);
     EXPECT_NEAR(MatchNamed(report, "linked").m, 0.7 + 0.3 / kLinkedValues, 0.02);
     EXPECT_NEAR(MatchNamed(report, "coarse").m, 0.9 + 0.1 / kCoarseClasses, 0.02);
+}
+
+// The truth side is the second reading the anchor estimate is scored against, and
+// this fixture is the one place the two can be checked at once: the planted rates
+// are known, so a truth m that misses them would mean the reading and not the
+// estimate is broken. Every anchor m sits at or above its truth m, which is the
+// bias the report says runs one way.
+TEST_F(AnchorFixture, TruthMReadsThePlantedRateTheAnchorEstimates) {
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options(), &Planted());
+    ASSERT_TRUE(report.anchored) << report.anchor_refusal;
+    ASSERT_TRUE(report.truthed);
+    EXPECT_EQ(report.truth_pairs, kPlantedPairs);
+    EXPECT_NEAR(MatchNamed(report, "key1").truth_m, 0.9 + 0.1 / kKeyValues, 0.02);
+    EXPECT_NEAR(MatchNamed(report, "key3").truth_m, 0.7 + 0.3 / kKeyValues, 0.02);
+    EXPECT_NEAR(MatchNamed(report, "soft").truth_m, 0.6 + 0.4 / kSoftValues, 0.02);
+    for (const cpplink::ColumnMatchProfile& match : report.matches) {
+        if (!match.estimated || !match.truthed) continue;
+        EXPECT_GE(match.m, match.truth_m - 0.02) << match.name;
+    }
+    // Every column of this fixture is corrupted on its own coin, so an anchor
+    // selects nothing about the rest and the two margins land on each other.
+    EXPECT_NEAR(report.estimated_margin_bits, report.truth_margin_bits, 1.0);
+}
+
+// Without a truth file nothing above changes and nothing below is reported, which
+// is what "scored beside it, never fitted to" has to mean.
+TEST_F(AnchorFixture, TheTruthReadingChangesNoEstimate) {
+    const cpplink::ProfileReport without =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options());
+    const cpplink::ProfileReport with =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options(), &Planted());
+    EXPECT_FALSE(without.truthed);
+    EXPECT_EQ(without.matches.size(), with.matches.size());
+    for (size_t i = 0; i < without.matches.size(); ++i) {
+        EXPECT_DOUBLE_EQ(without.matches[i].m, with.matches[i].m);
+    }
+    EXPECT_DOUBLE_EQ(without.estimated_margin_bits, with.estimated_margin_bits);
 }
 
 // An anchor forces its own columns to agree, and forces every column it determines

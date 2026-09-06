@@ -77,7 +77,8 @@ void PrintUsage(std::ostream& out) {
         << "                [--expected-matches N] [--threads N] [--json] "
            "[--mode MODE]\n"
         << "                [--no-anchors] [--anchor-rows N] [--anchor-margin BITS]\n"
-        << "                [--anchor-pairs N] <file.parquet>...\n"
+        << "                [--anchor-pairs N] [--truth <pairs.csv>] "
+           "<file.parquet>...\n"
         << "cpplink levels --schema <schema.json> [--out <schema.json>] [--json]\n"
         << "               [--truth <pairs.csv>]\n"
         << "               [--levels N] [--max-levels N] [--jaro-floor F]\n"
@@ -208,6 +209,7 @@ int RunInspect(const std::vector<std::string>& args, std::ostream& out,
 int RunProfile(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
+    std::string truth_path;
     std::string value;
     std::vector<std::string> data_paths;
     ProfileOptions options;
@@ -239,6 +241,8 @@ int RunProfile(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--anchor-margin") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.anchor_margin = std::stod(value);
+        } else if (args[i] == "--truth") {
+            if (!TakeValue(args, &i, &truth_path, err)) return 1;
         } else if (args[i] == "--no-pairs") {
             options.pairs = false;
         } else if (args[i] == "--no-anchors") {
@@ -272,8 +276,15 @@ int RunProfile(const std::vector<std::string>& args, std::ostream& out,
         return 1;
     }
 
+    TruthPairs truth;
+    if (!truth_path.empty() && !LoadTruthPairs(truth_path, store, &truth, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+
     const ProfileReport report =
-        BuildProfile(store, DefaultMode(mode_given, mode, data_paths.size()), options);
+        BuildProfile(store, DefaultMode(mode_given, mode, data_paths.size()), options,
+                     truth_path.empty() ? nullptr : &truth);
     if (as_json) {
         WriteProfileJson(report, out);
     } else {

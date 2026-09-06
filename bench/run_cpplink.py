@@ -82,6 +82,57 @@ def parse_completeness(text):
     ) if key in report}
 
 
+def parse_profile(text):
+    """The anchor-pair m per column, beside the same rate read off known pairs.
+
+    `profile` estimates m before a model exists, from pairs it manufactures by
+    agreement on a strong column set. That estimate is biased upward by
+    construction, so the number worth recording is not m but the gap: with
+    `--truth` the command reads both curves and never fits to the second.
+    """
+    report = json.loads(text)
+    if not report.get("anchored"):
+        return {"anchored": False, "refusal": report.get("anchor_refusal", "")}
+    profile = {key: report[key] for key in (
+        "anchored", "anchor_pairs", "margin_bits", "estimated_margin_bits",
+        "truthed", "truth_pairs", "truth_margin_bits", "truth_mean_error",
+    ) if key in report}
+    profile["columns"] = [
+        {key: match[key] for key in ("name", "m", "truth_m", "sessions", "pairs")
+         if key in match}
+        for match in report["matches"] if match.get("estimated")
+    ]
+    return profile
+
+
+def parse_levels(text):
+    """What the schema's fuzzy thresholds are worth against what they could be.
+
+    Both partitions in bits per matching pair, on the anchor curve the proposal
+    is fitted to and on the truth curve it never sees. The second is the one
+    that says whether a cut point is a property of the column or of the anchor.
+    """
+    report = json.loads(text)
+    levels = {"truthed": report.get("truthed", False),
+              "truth_pairs": report.get("truth_pairs", 0),
+              "refusal": report.get("anchor_refusal", ""), "comparisons": []}
+    for item in report.get("comparisons", []):
+        if not item.get("proposed"):
+            levels["comparisons"].append(
+                {"name": item["name"], "proposed": False,
+                 "refusal": item.get("refusal", "")})
+            continue
+        levels["comparisons"].append({key: item[key] for key in (
+            "name", "proposed", "best_count", "current_bits", "best_bits",
+            "truthed", "truth_pairs", "current_truth_bits", "best_truth_bits",
+        ) if key in item})
+    for key, total in (("bits", "current_bits"), ("proposed_bits", "best_bits"),
+                       ("truth_bits", "current_truth_bits"),
+                       ("proposed_truth_bits", "best_truth_bits")):
+        levels[key] = sum(c.get(total, 0.0) for c in levels["comparisons"])
+    return levels
+
+
 class Runner:
     def __init__(self, log):
         self.log = log
@@ -143,6 +194,18 @@ def main():
             reached = run("recall", "recall", "--schema", schema, "--truth", truth,
                           "--count", "--json", parquet)
             analysis = parse_analysis(blocking, reached)
+
+            # Both of these run before the model exists and are scored against the
+            # truth they never read: `profile` estimates m from anchor pairs, and
+            # `levels` places the fuzzy thresholds from two curves. Their whole
+            # claim is how near the truth reading they land, so the two readings
+            # belong in the same report as everything else measured per run.
+            analysis["profile"] = parse_profile(run(
+                "profile", "profile", "--schema", schema, "--truth", truth,
+                "--threads", args.threads, "--json", parquet))
+            analysis["levels"] = parse_levels(run(
+                "levels", "levels", "--schema", schema, "--truth", truth,
+                "--threads", args.threads, "--json", parquet))
 
         estimate = ["estimate", "--schema", schema, "--out", model,
                     "--threads", args.threads, "--u-sample", args.u_sample,

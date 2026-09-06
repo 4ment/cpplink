@@ -300,6 +300,63 @@ Read it as an indicator rather than a measurement, and note which way it errs: i
 blocking recall, so it is the wrong instrument for arguing that a plan needs no more sources,
 which is the argument someone without a truth file most wants to make.
 
+### What the pre-model stages claim, and what the truth says
+
+`cpplink profile` and `cpplink levels` both run before a model exists and both answer a
+question that would otherwise need known pairs.
+Each is given the truth file per run, and neither fits to it: the estimate is made first and
+the truth reading is scored beside it.
+That is the same discipline the completeness estimator above is held to, and for the same
+reason, which is that a number nothing checks rots.
+
+`profile` estimates what a matching pair will score from **anchor pairs**, which it
+manufactures by requiring exact agreement on a column set strong enough that agreement alone
+makes a pair a match.
+Ceiling is the same ledger with `m` taken as 1.
+
+| dataset | anchor pairs | ceiling | estimate | truth | mean m error |
+|---|---:|---:|---:|---:|---:|
+| fake_1000 | 746 | +18.74 | -0.83 | -1.16 | 0.016 |
+| febrl3 | 10,331 | +57.12 | +31.42 | +31.63 | 0.003 |
+| historical_50k | 195,168 | +31.38 | +18.35 | +6.51 | 0.117 |
+
+All three tracks produce the same row, because the profile reads the columns and not the
+comparisons, so the harness prints it once against every track that produced it.
+
+`fake_1000` is what the estimate is for: the ceiling reads +18.74 bits of headroom where a
+matching pair actually scores **below even odds**, and the estimate gets the sign right.
+The error runs one way everywhere, and the split between datasets is the reading rather than
+a defect.
+`febrl3` corrupts field by field on independent coins, so conditioning on an anchor selects
+nothing and the estimate lands on the truth to 0.003.
+On real data being clean is a property of the record, so an anchor selects the easy matches
+and every `m` reads high: 0.117 on `historical_50k`, with the ranking of the columns exact.
+Where the two agree, conditional independence holds among matches, which makes the gap a
+diagnostic and `Expected` a second and much tighter ceiling rather than a point estimate.
+
+`levels` checks the schema's fuzzy thresholds against the column they run on and proposes
+better ones, in bits a matching pair gets from each comparison.
+`(T)` reads both partitions against the known pairs the proposal never saw.
+
+| dataset | priced | current | proposed | gain | current (T) | proposed (T) | gain (T) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fake_1000 | 0 of 5 | refused | - | - | - | - | - |
+| febrl3 | 7 of 8 | 52.07 | 53.11 | +1.04 | 52.23 | 53.24 | +1.01 |
+| historical_50k | 6 of 8 | 41.82 | 42.57 | +0.75 | 35.45 | 36.51 | +1.05 |
+
+The gains survive the move to the truth curve and on `historical_50k` get larger, which
+answers the obvious objection: the cuts are placed on the anchor curve, so if they were
+fitting the anchor's bias rather than the column, the truth reading would take them back.
+`fake_1000` is refused outright and the refusal is the right answer, since 1,000 records leave
+164 to 214 anchor pairs per column against the 500 a curve needs; the harness prints the
+reason per comparison rather than a blank.
+
+**Bits are not F1, and this table is not a quality claim.**
+The proposed schema's best F1 on `historical_50k` moves 0.8606 to 0.8617 and the threshold it
+sits at moves from 10 bits to 12, so at a fixed threshold the proposal reads as a loss.
+On `febrl3` it is equal or better at every threshold.
+What the extra bits buy is robustness to where the threshold is put, not a higher peak.
+
 ### What term frequency on the fuzzy levels buys
 
 `estimate --fuzzy-u` and `predict --fuzzy-tf` are the `fuzzy_tf` track's only difference from
