@@ -149,9 +149,9 @@ Four honest caveats:
    `fake_1000` and `febrl3` both tools' peak resident sets are dominated by fixed costs —
    the Python interpreter and duckdb for splink, the binary and Arrow's shared-library graph
    for cpplink — and a ratio between them measures startup, not the model. `historical_50k`
-   is the one row where the variable cost dominates: at the 216 B/pair marginal rate fitted
-   between it and `febrl3`, its 18.3M candidate pairs account for 3.7 GiB of splink's 4.1 GiB
-   peak — 91%, leaving a ~0.4 GiB fixed cost that matches `febrl3`'s 393 MiB total. There the
+   is the one row where the variable cost dominates: at the 189 B/pair marginal rate fitted
+   between it and `febrl3`, its 18.3M candidate pairs account for 3.2 GiB of splink's 3.6 GiB
+   peak — 90%, leaving a 371 MiB fixed cost that matches `febrl3`'s 385 MiB total. There the
    pair table *is* the memory. That consistency is what makes the extrapolation in [the scale
    section](#the-scale-claim-and-where-it-is-still-unmeasured) worth writing down, and it is
    still a line through two points.
@@ -206,6 +206,18 @@ Single-threaded is `--threads 1` for cpplink and `PRAGMA threads=1` for duckdb, 
 Reproduce with `python bench/bench.py --repeat 3 --threads 1`.
 The full numbers, including every stage timing, are in `results/summary.json`.
 
+These were re-measured after the closed-form `u` fix, which corrected a dedup denominator that
+counted every row against itself.
+**Not one quality number here moved by more than a ten-thousandth**, and the reason is worth
+recording rather than reading as evidence the fix did not matter: the self-pairs it removes are
+`1/N` of `u`, so the correction is negligible while `u` is large and dominant only as `u`
+approaches `1/N`.
+That is the regime of a near-unique column, and none of these three datasets has one.
+The strongest column on `historical_50k` behaves as about 6,800 values against 50,578 records,
+which puts `u` an order of magnitude clear of `1/N`.
+The fix is measured elsewhere, on a synthetic file whose email column is near-unique, where it
+moves `u` by 3.5 bits.
+
 ### Quality at each tool's best threshold
 
 | dataset | track | tool | thr | precision | recall | F1 |
@@ -218,7 +230,7 @@ The full numbers, including every stage timing, are in `results/summary.json`.
 | febrl3 | matched | splink | 0.9 | 1.0000 | 0.9982 | 0.9991 |
 | febrl3 | native | cpplink | 0.1 | 0.9992 | 0.9992 | 0.9992 |
 | febrl3 | fuzzy_tf | cpplink | 0.5 | 1.0000 | 0.9989 | **0.9995** |
-| historical_50k | matched | cpplink | 0.999 | 0.9206 | 0.8180 | **0.8663** |
+| historical_50k | matched | cpplink | 0.999 | 0.9206 | 0.8181 | **0.8664** |
 | historical_50k | matched | splink | 0.999 | 0.8819 | 0.8209 | 0.8503 |
 | historical_50k | native | cpplink | 0.999 | 0.9165 | 0.8097 | 0.8598 |
 | historical_50k | fuzzy_tf | cpplink | 0.9999 | 0.9692 | 0.7705 | 0.8585 |
@@ -250,12 +262,12 @@ scored here against the number it substitutes for.
 
 | dataset | track | candidate pairs | blocking recall | completeness est. | error |
 |---|---|---:|---:|---:|---:|
-| fake_1000 | matched | 2,538 | 0.7351 | 0.7675 | +0.0323 |
-| fake_1000 | native | 9,981 | 0.8400 | 0.9060 | +0.0661 |
-| febrl3 | matched | 76,509 | 0.9956 | 0.9867 | -0.0088 |
+| fake_1000 | matched | 2,538 | 0.7351 | 0.7635 | +0.0284 |
+| fake_1000 | native | 9,981 | 0.8400 | 0.9035 | +0.0635 |
+| febrl3 | matched | 76,509 | 0.9956 | 0.9867 | -0.0089 |
 | febrl3 | native | 110,570 | 0.9983 | 0.9981 | -0.0002 |
-| historical_50k | matched | 18,340,573 | 0.8449 | 0.8980 | +0.0531 |
-| historical_50k | native | 18,436,900 | 0.8499 | 0.8969 | +0.0470 |
+| historical_50k | matched | 18,340,573 | 0.8449 | 0.8968 | +0.0520 |
+| historical_50k | native | 18,436,900 | 0.8499 | 0.8950 | +0.0451 |
 
 The `fuzzy_tf` track blocks exactly as `native` does and reproduces its row to four decimals,
 so it is not repeated.
@@ -271,14 +283,14 @@ for free. This is why the ceiling is a diagnostic and not a hard cap.
 **cpplink's automatic blocking pays where the declared rules are weak, and not otherwise.**
 On `fake_1000` it lifts the ceiling from 0.735 to 0.840 and F1 from 0.896 to 0.926, the
 largest quality difference in the whole benchmark. On `historical_50k` it adds 96k candidates
-and 0.5 points of ceiling, and F1 goes *down* slightly (0.8663 to 0.8598): the extra
+and 0.5 points of ceiling, and F1 goes *down* slightly (0.8664 to 0.8598): the extra
 candidates are mostly not matches, so at a fixed threshold they cost precision. Automatic
 blocking is worth switching on when the hand-written rules leave recall on the table, which
 is a thing this harness can now measure rather than assume.
 
 **The no-truth estimator is accurate where the model is, and optimistic elsewhere.**
 It is within one point on both `febrl3` plans, the dataset where the model is nearly saturated,
-and reads 3.2 to 6.6 points high on the other four.
+and reads 2.8 to 6.4 points high on the other four.
 The only two negative errors are that `febrl3` pair and both are under a point, so every error
 on a plan the model does not already fit is positive.
 That is the failure mode DESIGN.md names: the dark cells are fitted, and a fit that misses
@@ -297,12 +309,12 @@ that finds it.
 
 | dataset | track | 0.99 | 0.999 | 0.9999 | 0.99999 |
 |---|---|---:|---:|---:|---:|
-| historical_50k | matched | 0.6606 | **0.8663** | 0.8495 | 0.8051 |
+| historical_50k | matched | 0.6606 | **0.8664** | 0.8495 | 0.8050 |
 | historical_50k | native | 0.6086 | 0.8598 | 0.8410 | 0.7953 |
-| historical_50k | fuzzy_tf | 0.6369 | 0.8582 | **0.8585** | **0.8200** |
+| historical_50k | fuzzy_tf | 0.6369 | 0.8583 | **0.8585** | **0.8200** |
 
 At a fixed threshold of 0.9999 or above the fuzzy adjustment is the best configuration of the
-three, and at its own best threshold it is not: 0.8585 against matched's 0.8663. What it
+three, and at its own best threshold it is not: 0.8585 against matched's 0.8664. What it
 actually does on this dataset is trade recall for precision, 0.8097 to 0.7705 and 0.9165 to
 0.9692 against `native`, which moves the optimum a decade to the right rather than lifting the
 curve. On `febrl3` it produces the benchmark's single best F1 (0.9995) and on `fake_1000` it
@@ -316,7 +328,7 @@ it is not scoring the same quantity over the same pairs. Reconciling them is ope
 neither number should be quoted as the other.
 
 What this run supports is narrower. The adjustment costs 0.8 points of F1 at each
-configuration's own best threshold (0.8585 against 0.8663) and gains 0.9 to 2.5 points at any
+configuration's own best threshold (0.8585 against 0.8664) and gains 0.9 to 2.5 points at any
 threshold of 0.9999 or above. It is worth switching on when the operating threshold is fixed
 and high, and it is not a free improvement.
 
@@ -324,16 +336,16 @@ and high, and it is not a free improvement.
 
 | dataset | track | tool | pipeline s | peak RSS |
 |---|---|---|---:|---:|
-| fake_1000 | matched | cpplink | 0.78 | 32.9 MiB |
-| fake_1000 | matched | splink | 2.21 | 225.1 MiB |
-| fake_1000 | fuzzy_tf | cpplink | 1.06 | 33.1 MiB |
-| febrl3 | matched | cpplink | 1.51 | 95.0 MiB |
-| febrl3 | matched | splink | 3.34 | 393.2 MiB |
-| febrl3 | fuzzy_tf | cpplink | 3.94 | 86.5 MiB |
-| historical_50k | matched | cpplink | 15.15 | 109.0 MiB |
-| historical_50k | matched | splink | 118.86 | 4.1 GiB |
-| historical_50k | native | cpplink | 15.52 | 109.8 MiB |
-| historical_50k | fuzzy_tf | cpplink | 123.10 | 126.7 MiB |
+| fake_1000 | matched | cpplink | 0.67 | 33.0 MiB |
+| fake_1000 | matched | splink | 1.89 | 222.2 MiB |
+| fake_1000 | fuzzy_tf | cpplink | 0.79 | 32.7 MiB |
+| febrl3 | matched | cpplink | 1.01 | 86.5 MiB |
+| febrl3 | matched | splink | 3.11 | 385.1 MiB |
+| febrl3 | fuzzy_tf | cpplink | 3.74 | 86.8 MiB |
+| historical_50k | matched | cpplink | 14.00 | 125.3 MiB |
+| historical_50k | matched | splink | 124.60 | 3.6 GiB |
+| historical_50k | native | cpplink | 14.88 | 109.4 MiB |
+| historical_50k | fuzzy_tf | cpplink | 115.57 | 109.4 MiB |
 
 Read this table with the four caveats above, and two more that these numbers make concrete.
 
@@ -344,15 +356,15 @@ targets. **Do not quote a speedup ratio from this benchmark.** What it shows is 
 are as designed, cpplink's memory flat in the number of pairs and splink's not, and not by how
 much that will matter at scale.
 
-**The `fuzzy_tf` track is eight times the pipeline cost of `native`, and 87% of that is one
+**The `fuzzy_tf` track is eight times the pipeline cost of `native`, and 89% of that is one
 dictionary self-join built twice.** The stage timings say so directly: `estimate` goes from
-5.55 s to 59.25 s and `predict` from 9.97 s to 64.14 s, and each of those carries 53.8 s of
-`BallMassTable` construction. Within the join, 49.8 s of the 53.8 s is `first_and_surname`
+4.95 s to 55.4 s and `predict` from 9.31 s to 60.1 s, and each of those carries 51.4 s of
+`BallMassTable` construction. Within the join, 47.3 s of the 51.4 s is `first_and_surname`
 alone, whose 20,479 distinct values are 210M value pairs. Two things follow. Single-threaded
 is the worst case for it, because the join is embarrassingly parallel and the same column takes
-8.95 s across cores while the rest of the pipeline gains far less. And `estimate` and `predict`
-build the identical table from the identical dictionary with no way to pass it between them,
-so half of the cost is redundant across a two-command run and would not be paid by a caller
+8.97 s across eight cores while the rest of the pipeline gains far less. And `estimate` and
+`predict` build the identical table from the identical dictionary with no way to pass it
+between them, so half of the cost is redundant across a two-command run and would not be paid by a caller
 that scored under one process.
 
 ## Comparing blocking methods
@@ -572,11 +584,11 @@ three datasets already bracket the shape. Peak resident set per candidate pair:
 
 | dataset | candidate pairs | cpplink | splink |
 |---|---:|---:|---:|
-| `fake_1000` | 2,538 | 13,576 B/pair | 93,017 B/pair |
-| `febrl3` | 76,509 | 1,302 B/pair | 5,389 B/pair |
-| `historical_50k` | 18,340,573 | **6 B/pair** | **237 B/pair** |
+| `fake_1000` | 2,538 | 13,634 B/pair | 91,823 B/pair |
+| `febrl3` | 76,509 | 1,186 B/pair | 5,277 B/pair |
+| `historical_50k` | 18,340,573 | **7 B/pair** | **211 B/pair** |
 
-cpplink's figures are lower than the multithreaded run these replace (6 B/pair against 16 at
+cpplink's figures are lower than the multithreaded run these replace (7 B/pair against 16 at
 `historical_50k`) for a reason that is itself the design: the per-thread pattern histograms and
 output buffers are what scale with cores, and at one thread there is one of each.
 
@@ -587,18 +599,18 @@ histogram, both set by the number of *records*, so dividing by pairs just measur
 pairs the same store produced. For splink the memory *is* the pair table, so the ratio
 converges to the width of a row in it.
 
-Fitting splink's marginal cost between the two larger datasets gives **216 bytes per
+Fitting splink's marginal cost between the two larger datasets gives **189 bytes per
 candidate pair**, which turns the scale claim into an arithmetic prediction rather than an
 assertion:
 
 | candidate pairs | predicted splink peak RSS |
 |---:|---:|
-| 100M | 22 GB |
-| 1×10⁹ | 216 GB |
-| 5×10⁹ *(the 18M-record design target)* | ~1.1 TB |
+| 100M | 19 GB |
+| 1×10⁹ | 189 GB |
+| 5×10⁹ *(the 18M-record design target)* | ~0.95 TB |
 
 On this schema `historical_50k`'s 50,578 records yield 18.3M candidates, so 16 GB is
-exhausted at roughly 74M candidates — **somewhere near 100k records**. That is a falsifiable
+exhausted at roughly 85M candidates — **somewhere near 110k records**. That is a falsifiable
 prediction on ordinary hardware, and it is the experiment to run first, on a machine with
 disk to spare: sweep `cpplink gen-sample` upward, run both tools at each size, and record the
 size at which splink stops finishing. Predicting where a tool breaks is not the same as
