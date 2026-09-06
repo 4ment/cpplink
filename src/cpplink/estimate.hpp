@@ -12,6 +12,7 @@
 #include "cpplink/comparison.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/neighbourhood.hpp"
+#include "cpplink/profile.hpp"
 #include "cpplink/record_store.hpp"
 
 namespace cpplink {
@@ -31,6 +32,27 @@ struct EstimateOptions {
     // refused on a dictionary too large for `ball.budget`.
     bool fuzzy_u = false;
     BallOptions ball;
+
+    // A session blocking on a column conditions on everything that column decides,
+    // not only on the column itself. A comparison reading a column tied to it then
+    // sees, among the session's *non*-matching pairs, an agreement rate that is
+    // nothing like the u the model holds, and EM has no way to read that as
+    // anything but evidence of matching. So those comparisons are held out of the
+    // session too, which is the same held-out discipline one step wider.
+    //
+    // Measured on `historical_50k`: the session blocking on `first_name` implies a
+    // match rate of 0.9996 where the truth is 0.0080, because `first_and_surname`
+    // contains `first_name` and `first_name` all but determines `gender`. Holding
+    // both out brings it to 0.018.
+    bool exclude_tied = true;
+    // Bits of u-side overlap past which two columns count as tied. Far below the
+    // bit a redundancy has to be worth acting on in a report, because the question
+    // here is not what to spend evidence on but whether a session can be read at
+    // all.
+    double tied_bits = 0.25;
+    // Rows the tie pass reads. It is the profile's pairwise pass and nothing else:
+    // no model, no candidate pair, and a fraction of a second on anything small.
+    uint64_t tie_sample_rows = 500000;
 };
 
 // One EM session: the sources conditioning on a single column, unioned among
@@ -41,6 +63,10 @@ struct SessionReport {
     std::string column;
     std::vector<std::string> sources;
     std::vector<std::string> excluded;
+    // Held out not because they read this column but because they read one tied to
+    // it. Reported separately, because a session losing half its comparisons this
+    // way is a fact about the schema.
+    std::vector<std::string> tied;
     uint64_t candidates = 0;  // the exact bound from term frequencies
     uint64_t enumerated = 0;
     uint64_t folded = 0;
@@ -76,6 +102,7 @@ struct EstimateReport {
     uint64_t u_exact_levels = 0;
     uint64_t u_ball_levels = 0;
     double ball_seconds = 0.0;
+    double tie_seconds = 0.0;  // the pairwise pass that says which columns are tied
     std::vector<BallReport> balls;
     std::vector<SessionReport> sessions;
     std::vector<std::string> warnings;

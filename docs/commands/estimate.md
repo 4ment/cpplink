@@ -22,11 +22,14 @@ cpplink estimate --schema <schema.json> [--out <model.json>]
 | `--u-sample N` | 1,000,000 | uniformly random pairs drawn to estimate `u` for levels the closed form cannot reach |
 | `--session-pairs N` | 10,000,000 | per-session cap on pairs actually *compared*. Above it, the fold becomes a Bernoulli sample |
 | `--threads N` | hardware | threads for the histogram fold |
-| `--iterations N` | 500 | EM iteration cap. Never approached in practice |
+| `--iterations N` | 500 | EM iteration cap. Reaching it is a symptom, not a setting to raise: a session that will not converge is usually one whose blocking conditions on a column it is trying to estimate |
 | `--lambda F` | derived | override the prior match rate with a count you trust |
 | `--seed N` | 20260903 | seed for `u` sampling and session subsampling |
 | `--fuzzy-u` | off | compute `u` for the fuzzy levels exactly, by self-joining each column's dictionary, instead of sampling and rescaling |
 | `--ball-budget N` | 4e10 | value pairs the self-join may look at for one column |
+| `--no-tie-holdout` | off | stop holding out comparisons tied to the column a session blocks on. Off means the hold-out is on; this is for measuring what it is worth |
+| `--tied-bits F` | 0.25 | `u`-side overlap in bits past which two columns count as tied |
+| `--tie-sample-rows N` | 500,000 | rows the tie pass reads. `0` reads every row |
 | *(positional)* | — | required; the parquet file |
 | `--mode dedup\|link\|link-and-dedup` | link with more than one file, else dedup | which pairs to enumerate; see [linking](../linking.md) |
 
@@ -145,6 +148,39 @@ Session last_name
 from this session's EM, because blocking selected on it and its `m` is degenerate. `implies`
 is what feeds λ.
 
+`also tied` is the same discipline one step wider, and it is not optional:
+
+```text
+Session first_name
+  sources    first_name exact_value
+  held out   first_name
+  also tied  first_and_surname   (blocking on this column conditions on theirs)
+```
+
+Blocking on a column conditions on **everything that column decides**, not only on the column
+itself.
+`first_and_surname` contains `first_name`, so among the pairs this session blocks on, two rows
+named "john smith" and "john brown" clear `jaro_winkler >= 0.80` on the strength of the shared
+first token alone.
+Their agreement rate on `first_and_surname` inside the session is nothing like the `u` the
+model holds for it over the whole file, and EM has no way to read the difference as anything
+but evidence that the pairs are matches.
+
+Measured on `historical_50k`: **the `first_name` session's match rate reads 0.9996 where the
+truth is 0.0080**, a factor of 125, and it reads 0.018 once `first_and_surname` is held out
+too.
+End to end that is worth **0.8536 to 0.8676 F1**.
+Ties are found by one pairwise pass over the rows, the same one [`profile`](profile.md) runs,
+which reads no candidate pair and no model; two columns count as tied when one occurs inside
+the other on 90% of rows or their `u`-side overlap is worth `--tied-bits`, 0.25 by default.
+`--no-tie-holdout` turns it off, which is how the two numbers above were measured against each
+other.
+
+A column tied to the blocked column in *every* session ends up with no estimate at all, and the
+run says so with the `held out of every session` warning below.
+That is the cost of the discipline and it is the right price: an `m` from a session that
+conditioned on the answer is worse than no `m`.
+
 Warnings that can appear here, and what each means:
 
 | Warning | Meaning |
@@ -152,7 +188,7 @@ Warnings that can appear here, and what each means:
 | `only N comparison(s) are free in this session` | Fewer than three free comparisons does not identify the mixture — a 2×2 table has two exact roots and EM returns whichever it walked to. **The session is refused, not merged.** Give the schema more comparisons that do not read that column |
 | `every comparison reads this column` | The session can learn nothing and is skipped |
 | `this session's m estimates were not merged into the model` | Follows any of the above, or the label-swap check firing |
-| `comparison "x" was held out of every session` | Its `m` is a starting value, not an estimate. Add a blocking source on a different column |
+| `comparison "x" was held out of every session` | Its `m` is a starting value, not an estimate. Add a blocking source on a different column, or break the tie that keeps holding it out |
 
 ### λ and the prior weight
 
