@@ -99,7 +99,8 @@ void PrintUsage(std::ostream& out) {
         << "                 [--u-sample N] [--session-pairs N] [--threads N]\n"
         << "                 [--iterations N] [--lambda F] [--seed N] "
            "[--mode MODE]\n"
-        << "                 [--fuzzy-u] [--ball-budget N]\n"
+        << "                 [--fuzzy-u] [--ball-budget N] [--no-tie-holdout]\n"
+        << "                 [--tied-bits F] [--tie-sample-rows N]\n"
         << "                 <file.parquet>...\n"
         << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
@@ -879,6 +880,14 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--seed") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.seed = std::stoull(value);
+        } else if (args[i] == "--no-tie-holdout") {
+            options.exclude_tied = false;
+        } else if (args[i] == "--tied-bits") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.tied_bits = std::stod(value);
+        } else if (args[i] == "--tie-sample-rows") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.tie_sample_rows = std::stoull(value);
         } else if (args[i] == "--fuzzy-u") {
             options.fuzzy_u = true;
         } else if (args[i] == "--ball-budget") {

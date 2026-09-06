@@ -312,6 +312,175 @@ TEST_F(EstimateFixture, AgreementWeighsMoreThanDisagreement) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// A column that contains another, which is the shape that breaks a session.
+
+constexpr uint64_t kTieRecords = 2000;
+constexpr uint64_t kTiePairs = 200;  // planted at rows (2i, 2i + 1)
+constexpr uint32_t kFirsts = 20;
+constexpr uint32_t kLasts = 200;
+constexpr uint32_t kPlaces = 50;
+constexpr uint32_t kJobs = 10;
+
+bool FirstAgrees(uint64_t pair) { return pair % 5 != 0; }  // 0.8
+bool LastAgrees(uint64_t pair) { return pair % 10 >= 3; }  // 0.7
+bool PlaceAgrees(uint64_t pair) { return pair % 5 >= 2; }  // 0.6
+bool JobAgrees(uint64_t pair) { return pair % 10 != 0; }   // 0.9
+
+// `full` is "first_last", so `first` occurs inside it on every row and a pair
+// agreeing on `first` is already most of the way to the fuzzy level of `full`:
+// "john_smith" against "john_brown" is a Jaro-Winkler of about 0.80 on a shared
+// prefix alone. Blocking on `first` therefore conditions on `full`, and the u the
+// model holds for `full` is nothing like the rate seen inside that session.
+const char* const kTieSchemaJson = R"({
+  "columns": [
+    {"name": "first", "type": "string"},
+    {"name": "last", "type": "string"},
+    {"name": "full", "type": "string"},
+    {"name": "place", "type": "string"},
+    {"name": "job", "type": "string"}
+  ],
+  "comparisons": [
+    {"name": "first", "columns": ["first"],
+     "levels": [{"type": "exact"}, {"type": "else"}]},
+    {"name": "last", "columns": ["last"],
+     "levels": [{"type": "exact"}, {"type": "else"}]},
+    {"name": "full", "columns": ["full"],
+     "levels": [{"type": "exact"},
+                {"type": "jaro_winkler", "threshold": 0.8}, {"type": "else"}]},
+    {"name": "place", "columns": ["place"],
+     "levels": [{"type": "exact"}, {"type": "else"}]},
+    {"name": "job", "columns": ["job"],
+     "levels": [{"type": "exact"}, {"type": "else"}]}
+  ],
+  "blocking": [
+    {"type": "exact_value", "column": "first"},
+    {"type": "exact_value", "column": "place"}
+  ]
+})";
+
+class TieFixture : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        std::string error;
+        ASSERT_TRUE(cpplink::ParseSchema(kTieSchemaJson, &schema_, &error)) << error;
+        store_ = std::make_unique<cpplink::RecordStore>(schema_);
+        std::vector<uint32_t> first(kTieRecords);
+        std::vector<uint32_t> last(kTieRecords);
+        std::vector<uint32_t> place(kTieRecords);
+        std::vector<uint32_t> job(kTieRecords);
+        for (uint64_t row = 0; row < kTieRecords; ++row) {
+            first[row] = Draw(row, 11, kFirsts);
+            last[row] = Draw(row, 22, kLasts);
+            place[row] = Draw(row, 33, kPlaces);
+            job[row] = Draw(row, 44, kJobs);
+        }
+        for (uint64_t i = 0; i < kTiePairs; ++i) {
+            const uint64_t a = 2 * i;
+            const uint64_t b = 2 * i + 1;
+            first[b] = FirstAgrees(i) ? first[a] : (first[a] + 3) % kFirsts;
+            last[b] = LastAgrees(i) ? last[a] : (last[a] + 7) % kLasts;
+            place[b] = PlaceAgrees(i) ? place[a] : (place[a] + 5) % kPlaces;
+            job[b] = JobAgrees(i) ? job[a] : (job[a] + 1) % kJobs;
+        }
+        auto& c0 = std::get<cpplink::StringColumn>(store_->mutable_column(0));
+        auto& c1 = std::get<cpplink::StringColumn>(store_->mutable_column(1));
+        auto& c2 = std::get<cpplink::StringColumn>(store_->mutable_column(2));
+        auto& c3 = std::get<cpplink::StringColumn>(store_->mutable_column(3));
+        auto& c4 = std::get<cpplink::StringColumn>(store_->mutable_column(4));
+        for (uint64_t row = 0; row < kTieRecords; ++row) {
+            const std::string one = "f" + std::to_string(first[row]);
+            const std::string two = "l" + std::to_string(last[row]);
+            c0.ids.push_back(c0.dict.Intern(one));
+            c1.ids.push_back(c1.dict.Intern(two));
+            c2.ids.push_back(c2.dict.Intern(one + "_" + two));
+            c3.ids.push_back(c3.dict.Intern("p" + std::to_string(place[row])));
+            c4.ids.push_back(c4.dict.Intern("j" + std::to_string(job[row])));
+            store_->mutable_ids().Append("r" + std::to_string(row));
+        }
+        store_->set_num_records(kTieRecords);
+        store_->Finalize();
+        ASSERT_TRUE(comparisons_.Bind(schema_, *store_, &error)) << error;
+        ASSERT_TRUE(plan_.Build(schema_, *store_, cpplink::PairMode::kAll, &error))
+            << error;
+    }
+
+    cpplink::EstimateReport Run(bool exclude_tied) {
+        cpplink::EstimateOptions options;
+        options.threads = 1;
+        options.exclude_tied = exclude_tied;
+        cpplink::Model model;
+        cpplink::EstimateReport report;
+        std::string error;
+        EXPECT_TRUE(
+            Estimate(*store_, comparisons_, plan_, options, &model, &report, &error))
+            << error;
+        return report;
+    }
+
+    const cpplink::SessionReport& Session(const cpplink::EstimateReport& report,
+                                          const std::string& column) const {
+        for (const cpplink::SessionReport& session : report.sessions) {
+            if (session.column == column) return session;
+        }
+        ADD_FAILURE() << "no session for " << column;
+        return report.sessions.front();
+    }
+
+    cpplink::Schema schema_;
+    std::unique_ptr<cpplink::RecordStore> store_;
+    cpplink::ComparisonSet comparisons_;
+    cpplink::BlockingPlan plan_;
+};
+
+// The session blocking on `first` conditions on `full`, because `first` occurs
+// inside it, so `full` has to be held out as well as the column the session names.
+TEST_F(TieFixture, ASessionHoldsOutWhatItsBlockingConditionsOn) {
+    const cpplink::EstimateReport report = Run(true);
+    const cpplink::SessionReport& session = Session(report, "first");
+    ASSERT_EQ(session.excluded.size(), 1u);
+    EXPECT_EQ(session.excluded[0], "first");
+    ASSERT_EQ(session.tied.size(), 1u);
+    EXPECT_EQ(session.tied[0], "full");
+    // And a column tied to nothing is not held out of anything.
+    EXPECT_TRUE(Session(report, "place").tied.empty());
+}
+
+// What the hold-out is for. Without it, the agreement `full` shows inside this
+// session is nothing like its u over the whole file, EM reads the difference as
+// evidence of matching, and the match rate runs away from the truth.
+TEST_F(TieFixture, WithoutItTheMatchRateRunsAway) {
+    const cpplink::EstimateReport with = Run(true);
+    const cpplink::SessionReport& held = Session(with, "first");
+    // 200 planted pairs agree on `first` four times in five, and they are the only
+    // matches this block can hold.
+    const double truth =
+        0.8 * static_cast<double>(kTiePairs) / static_cast<double>(held.enumerated);
+    EXPECT_GT(held.lambda, 0.5 * truth);
+    EXPECT_LT(held.lambda, 2.0 * truth);
+    EXPECT_TRUE(held.merged) << (held.warnings.empty() ? "" : held.warnings[0]);
+
+    const cpplink::EstimateReport without = Run(false);
+    const cpplink::SessionReport& loose = Session(without, "first");
+    EXPECT_TRUE(loose.tied.empty());
+    // It does not merely drift: it decides every pair in the block is a match, and
+    // nothing in the mixture's own likelihood says otherwise.
+    EXPECT_GT(loose.lambda, 0.5);
+    EXPECT_GT(loose.lambda, 100.0 * held.lambda);
+}
+
+// The tie pass is the profile's pairwise pass and reads no candidate pair, so a
+// schema whose columns are independent loses nothing to it. The fixture above this
+// one is built to be conditionally independent, and this is the regression guard
+// that it stays that way.
+TEST_F(EstimateFixture, IndependentColumnsAreNeverTiedOut) {
+    ASSERT_TRUE(Run()) << message_;
+    for (const cpplink::SessionReport& session : report_.sessions) {
+        EXPECT_TRUE(session.tied.empty())
+            << session.column << " tied out " << session.tied.front();
+    }
+}
+
 TEST_F(EstimateFixture, RefusesToEstimateWithoutComparisons) {
     cpplink::ComparisonSet empty;
     cpplink::Model model;

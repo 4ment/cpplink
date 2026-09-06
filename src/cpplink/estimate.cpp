@@ -405,6 +405,22 @@ EmResult RunEm(const ComparisonSet& comparisons, const std::vector<PatternCount>
     return result;
 }
 
+// Whether blocking on one column conditions on the other. Containment and
+// determination are the row-level shapes, and the u-side overlap is the same
+// question in bits; any of the three means the second column's agreement is partly
+// decided by the first, so a session blocking on one cannot be read for the other.
+//
+// The determination bar is 0.90 here rather than the 0.99 the profile's suspects
+// table uses, because these are different questions. A report asks whether a column
+// is redundant enough to drop; this asks whether a rate is readable at all, and
+// `first_name` determining `gender` on 0.956 of rows is quite enough to make it not
+// be.
+bool ColumnsAreTied(const ColumnPairProfile& pair, double bits) {
+    constexpr double kTiedShare = 0.90;
+    if (pair.containment >= kTiedShare) return true;
+    return pair.resolved && pair.redundant_bits >= bits;
+}
+
 // A session that has converged to the swapped labelling reports the non-match
 // class as the match class, and every parameter in it is inverted. It cannot be
 // caught from the likelihood, which is symmetric under the swap, so it is caught
@@ -589,6 +605,27 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         support_total[c].assign(comparisons.at(c).spec->levels.size(), 0.0);
     }
 
+    // Which columns are tied to which, from the profile's pairwise pass over the
+    // rows. No model, no plan and no candidate pair enters this.
+    ProfileReport profile;
+    if (options.exclude_tied) {
+        ProfileOptions profile_options;
+        profile_options.anchors = false;  // the m side is not what this needs
+        profile_options.sample_rows = options.tie_sample_rows;
+        profile_options.threads = options.threads;
+        profile_options.seed = options.seed;
+        profile = BuildProfile(store, plan.mode(), profile_options);
+        report->tie_seconds = profile.seconds;
+    }
+    const auto tied_to = [&](const std::string& column, const std::string& other) {
+        for (const ColumnPairProfile& pair : profile.pairs) {
+            const bool here = (pair.left_name == column && pair.right_name == other) ||
+                              (pair.right_name == column && pair.left_name == other);
+            if (here) return ColumnsAreTied(pair, options.tied_bits);
+        }
+        return false;
+    };
+
     double best_matches = 0.0;
     std::string best_column;
     for (size_t i = 0; i < columns.size(); ++i) {
@@ -601,6 +638,15 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
             if (std::find(used.begin(), used.end(), columns[i]) != used.end()) {
                 excluded[c] = true;
                 session.excluded.push_back(comparisons.at(c).spec->name);
+                continue;
+            }
+            bool tied = false;
+            for (const std::string& reads : used) {
+                tied = tied || tied_to(columns[i], reads);
+            }
+            if (tied) {
+                excluded[c] = true;
+                session.tied.push_back(comparisons.at(c).spec->name);
             } else {
                 ++usable;
             }
@@ -776,6 +822,10 @@ void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
         << std::setprecision(1) << report.u_seconds << " s, plus "
         << report.u_exact_levels << " levels in closed form from the term "
         << "frequencies\n";
+    if (report.tie_seconds > 0.0) {
+        out << "Column ties from one pairwise pass over the rows in "
+            << std::setprecision(1) << report.tie_seconds << " s, no candidate pair\n";
+    }
     if (!report.balls.empty()) {
         out << "Dictionary self-join gave " << report.u_ball_levels
             << " fuzzy levels an exact u in " << std::setprecision(1)
@@ -812,6 +862,10 @@ void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
         out << "Session " << session.column << "\n"
             << "  sources    " << Join(session.sources) << "\n"
             << "  held out   " << Join(session.excluded) << "\n";
+        if (!session.tied.empty()) {
+            out << "  also tied  " << Join(session.tied)
+                << "   (blocking on this column conditions on theirs)\n";
+        }
         if (session.rate < 1.0) {
             out << "  sampled    " << std::scientific << std::setprecision(2)
                 << session.rate << " of " << WithThousands(session.enumerated)
