@@ -1,0 +1,206 @@
+{
+ "cpplink": [
+  {
+   "records": 1000000,
+   "candidates": 89846415,
+   "edges": 94339,
+   "avoided_pct": 99.67,
+   "precision": 0.9991,
+   "recall": 0.9957,
+   "f1": 0.9974,
+   "stages": {
+    "estimate": {
+     "wall": 15.19,
+     "cpu": 88.64,
+     "rss": 734068736
+    },
+    "predict": {
+     "wall": 4.44,
+     "cpu": 22.08,
+     "rss": 386596864
+    },
+    "cluster": {
+     "wall": 0.36,
+     "cpu": 0.25,
+     "rss": 142786560
+    }
+   },
+   "wall": 19.99,
+   "cpu": 110.97,
+   "rss": 734068736,
+   "spill": 0
+  },
+  {
+   "records": 2000000,
+   "candidates": 359425964,
+   "edges": 188206,
+   "avoided_pct": 99.75,
+   "precision": 0.9993,
+   "recall": 0.9957,
+   "f1": 0.9975,
+   "stages": {
+    "estimate": {
+     "wall": 15.83,
+     "cpu": 89.36,
+     "rss": 951287808
+    },
+    "predict": {
+     "wall": 15.59,
+     "cpu": 93.89,
+     "rss": 674201600
+    },
+    "cluster": {
+     "wall": 0.53,
+     "cpu": 0.51,
+     "rss": 224968704
+    }
+   },
+   "wall": 31.950000000000003,
+   "cpu": 183.76,
+   "rss": 951287808,
+   "spill": 0
+  },
+  {
+   "records": 4000000,
+   "candidates": 1438216166,
+   "edges": 376691,
+   "avoided_pct": 99.92,
+   "precision": 0.9996,
+   "recall": 0.9958,
+   "f1": 0.9977,
+   "stages": {
+    "estimate": {
+     "wall": 21.0,
+     "cpu": 107.12,
+     "rss": 1213710336
+    },
+    "predict": {
+     "wall": 66.48,
+     "cpu": 446.15000000000003,
+     "rss": 1221558272
+    },
+    "cluster": {
+     "wall": 1.74,
+     "cpu": 1.6800000000000002,
+     "rss": 395198464
+    }
+   },
+   "wall": 89.22,
+   "cpu": 554.9499999999999,
+   "rss": 1221558272,
+   "spill": 0
+  }
+ ],
+ "splink": [
+  {
+   "tool": "splink",
+   "parquet": "s1m.parquet",
+   "stages": {
+    "load": 0.4307918750000681,
+    "estimate_u": 0.5414626670001326,
+    "estimate_m": 109.17298308300042,
+    "predict": 53.22422295799993,
+    "cluster": 0.7385019999999258
+   },
+   "pipeline_seconds": 164.10796258300047,
+   "peak_rss_bytes": 4660084736,
+   "peak_spill_bytes": 10592714752,
+   "edges": 93760,
+   "threshold": 0.99,
+   "records": 1000000,
+   "configuration": "defaults",
+   "outer": {
+    "wall": 184.75,
+    "cpu": 711.63,
+    "rss": 4660084736
+   },
+   "completed": true
+  },
+  {
+   "tool": "splink",
+   "parquet": "s1m.parquet",
+   "stages": {
+    "load": 0.19174070799999754,
+    "estimate_u": 0.48176304199978404,
+    "estimate_m": 40.04405004099999,
+    "predict": 41.89607358400008,
+    "cluster": 0.8009977500000787
+   },
+   "pipeline_seconds": 83.41462512499993,
+   "peak_rss_bytes": 3954753536,
+   "peak_spill_bytes": 9290514432,
+   "edges": 93760,
+   "threshold": 0.99,
+   "pattern_counts": true,
+   "records": 1000000,
+   "configuration": "pattern_counts",
+   "outer": {
+    "wall": 90.0,
+    "cpu": 548.42,
+    "rss": 3954753536
+   },
+   "completed": true
+  },
+  {
+   "tool": "splink",
+   "parquet": "s1m.parquet",
+   "stages": {
+    "load": 0.17369837500018548,
+    "estimate_u": 0.5208249170000272,
+    "estimate_m": 41.626105790999645,
+    "predict": 40.60463275000029,
+    "cluster": 0.764509624999846
+   },
+   "pipeline_seconds": 83.689771458,
+   "peak_rss_bytes": 6237585408,
+   "peak_spill_bytes": 7134052352,
+   "edges": 93760,
+   "threshold": 0.99,
+   "pattern_counts": true,
+   "records": 1000000,
+   "configuration": "pattern_counts+mem13",
+   "outer": {
+    "wall": 87.77,
+    "cpu": 561.2800000000001,
+    "rss": 6237585408
+   },
+   "completed": true
+  },
+  {
+   "tool": "splink",
+   "records": 2000000,
+   "configuration": "defaults",
+   "completed": false,
+   "failure": "max_temp_directory_size exhausted during EM",
+   "temp_used_at_failure": "13.0 GiB",
+   "peak_rss_bytes": 6689816576
+  },
+  {
+   "tool": "splink",
+   "records": 2000000,
+   "configuration": "pattern_counts",
+   "completed": false,
+   "failure": "max_temp_directory_size exhausted during EM",
+   "temp_used_at_failure": "12.1 GiB",
+   "peak_rss_bytes": 7190118400
+  }
+ ],
+ "machine": {
+  "cpu": "Apple M1",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "macOS 24.6.0"
+ },
+ "quality_scored_independently": {
+  "cpplink_1m": {
+   "precision": 0.9991,
+   "recall": 0.9957,
+   "f1": 0.9974
+  },
+  "splink_1m": {
+   "precision": 1.0,
+   "recall": 0.9923,
+   "f1": 0.9961
+  }
+ }
+}
