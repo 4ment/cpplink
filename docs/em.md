@@ -44,13 +44,24 @@ interactive in a way it cannot be when every iteration re-reads a 130 GB table.
 ## `u` in closed form
 
 Splink estimates \(u\) by sampling random pairs. For **exact-match levels that is
-unnecessary**: \(u\) is precisely the probability that two independently drawn records carry
-the same value, which the term-frequency table gives exactly.
+unnecessary**: \(u\) is precisely the probability that two randomly drawn records carry the
+same value, which the term-frequency table gives exactly.
 
 \[
-u_{c,\text{exact}} \;=\; \sum_v p_v^2
+u_{c,\text{exact}} \;=\; \frac{\sum_v c_v (c_v - 1)}{N (N - 1)}
 \qquad \text{exact, } O(\text{distinct values}), \text{ zero sampling error}
 \]
+
+where \(c_v\) is the number of records holding value \(v\) and \(N\) the number of records.
+
+!!! warning "It is \(c_v(c_v-1)\), not \(c_v^2\), and the difference is not cosmetic"
+    A pair is **two distinct records**, so a record agreeing with itself is not one. The
+    plug-in form \(\sum_v p_v^2\) counts all \(N\) of those self-agreements, which inflates
+    \(u\) by \(1/N\). That is negligible while \(u\) is large and *dominant* once \(u\)
+    approaches \(1/N\) — which is exactly where the strongest columns live. On the 1M sample
+    the 919k-value `email` column read **3.5 bits low** under the plug-in form, and at 18M
+    records it reads 1.5 bits low. The random-pair sampler had always skipped `a == b`, so
+    the two halves of one estimator disagreed about what a pair is until this was corrected.
 
 A **null level placed first** fires exactly when either side is missing, which is also a count
 over the data, so it is exact for *any* comparison — including multi-column ones.

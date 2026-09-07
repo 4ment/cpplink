@@ -8,7 +8,7 @@ contains nearly all the true matches and a vanishing fraction of everything else
 Records          1,800,000
 Pairs unblocked  1,619,999,100,000
 ...
-Union, deduplicated                               116,936,544
+Union, deduplicated                               116,939,057
 Blocking keeps 8.08e-05 of all possible pairs.
 ```
 
@@ -77,7 +77,7 @@ The plain equi-join. For each distinct value, emit all pairs sharing it. Cost is
 
 Strongest on high-cardinality identifiers (email, phone), but **also the best use of
 low-cardinality columns**: `dob` at 20,821 distinct values over 1.8M rows is the single
-strongest contributor in this plan at 77.13% recall, for 78M candidates.
+strongest contributor in this plan at 82.88% recall, for 78M candidates.
 
 ### `rare_value` — the primary automatic source
 
@@ -177,14 +177,14 @@ itself **without enumerating anything**, which is what
 ```text
 Source                        EM-safe         Candidate pairs   Largest group
 -----------------------------------------------------------------------------
-email exact_value             yes                      90,600               5
-phone exact_value             yes                     121,195               6
-dob exact_value               yes                  77,931,552             127
-last_name rare_value          yes                  16,675,804             100
+email exact_value             yes                     104,702               9
+phone exact_value             yes                     138,575              11
+dob exact_value               yes                  77,957,842             129
+last_name rare_value          yes                  16,659,085             100
 last_name sorted_neighbourho. yes                  35,999,790              21
 -----------------------------------------------------------------------------
-Sum over sources                                  130,818,941
-Union, deduplicated                               116,936,544
+Sum over sources                                  130,859,994
+Union, deduplicated                               116,939,057
 ```
 
 `CountPairs` is exact and reads only term frequencies. If it ever disagreed with enumeration
@@ -207,26 +207,28 @@ cannot, so recall has to be measured or the whole approach is unfalsifiable.**
 retrieves, individually and unioned:
 
 ```text
-Source                               Found    Recall    First to
-----------------------------------------------------------------
-email exact_value                    85844    59.73%       85844
-phone exact_value                    99181    69.01%       34908
-dob exact_value                     110863    77.13%        9654
-last_name rare_value                 77395    53.85%        1080
-last_name sorted_neighbourho.        83427    58.04%         137
-----------------------------------------------------------------
-Union                               131623    91.58%
+Source                           Found      PC      Candidates        PQ    First to   Marg PQ
+----------------------------------------------------------------------------------------------
+email exact_value               90,681  63.09%         104,702     86.6%      90,681     86.6%
+phone exact_value              105,715  73.55%         138,575     76.3%      38,719     27.9%
+dob exact_value                119,118  82.88%      77,957,842    0.153%      11,643   0.0149%
+last_name rare_value            81,589  56.77%      16,659,085     0.49%       1,414  0.00849%
+last_name sorted_neighbo.       88,361  61.48%      35,999,790    0.245%         200 0.000556%
+----------------------------------------------------------------------------------------------
+Union                          142,657  99.25%     130,859,994    0.109%
 ```
 
-The **`First to`** column is the one that decides whether a source stays. `last_name
-sorted_neighbourhood` finds 58% of known pairs on its own, but only 137 of them that no
-earlier source reached — for 36M candidate pairs. **Do not add a blocking source without
-running `recall` to see its marginal contribution.**
+The **`First to`** column is the one that decides whether a source stays, and `Marg PQ`
+prices it. `last_name sorted_neighbourhood` finds 61% of known pairs on its own, but only 200
+of them that no earlier source reached — for 36M candidate pairs. **Do not add a blocking
+source without running `recall` to see its marginal contribution.**
 
-The 8.42% of known pairs that no source reaches is a hard ceiling: no amount of scoring
-recovers them, because they are never generated as candidates. Measured end to end,
-`cluster --truth` reports 0.9158 recall at a 20-bit threshold against this blocking recall of
-0.9158 — **recall is a blocking problem, not a model problem**.
+The 0.75% of known pairs that no source reaches is a hard ceiling on the edges: no amount of
+scoring recovers them, because they are never generated as candidates. Measured end to end,
+`cluster --truth` reports 0.9949 recall at a 20-bit threshold against this blocking recall of
+0.9925 — **recall is a blocking problem, not a model problem**. (The partition can sit
+slightly above the ceiling because it is transitive; see
+[`recall`](commands/recall.md#the-union-line-and-the-ceiling).)
 
 ## Enumeration is not the bottleneck
 
