@@ -64,6 +64,72 @@ something else.
 Names must be unique, and every column named by a comparison or blocking source must be
 declared here.
 
+### Derived columns
+
+A column can be **computed from another** instead of being read from the file:
+
+```json
+"columns": [
+  {"name": "surname",     "type": "string"},
+  {"name": "surname_key", "derive": {"from": "surname", "transform": "soundex"}},
+  {"name": "dob",         "type": "date"},
+  {"name": "birth_year",  "derive": {"from": "dob", "transform": "year"}},
+  {"name": "name_key",    "derive": {"from": "full_name",
+                                     "transform": ["normalize", "sorted_tokens"]}}
+]
+```
+
+`transform` is one name or a list applied in order. `type` is not given: it comes from the
+transform.
+
+| Transform | Reads | Produces | Does | `"Smith-Jones, John"` → |
+| --- | --- | --- | --- | --- |
+| `normalize` | `string` | `string` | lowercases ASCII; every byte that is neither a letter nor a digit becomes one space, with runs collapsed and the ends trimmed | `smith jones john` |
+| `sorted_tokens` | `string` | `string` | splits on whitespace, sorts the tokens, rejoins with single spaces | `John Smith-Jones,` |
+| `soundex` | `string` | `string` | the Soundex phonetic key | `S532` |
+| `year` | `date` | `string` | the year | `1974` |
+| `month` | `date` | `string` | the month, zero-padded | `03` |
+| `day` | `date` | `string` | the day of the month, zero-padded | `09` |
+| `year_month` | `date` | `string` | `YYYY-MM` | `1974-03` |
+
+A separator becomes a space under `normalize` rather than vanishing, which is what lets
+`["normalize", "sorted_tokens"]` chain and still see tokens: that pair takes the same input to
+`john jones smith`, where `sorted_tokens` alone leaves the punctuation attached and sorts on
+it. Bytes above ASCII are passed
+through unchanged: lowercasing them needs a locale this project does not carry, and dropping
+them would erase most of a name rather than normalize it.
+
+Every transform produces a `string`, which is the point of them: an `exact` level on an
+interned key is an integer equality. A derived column is interned, counted, blocked on,
+compared and profiled exactly like a read one, and nothing downstream knows it was derived.
+
+**The transform runs once per distinct value of the source dictionary**, not once per row.
+A phonetic key over 18M records is one Soundex per distinct surname plus a gather.
+
+!!! note "An empty result is a missing value, not an empty one"
+    If the transform yields nothing — a name that was entirely punctuation, say — the derived
+    cell is **null**. Treating it as the empty string would put every such row in one blocking
+    group, which is exactly the runaway a phonetic key is supposed to avoid.
+
+!!! warning "A derivation is a declared tie, and estimation is told about it"
+    A derived column and its source are not independent evidence, so
+    [`estimate`](../commands/estimate.md) holds the source out of any session the derived
+    column conditions on, and vice versa. It has to be **declared** rather than detected:
+    containment does not hold between `smith` and `S530`, and the pairwise dependence checks
+    read the pair as *unresolved*. Blocking on a phonetic key without that hold-out is the
+    `first_and_surname` runaway again.
+
+Type errors are caught at parse time: `{"from": "surname", "transform": "year"}` is rejected
+because `year` reads a date, and so is a chain whose stages do not fit together.
+
+!!! tip "Measure before adding one"
+    On `historical_50k` a Soundex key on `surname` takes blocking completeness from 84.99% to
+    88.28% for 12% more candidates, and end-to-end F1 from 0.8676 **down** to 0.8658: the
+    extra pairs disagree on surname, so they do not clear the threshold, while the extra
+    candidates cost a few false positives that do. The mechanism is cheap and correct, and on
+    that data it reaches more pairs without reaching better ones. Run
+    [`recall`](../commands/recall.md) rather than assuming.
+
 ## `comparisons`
 
 A comparison is one logical field, which may span more than one column — a coordinate pair is

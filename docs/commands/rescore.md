@@ -42,12 +42,17 @@ On the 1M-row sample, 44.9M candidates at threshold 0:
 
 | Run | Scoring pass | Wall | CPU |
 | --- | ---: | ---: | ---: |
-| `predict`, no spill | 14.0 s | 16.7 s | 95.7 s |
-| `predict --spill` | 14.1 s | 16.1 s | 96.3 s |
-| `rescore` | **0.02 s** | **1.7 s** | **1.6 s** |
+| `predict`, no spill | 2.2 s | 3.93 s | 15.8 s |
+| `predict --spill` | 2.2 s | 3.77 s | 15.8 s |
+| `rescore` | **0.01 s** | **1.58 s** | **1.6 s** |
 
-Writing the spill costs under 1% of CPU. Replaying it is 700× faster than the pass that
-produced it, and all but 0.02 s of the 1.7 s is reading the parquet.
+Writing the spill costs no measurable CPU. Replaying it is **200× faster** than the scoring
+pass that produced it, and all but 0.01 s of the 1.58 s wall is reading the parquet.
+
+The ratio was larger before the pair-global ceiling landed: the scoring pass it is being
+compared against used to take 14 s rather than 2.2 s, so `rescore` looked 700× faster. What
+changed is the numerator, not `rescore` — replay was never doing the work, and now the pass it
+replaces is not doing most of it either.
 
 ## What a spill can and cannot tell you
 
@@ -89,12 +94,12 @@ cpplink rescore --schema examples/sample_schema.json --model tuned.json \
 ```
 
 ```text
-Spill          79,413 pairs from 44,908,142 candidates, written at 0.000 bits
+Spill          93,816 pairs from 44,925,919 candidates, written at 0.000 bits
 Threshold      20.000 bits
 Threads        8
-Pairs read     79,413
-Edges          79,195
-Elapsed        0.02 s  (4193906 pairs/s)
+Pairs read     93,816
+Edges          93,816
+Elapsed        0.02 s  (5836052 pairs/s)
 
 Re-scoring reads only the pairs the spilling run retained. Every pair here is
 scored exactly, but a pair that run discarded cannot come back.

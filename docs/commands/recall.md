@@ -49,23 +49,23 @@ cpplink recall --schema examples/sample_schema.json \
 ```
 
 ```text
-Known pairs  143730 resolved
+Known pairs  143728 resolved
 Pairs unblocked  1,619,999,100,000
 
 Source                           Found      PC      Candidates        PQ    First to   Marg PQ
 ----------------------------------------------------------------------------------------------
-email exact_value               85,844  59.73%          90,600     94.8%      85,844     94.8%
-phone exact_value               99,181  69.01%         121,195     81.8%      34,908     28.8%
-dob exact_value                110,863  77.13%      77,931,552    0.142%       9,654   0.0124%
-last_name rare_value            77,395  53.85%      16,675,804    0.464%       1,080  0.00648%
-last_name sorted_neighbo.       83,427  58.04%      35,999,790    0.232%         137 0.000381%
+email exact_value               90,681  63.09%         104,702     86.6%      90,681     86.6%
+phone exact_value              105,715  73.55%         138,575     76.3%      38,719     27.9%
+dob exact_value                119,118  82.88%      77,957,842    0.153%      11,643   0.0149%
+last_name rare_value            81,589  56.77%      16,659,085     0.49%       1,414  0.00849%
+last_name sorted_neighbo.       88,361  61.48%      35,999,790    0.245%         200 0.000556%
 ----------------------------------------------------------------------------------------------
-Union                          131,623  91.58%     130,818,941    0.101%
+Union                          142,657  99.25%     130,859,994    0.109%
 Reduction ratio               0.999919
 
 ...
 
-12107 known pairs are reachable by no source. No amount of scoring recovers
+1071 known pairs are reachable by no source. No amount of scoring recovers
 them: they are never generated as candidates.
 ```
 
@@ -95,16 +95,16 @@ actually in.
 Read the table above that way:
 
 - **`email exact_value` is the plan's foundation.** It is first, so `First to` equals `Found`.
-- **`dob exact_value` earns its place.** 9,654 pairs no earlier source reached, for 78M
+- **`dob exact_value` earns its place.** 11,643 pairs no earlier source reached, for 78M
   candidates — the strongest single contributor after the near-unique identifiers, and it is a
   low-cardinality column that a rare-value cap would have excluded entirely.
-- **`last_name sorted_neighbourhood` does not.** It finds 58% of known pairs on its own, but
-  only **137** that no earlier source reached, at 36M candidate pairs — 31% of the whole
-  plan's union for 0.1% of its recall.
+- **`last_name sorted_neighbourhood` does not.** It finds 61% of known pairs on its own, but
+  only **200** that no earlier source reached, at 36M candidate pairs — 28% of the whole
+  plan's union for 0.14% of its recall.
 
 `Marg PQ` is that argument as one number, and the spread across this plan is five orders of
-magnitude: `email` reaches one known pair for every candidate it generates, `last_name
-sorted_neighbourhood` one for every 262,000. **That ratio, not recall, is what a source is
+magnitude: `email` reaches one known pair for every 1.2 candidates it generates, `last_name
+sorted_neighbourhood` one for every 180,000. **That ratio, not recall, is what a source is
 dropped on.** Both denominators are the source's whole candidate count rather than its
 marginal one, so `Marg PQ` understates a source that sits late in the plan — it is a lower
 bound, and a source it condemns is condemned.
@@ -126,20 +126,27 @@ candidate budget, the method that reaches the most known pairs. See
 ### The union line, and the ceiling
 
 ```text
-Union                          131,623  91.58%     130,818,941    0.101%
+Union                          142,657  99.25%     130,859,994    0.109%
 Reduction ratio               0.999919
 
-12107 known pairs are reachable by no source.
+1071 known pairs are reachable by no source.
 ```
 
 **This is a hard ceiling on the entire pipeline.** A pair that is never generated as a
 candidate is never compared, never scored, and never clustered — no threshold, no model
 improvement and no amount of CPU recovers it.
 
-Measured end to end on this sample, `cluster --truth` reports 0.9158 recall at 20 bits —
-against this blocking recall of 0.9158. Scoring is recovering essentially everything blocking
-reaches, so **recall is a blocking problem, not a model problem**. If you want better
-recall, the lever is here, not in the model.
+Measured end to end on this sample, `cluster --truth` reports 0.9949 recall at 20 bits against
+this blocking recall of 0.9925. Scoring is recovering essentially everything blocking reaches,
+so **recall is a blocking problem, not a model problem**. If you want better recall, the lever
+is here, not in the model.
+
+!!! note "Why end-to-end recall can sit slightly *above* the blocking ceiling"
+    The ceiling binds pair by pair, and clustering does not work pair by pair. `recall` scores
+    the truth file as listed, while `cluster` scores it closed transitively; a pair blocking
+    never produced is still asserted if the partition connects its two rows through a third
+    record. So union–find recovers a little of what blocking missed, and the ceiling is a
+    ceiling on the **edges**, not on the partition built from them.
 
 ## How it is computed
 

@@ -41,31 +41,34 @@ cpplink cluster --schema examples/sample_schema.json --edges edges/ \
 ```
 
 ```text
-Read 142,541 edges from 8 shards in 0.0161131 s
-Weights 29.7894 to 115.974 bits
-132,440 of them merged two components (92.91%)
+Read 169,026 edges from 8 shards in 0.0170545 s
+Weights 30.017 to 115.841 bits
+143,062 of them merged two components (84.64%)
 
-122,778 clusters of two or more, covering 255,218 records (14.18%)
-1,544,782 records stayed alone
-Largest cluster 6 records; the partition asserts 142,901 duplicate pairs
-255,218 rows written
+122,171 clusters of two or more, covering 265,233 records (14.74%)
+1,534,767 records stayed alone
+Largest cluster 12 records; the partition asserts 169,922 duplicate pairs
+265,233 rows written
 
 Size            Clusters          Records
 -------------------------------------------
-1 (singleton)   1,544,782        1,544,782
-2                 113,858          227,716
-3                   8,232           24,696
-4                     637            2,548
-5                      48              240
-6-10                    3               18
+1 (singleton)   1,534,767        1,534,767
+2                 105,662          211,324
+3                  13,234           39,702
+4                   2,481            9,924
+5                     580            2,900
+6-10                  210            1,337
+11-100                  4               46
 -------------------------------------------
 
-Against 143,730 known duplicate pairs, over the transitive closure:
-  recovered  131,628
-  asserted   142,901
-  precision  0.9211
-  recall     0.9158
-  f1          0.9184
+Against the known duplicates, with both sides closed transitively:
+  listed     143,728 pairs in the truth file
+  true       170,801 pairs across 122,675 clusters (largest 12)
+  recovered  169,922
+  asserted   169,922
+  precision  1.0000
+  recall     0.9949
+  f1          0.9974
 
 Wrote clusters.csv
 ```
@@ -75,9 +78,9 @@ Wrote clusters.csv
 ### The edge pass
 
 ```text
-Read 142,541 edges from 8 shards in 0.0161131 s
-Weights 29.7894 to 115.974 bits
-132,440 of them merged two components (92.91%)
+Read 169,026 edges from 8 shards in 0.0170545 s
+Weights 30.017 to 115.841 bits
+143,062 of them merged two components (84.64%)
 ```
 
 | Line | Meaning |
@@ -86,10 +89,11 @@ Weights 29.7894 to 115.974 bits
 | `Weights` | the range of weights actually used. The minimum tells you whether `--threshold` bit |
 | `... merged two components` | edges that changed the partition. The rest were redundant — both endpoints were already connected |
 
-**The merge rate is a structural read on the edge set.** 92.91% means the edges are nearly a
-forest: the duplicate groups are small and there is little redundancy for union–find to absorb.
-A low merge rate means many edges inside already-connected groups, which is what a dense
-cluster looks like — and also what a runaway chain looks like just before it swallows the file.
+**The merge rate is a structural read on the edge set.** 84.64% means the edges are close to a
+forest: the duplicate groups are small and there is not much redundancy for union–find to
+absorb. A low merge rate means many edges inside already-connected groups, which is what a
+dense cluster looks like — and also what a runaway chain looks like just before it swallows
+the file.
 
 ### The partition
 
@@ -101,8 +105,8 @@ cluster looks like — and also what a runaway chain looks like just before it s
 | `asserts N duplicate pairs` | \(\sum \binom{\text{size}}{2}\) over clusters — the pairs the partition *claims*, which is more than the edges scored |
 | `rows written` | rows in the output file, subject to `--min-size` |
 
-Here 14.18% of records land in a cluster of two or more against a planted duplicate rate of 8%
-of records, and the largest cluster is 6 — nothing chained.
+Here 14.74% of records land in a cluster of two or more against a planted duplicate rate of 8%
+of records, and the largest cluster is 12 — nothing chained.
 
 ### The size histogram
 
@@ -118,16 +122,30 @@ closure, not the edges**:
 
 | Field | Meaning |
 | --- | --- |
-| `recovered` | known duplicate pairs whose rows share a cluster |
+| `listed` | pairs written in the truth file, as given |
+| `true` | pairs after the truth side is **closed transitively**, and the clusters that closure implies |
+| `recovered` | true duplicate pairs whose rows share a cluster |
 | `asserted` | pairs the partition claims, i.e. \(\sum \binom{\text{size}}{2}\) |
 | `precision` | `recovered / asserted` |
-| `recall` | `recovered / truth pairs` |
+| `recall` | `recovered / true` |
 | `f1` | their harmonic mean |
 
+!!! danger "Both sides are closed, and scoring against the raw list is a bug"
+    A truth file is a **list of planted pairs**, not a partition. If a–b and b–c were both
+    planted, a–c is a genuine duplicate that no line of the file names. A partition is
+    transitive and asserts a–c anyway, so comparing the two directly counts recovered
+    duplicates as false positives. On this sample the raw list holds 143,728 pairs and its
+    closure holds **170,801**, so the difference is 19% of the answer.
+
+    This was a real defect, not a hypothetical one: it was one of the two measurement bugs
+    that had every quality number in these pages reading about eight points low. `cluster`
+    now closes the truth side before comparing and prints `listed` beside `true` so the gap
+    stays visible.
+
 !!! warning "Cluster precision is stricter than edge precision, and it is the one that matters"
-    A chain a–b–c asserts a–c whether or not that pair was ever scored. On a 1M-row sample,
-    edge precision at threshold 0 was 0.9203 while cluster precision was 0.9166 — the partition
-    asserted 331 pairs that were never scored, of which 18 were real.
+    A chain a–b–c asserts a–c whether or not that pair was ever scored, so the partition
+    claims pairs `predict` never wrote an edge for. Here it asserts 169,922 pairs against
+    169,026 edges.
 
     **That gap is the number to watch when blocking widens.** One wrong edge between two
     correct clusters turns into every cross pair between them, and it is completely invisible
@@ -140,16 +158,21 @@ set:
 
 | Threshold (bits) | Edges kept | Clusters | Asserted pairs | Precision | Recall | F1 |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 79,413 | 68,208 | 79,744 | 0.9166 | 0.9161 | 0.9164 |
-| 20 | 79,195 | 68,123 | 79,392 | 0.9206 | 0.9161 | **0.9184** |
-| 40 | 79,181 | 68,118 | 79,385 | 0.9206 | 0.9161 | 0.9183 |
-| 60 | 77,995 | 67,424 | 78,474 | 0.9215 | 0.9064 | 0.9139 |
-| 80 | 62,994 | 56,428 | 63,958 | 0.9352 | 0.7497 | 0.8323 |
+| 0 | 93,816 | 67,802 | 94,315 | 1.0000 | 0.9953 | **0.9976** |
+| 20 | 93,816 | 67,802 | 94,315 | 1.0000 | 0.9953 | **0.9976** |
+| 40 | 93,796 | 67,801 | 94,307 | 1.0000 | 0.9952 | 0.9976 |
+| 60 | 92,435 | 67,375 | 93,513 | 1.0000 | 0.9868 | 0.9934 |
+| 80 | 74,830 | 58,318 | 77,347 | 1.0000 | 0.8162 | 0.8988 |
+| 100 | 29,546 | 26,334 | 29,745 | 1.0000 | 0.3139 | 0.4778 |
 
-Between 0 and 40 bits precision moves 0.4 points and recall does not move at all; above 60,
-recall collapses while precision gains 1.9. **There is no threshold at which this pipeline is
-materially better than it is at 20 bits**, and the ceiling is the 0.916 blocking recall
-measured by [`recall`](recall.md).
+Precision is already 1.0000 at 0 bits and recall does not move up to 40; above 60 recall
+collapses for nothing, because precision has no room left to gain. **There is no threshold at
+which this pipeline is materially better than it is at 20 bits**, and the ceiling is the
+0.9925 blocking recall measured by [`recall`](recall.md).
+
+That the whole 0-to-40-bit range selects the same partition is the same fact
+[the model](../model.md#choosing-a-threshold) states about `--probability`: matching pairs
+here score 100+ bits, so the threshold has a wide range over which it changes nothing.
 
 ## Output file
 

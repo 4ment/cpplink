@@ -176,12 +176,16 @@ reproduces it at scale. Measured on the 1.8M-row sample at 20 bits:
 ```text
 Zone           Candidate pairs       Share        Patterns
 ----------------------------------------------------------
-drop               116,793,569      99.88%          60,973
-check                      434       0.00%          14,358
-emit                   142,541       0.12%          44,669
+skipped            116,762,308      99.85%               -
+drop                     7,723       0.01%          90,019
+check                        0       0.00%          10,701
+emit                   169,026       0.14%          19,280
 ```
 
-99.88% of candidate pairs never touch a term-frequency table.
+99.86% of candidate pairs never touch a term-frequency table. The `skipped` zone is the
+pair-global ceiling, which is a stronger filter sitting above the bracket: those pairs were
+refused before a single string metric ran, so they never produced a pattern for the bracket to
+judge. Only what survives the ceiling reaches `drop`, `check` and `emit`.
 
 !!! info "What the bracket is and isn't worth"
     The design originally billed this as "the piece most worth getting right". Measured, the
@@ -198,19 +202,30 @@ bits. Conditional independence over eight comparisons puts matching pairs at 100
 the posterior is 1 to more decimal places than a double carries, so probability is a nearly
 useless knob — a posterior of 0.5 and one of 0.999999 select the same edges.
 
-Swept on a 1M-row sample over a fixed edge set (edge-level quality):
+Swept on a 1M-row sample over a fixed edge set (edge-level quality, scored against the
+transitive closure of the known pairs):
 
 | Threshold (bits) | Edges | Precision | Recall | F1 |
 | ---: | ---: | ---: | ---: | ---: |
-| 0 | 79,413 | 0.9203 | 0.9161 | 0.9182 |
-| 20 | 79,195 | 0.9228 | 0.9161 | **0.9194** |
-| 60 | 77,995 | 0.9271 | 0.9063 | 0.9166 |
-| 80 | 62,994 | 0.9490 | 0.7493 | 0.8374 |
-| 100 | 24,253 | 0.9751 | 0.2964 | 0.4547 |
+| 0 | 93,816 | 1.0000 | 0.9900 | 0.9950 |
+| 20 | 93,816 | 1.0000 | 0.9900 | **0.9950** |
+| 40 | 93,796 | 1.0000 | 0.9898 | 0.9949 |
+| 60 | 92,435 | 1.0000 | 0.9754 | 0.9876 |
+| 80 | 74,830 | 1.0000 | 0.7897 | 0.8825 |
+| 100 | 29,546 | 1.0000 | 0.3118 | 0.4754 |
 
-Everything from 0 to 40 bits is the same answer. Recall tops out at 0.916 against a blocking
-recall of 0.911 — **scoring recovers essentially everything blocking reaches, so recall is a
+Everything from 0 to 40 bits is the same answer. Recall tops out at 0.990 against a blocking
+recall of 0.993 — **scoring recovers essentially everything blocking reaches, so recall is a
 blocking problem, not a model problem.**
+
+!!! warning "The truth side has to be closed before anything is scored against it"
+    The planted pairs are a **list**, not a partition: if a–b and b–c were both planted, a–c
+    is a genuine duplicate that the list never names. Scoring an edge set against the raw
+    list counts those recovered duplicates as false positives, and on this sample it reads
+    precision **0.8442** where the truth is 1.0000. The same mistake, made against the
+    partition rather than the edges, is one of the two measurement bugs that had this table
+    reading around 0.92 across the board. See
+    [`cluster`](commands/cluster.md#the-quality-section).
 
 ## Comparison levels available
 

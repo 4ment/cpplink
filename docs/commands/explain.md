@@ -164,7 +164,7 @@ Each line is one exact agreement and what it was worth:
 
 That is the entire content of the term-frequency adjustment, and it is why the adjustment has
 to be applied at scoring rather than folded into the model — see
-[the model](../model.md#term-frequency).
+[the model](../model.md#term-frequency-adjustment).
 
 ### The bracket and the zone
 

@@ -27,6 +27,10 @@ A pair enters the Fellegi–Sunter likelihood only through its agreement pattern
 
 Blocking is a lazy iterator rather than a join, candidate pairs are deduplicated across sources by a cheap predicate instead of a global `DISTINCT`, and term-frequency adjustment is made affordable by admissible score bounds that let most patterns skip the TF tables entirely.
 
+Measured against Splink on the same data, the same schema and the same machine, [`bench/scale/`](bench/scale/) runs 4M records over 1.44bn candidate pairs in **89.2 s at 1.16 GB resident with no scratch file**.
+At 1M records, where both tools finish, cpplink is **4.4x** faster end to end than Splink's best configuration here and uses 8.9x less memory, for the same quality (F1 0.9974 against 0.9961).
+Splink did not finish at 2M on this machine, and what it ran out of was temp space rather than memory.
+
 Blocking is also **automatic**. Rather than hand-written rules, candidates come from the term-frequency tables the model already needs — pairs are generated from agreement on *rare* values, which is exactly the high-evidence event the model scores — supplemented by MinHash LSH and sorted-neighbourhood passes.
 Sources that select on a whole record rather than a column (an ANN index, for instance) are used for prediction only, because they break the conditional-independence argument that makes EM's parameter estimates unbiased.
 
@@ -155,7 +159,7 @@ cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
 ```
 
 `gen-sample` exists because the memory claims above are only worth making if they are measured.
-It plants corrupted copies of earlier rows and records them, so the file also serves as ground truth for the recall harness in a later phase.
+It plants corrupted copies of earlier rows and records them, so the file also serves as the ground truth `recall` and `cluster --truth` score against.
 
 ## Planned features
 
@@ -173,7 +177,16 @@ It plants corrupted copies of earlier rows and records them, so the file also se
 - Multicore, shared-memory parallelism *(estimation and scoring done)*
 - Connected-component clustering of the scored edges *(done)*
 - Spill of (a, b, γ) and re-scoring under a new model without a second comparison pass *(done)*
-- Deduplication first; record linkage across datasets through the same interfaces
+- Deduplication and record linkage across datasets through the same interfaces *(done)*
+- A pair-global score ceiling that refuses a candidate before any string metric runs *(done)*
+- Blocking recall estimated with no ground truth at all *(done)*
+- Term-frequency adjustment and exact `u` for the fuzzy levels, from neighbourhood mass *(done)*
+- Pre-model data profiling: what each column can be worth, what a matching pair will score,
+  and which columns are the same evidence twice *(done)*
+- Fuzzy thresholds placed from the data rather than by hand *(done)*
+- Columns derived from other columns at load, once per distinct value *(done)*
+- Merging the comparison levels a run cannot tell apart *(done)*
+- Validation at the 18M-record target *(not yet run; 4M is measured in [`bench/scale/`](bench/scale/))*
 
 ## Getting Started
 

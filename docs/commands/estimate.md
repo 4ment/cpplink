@@ -103,8 +103,10 @@ u from 999,999 random pairs in 0.5 s, plus 14 levels in closed form from the ter
 
 Two sources of truth, deliberately. **14 levels needed no sampling at all**: every `exact`
 level on a single interned column, and every leading `null` level, is computed exactly as
-\(\sum_v p_v^2\) or as a null count. The sampled levels take what the exact ones leave, so the
-two cannot disagree about the total. See [`u` in closed form](../em.md#u-in-closed-form).
+\(\sum_v c_v(c_v-1) \,/\, N(N-1)\) or as a null count. The sampled levels take what the exact
+ones leave, so the two cannot disagree about the total. See
+[`u` in closed form](../em.md#u-in-closed-form), which explains why the numerator is
+\(c_v(c_v-1)\) and not \(c_v^2\).
 
 ### The session table
 

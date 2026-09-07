@@ -50,19 +50,21 @@ cpplink predict --schema examples/sample_schema.json --model model.json \
 ```text
 Threshold      20.000 bits  (posterior 0.999999)
 Threads        8
-Candidates     116,936,544
-Edges          142,541  (0.12% of candidates)
-Elapsed        36.0 s  (3246923 candidates/s)
+Candidates     116,939,057
+Edges          169,026  (0.14% of candidates)
+Elapsed        5.6 s  (20920301 candidates/s)
 
 Zone           Candidate pairs       Share        Patterns
 ----------------------------------------------------------
-drop               116,793,569      99.88%          60,973
-check                      434       0.00%          14,358
-emit                   142,541       0.12%          44,669
+skipped            116,762,308      99.85%               -
+drop                     7,723       0.01%          90,019
+check                        0       0.00%          10,701
+emit                   169,026       0.14%          19,280
 ----------------------------------------------------------
-Term-frequency lookups 142,975, avoided 116,793,569 (99.88%).
-The bracket is admissible, so dropping on it emits exactly the edges
-scoring every pair would have emitted.
+Comparisons avoided    116,762,308 (99.85% of candidates)
+Term-frequency lookups 169,026, avoided 7,723 (0.01%).
+The ceiling and the bracket are both admissible, so skipping and
+dropping on them emit exactly the edges scoring every pair would have.
 
 Shards
   edges/shard-000.bin
@@ -174,10 +176,10 @@ answer and the pattern is never produced.
 The bound is admissible, so the edge set cannot move — `tests/predict_test.cpp` runs both ways
 at five thresholds and compares them.
 
-Measured on the 1M sample at 20 bits: 116,936,544 candidates in **11.2 s against 36.3 s**, 90.1%
-of candidates never compared, and the 142,541 edges byte-identical.
-The saving tracks the threshold — 35% skipped at 0 bits, 90% at 20, 99.8% at 40 — which lands
-where it is wanted, because 0 to 40 bits select nearly the same edges anyway.
+Measured on the 1.8M sample at 20 bits: 116,939,057 candidates in **5.6 s against 37.9 s**,
+a 6.8× wall saving, 99.85% of candidates never compared, and the same 169,026 edges.
+The saving tracks the threshold, so a run at 0 bits pays much closer to full price — which
+lands where it is wanted, because 0 to 40 bits select nearly the same edges anyway.
 
 ## Term frequency on the fuzzy levels
 

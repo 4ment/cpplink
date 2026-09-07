@@ -36,14 +36,14 @@ Pairs unblocked  1,619,999,100,000
 
 Source                        EM-safe         Candidate pairs   Largest group
 -----------------------------------------------------------------------------
-email exact_value             yes                      90,600               5
-phone exact_value             yes                     121,195               6
-dob exact_value               yes                  77,931,552             127
-last_name rare_value          yes                  16,675,804             100
+email exact_value             yes                     104,702               9
+phone exact_value             yes                     138,575              11
+dob exact_value               yes                  77,957,842             129
+last_name rare_value          yes                  16,659,085             100
 last_name sorted_neighbourho. yes                  35,999,790              21
 -----------------------------------------------------------------------------
-Sum over sources                                  130,818,941
-Union, deduplicated                               116,936,544
+Sum over sources                                  130,859,994
+Union, deduplicated                               116,939,057
                                              89.4% of the sum
 
 Counts are exact and come from the term frequencies, with no pairs enumerated.

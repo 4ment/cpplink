@@ -56,15 +56,15 @@ score against.
 ```text
 Records      1,800,000
 Row groups   9
-Load time    2.8 s  (648,979 rows/s)
+Load time    2.6 s  (691,485 rows/s)
 
 Column            Type                Distinct      Null   Top val Mean len        Rare pairs
 ---------------------------------------------------------------------------------------------
-first_name        string                23,060     0.00%     2.27%        -            52,729
-last_name         string               173,347     0.00%     0.20%        -        16,675,804
-dob               date                  20,821     0.00%     0.01%        -        68,631,954
+first_name        string                23,108     0.00%     2.27%        -            52,587
+last_name         string               173,313     0.00%     0.20%        -        16,659,085
+dob               date                  20,821     0.00%     0.01%        -        68,281,433
 ...
-Resident total                        333.8 MB   194 bytes per record
+Resident total                        332.8 MB   193 bytes per record
 ```
 
 See [`inspect`](commands/inspect.md).
@@ -79,8 +79,8 @@ See [`inspect`](commands/inspect.md).
 ```text
 Pairs unblocked  1,619,999,100,000
 ...
-Sum over sources                                  130,818,941
-Union, deduplicated                               116,936,544
+Sum over sources                                  130,859,994
+Union, deduplicated                               116,939,057
 Blocking keeps 8.08e-05 of all possible pairs.
 ```
 
@@ -95,9 +95,9 @@ See [`explain-blocking`](commands/explain-blocking.md).
 ```
 
 ```text
-Union                               131623    91.58%
+Union                          142,657  99.25%     130,859,994    0.109%
 
-12107 known pairs are reachable by no source.
+1071 known pairs are reachable by no source.
 ```
 
 This is the ceiling on everything downstream: a pair that is never a candidate cannot be
@@ -122,12 +122,23 @@ printed table is the whole model: `m`, `u` and the weight in bits for every leve
 ```
 
 ```text
-Candidates     116,936,544
-Edges          142,541  (0.12% of candidates)
-Elapsed        36.0 s  (3246923 candidates/s)
+Candidates     116,939,057
+Edges          169,026  (0.14% of candidates)
+Elapsed        5.6 s  (20920301 candidates/s)
+
+Zone           Candidate pairs       Share        Patterns
+----------------------------------------------------------
+skipped            116,762,308      99.85%               -
+drop                     7,723       0.01%          90,019
+check                        0       0.00%          10,701
+emit                   169,026       0.14%          19,280
+----------------------------------------------------------
 ```
 
-One shard file per thread, nothing held in memory. See [`predict`](commands/predict.md).
+One shard file per thread, nothing held in memory. **99.85% of candidates never had a string
+metric run on them**: the pair-global ceiling grants every comparison the best level its cheap
+bounds still admit and drops the pair if even that sum cannot clear the threshold. See
+[`predict`](commands/predict.md).
 
 ### 7. Join the edges into clusters
 
@@ -138,10 +149,10 @@ One shard file per thread, nothing held in memory. See [`predict`](commands/pred
 ```
 
 ```text
-122,778 clusters of two or more, covering 255,218 records (14.18%)
-  precision  0.9211
-  recall     0.9158
-  f1          0.9184
+122,171 clusters of two or more, covering 265,233 records (14.74%)
+  precision  1.0000
+  recall     0.9949
+  f1          0.9974
 ```
 
 Edges carry their weight, so re-clustering at a higher `--threshold` is a re-read and no
@@ -153,15 +164,19 @@ On this run, at 1.8M rows:
 
 | Stage | Wall |
 | --- | ---: |
-| Load and intern (single-threaded) | 2.8 s |
+| Load and intern (single-threaded) | 2.6 s |
 | `explain-blocking`, exact costing | < 1 s |
 | `estimate`, four sessions plus `u` | ~7 s |
-| `predict`, 117M candidates on 8 threads | 36.0 s |
-| `cluster`, 142k edges past a union–find | 0.02 s |
+| `predict`, 117M candidates on 8 threads | 5.6 s |
+| `cluster`, 169k edges past a union–find | 0.02 s |
 
-Comparison throughput in `predict` is the binding constraint of the whole pipeline, and
+Comparison throughput in `predict` is still the binding constraint of the whole pipeline, and
 blocking is about 240× cheaper than the comparison it feeds. Making blocking faster would
 be effort wasted; see [Blocking](blocking.md#enumeration-is-not-the-bottleneck).
+
+The `predict` figure is what it is because the ceiling refuses 99.85% of candidates before any
+string metric runs. Its saving is a function of the threshold, so a run at 0 bits pays much
+closer to full price.
 
 ## Next
 

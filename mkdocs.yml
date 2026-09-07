@@ -45,6 +45,7 @@ nav:
       - inspect: commands/inspect.md
       - profile: commands/profile.md
       - levels: commands/levels.md
+      - simplify: commands/simplify.md
       - explain: commands/explain.md
       - explain-blocking: commands/explain-blocking.md
       - recall: commands/recall.md
