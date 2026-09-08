@@ -26,6 +26,28 @@ struct ModelLevel {
     double Weight() const;
 };
 
+// One fitted two-way interaction: the bits the independent model over- or
+// under-counts when these two comparisons land on this pair of levels.
+//
+// Fellegi-Sunter multiplies m and u across comparisons, which is right only where
+// agreement is conditionally independent given the class. Where it is not, the
+// correction is the log ratio of the joint to the product of its margins under M,
+// less the same quantity under U -- and it is a function of gamma alone, so it
+// costs the scorer nothing but a table lookup and costs the tabulated path
+// nothing at all.
+struct ModelInteraction {
+    std::string left;  // comparison names, in schema order
+    std::string right;
+    uint8_t left_levels = 0;
+    uint8_t right_levels = 0;
+    std::vector<double> bits;  // left_levels x right_levels, row-major
+    double match_bits = 0.0;   // what it moves an average matching pair by
+    double effect = 0.0;       // mass-weighted mean |bits| under M
+    size_t sessions = 0;       // sessions that left both comparisons free
+
+    double Bits(uint8_t left_level, uint8_t right_level) const;
+};
+
 struct ModelComparison {
     std::string name;
     std::vector<std::string> columns;
@@ -42,6 +64,9 @@ struct Model {
     std::string lambda_basis;
     uint64_t records = 0;
     std::vector<ModelComparison> comparisons;
+    // Empty unless the run asked for them. An interaction is a correction to the
+    // weight and never to m or u, which stay exactly what the margins say.
+    std::vector<ModelInteraction> interactions;
 
     // log2 lambda/(1 - lambda): the prior term of the match weight.
     double PriorWeight() const;
@@ -55,5 +80,9 @@ bool LoadModel(const std::string& path, Model* model, std::string* error);
 // The parameter table in the shape splink users read: one row per level, with the
 // weight each level contributes.
 void PrintModel(const Model& model, std::ostream& out);
+
+// The fitted two-way corrections, if the run asked for any. Printed by PrintModel
+// and separately by the report that has to show them beside their candidates.
+void PrintInteractions(const Model& model, std::ostream& out);
 
 }  // namespace cpplink

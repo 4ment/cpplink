@@ -185,6 +185,17 @@ void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& compariso
             << (move != 0.0 ? Signed(move) : std::string("")) << std::setw(12)
             << Signed(running) << "\n";
     }
+    // The two-way corrections, where the model carries any. They are part of the
+    // sum the scorer computes, so they have to be part of the ledger that explains
+    // it: a waterfall missing them would total something the run never produced.
+    for (size_t i = 0; i < scorer.InteractionCount(); ++i) {
+        const double bits = scorer.InteractionBits(i, gamma);
+        running += bits;
+        out << std::left << std::setw(18) << "(interaction)" << std::setw(22)
+            << Truncate(scorer.InteractionName(i), 21) << std::right << std::setw(10)
+            << Signed(bits) << std::setw(10) << "" << std::setw(12) << Signed(running)
+            << "\n";
+    }
     out << std::string(72, '-') << "\n";
 
     const double weight = scorer.Weight(gamma, a, b);

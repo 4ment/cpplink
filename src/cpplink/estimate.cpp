@@ -227,12 +227,20 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
 // it is deliberate: u must not know that blocking exists.
 void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparisons,
                        const EstimateOptions& options, PairMode mode,
-                       std::vector<std::vector<uint64_t>>* counts, uint64_t* drawn) {
+                       std::vector<std::vector<uint64_t>>* counts, uint64_t* drawn,
+                       JointTables* joint) {
     const uint64_t records = store.NumRecords();
     const bool cross = mode == PairMode::kCrossDataset;
     const unsigned threads = ThreadCount(options.threads);
     std::vector<std::vector<std::vector<uint64_t>>> partials(threads, *counts);
     std::vector<uint64_t> per_thread(threads, 0);
+    // The u side of every two-way interaction, from the same draws and at the cost
+    // of one increment per comparison pair. It has to come from here rather than
+    // from the candidate stream: a source selecting on a column induces agreement
+    // correlation involving that column, so u-side dependence measured on
+    // candidates measures the blocking plan.
+    std::vector<JointTables> joints(joint != nullptr ? threads : 0,
+                                    joint != nullptr ? *joint : JointTables());
 
     std::vector<std::thread> workers;
     workers.reserve(threads);
@@ -242,6 +250,7 @@ void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparison
         workers.emplace_back([&, t, share] {
             uint64_t state = Mix64(options.seed + 0x5DEECE66Dull * (t + 1));
             uint64_t taken = 0;
+            std::vector<uint8_t> levels(comparisons.Size(), 0);
             for (uint64_t i = 0; i < share; ++i) {
                 state = Mix64(state);
                 const uint64_t a = state % records;
@@ -264,8 +273,10 @@ void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparison
                 if (a == b) continue;  // a pair is two distinct records
                 const uint32_t gamma = comparisons.Evaluate(a, b);
                 for (size_t c = 0; c < comparisons.Size(); ++c) {
-                    ++partials[t][c][comparisons.LevelOf(gamma, c)];
+                    levels[c] = comparisons.LevelOf(gamma, c);
+                    ++partials[t][c][levels[c]];
                 }
+                if (joint != nullptr) joints[t].Add(levels.data(), 1.0);
                 ++taken;
             }
             per_thread[t] = taken;
@@ -276,6 +287,7 @@ void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparison
     *drawn = 0;
     for (unsigned t = 0; t < threads; ++t) {
         *drawn += per_thread[t];
+        if (joint != nullptr) joint->Merge(joints[t]);
         for (size_t c = 0; c < counts->size(); ++c) {
             for (size_t l = 0; l < (*counts)[c].size(); ++l) {
                 (*counts)[c][l] += partials[t][c][l];
@@ -405,6 +417,40 @@ EmResult RunEm(const ComparisonSet& comparisons, const std::vector<PatternCount>
     return result;
 }
 
+// The m side of the interaction tables: the responsibility EM converged on,
+// folded into a two-way count per comparison pair. It is one more pass over the
+// patterns, which is 1e5 of them whatever the run size, and it reuses the fit
+// rather than refitting anything.
+JointTables SessionJointTables(const ComparisonSet& comparisons,
+                               const std::vector<PatternCount>& entries,
+                               const std::vector<std::vector<double>>& u,
+                               const std::vector<bool>& excluded, const EmResult& em,
+                               const std::vector<size_t>& level_counts) {
+    const size_t count = comparisons.Size();
+    JointTables tables(level_counts);
+    std::vector<std::vector<double>> weight(count);
+    for (size_t c = 0; c < count; ++c) {
+        weight[c].assign(em.m[c].size(), 0.0);
+        if (excluded[c]) continue;
+        for (size_t l = 0; l < weight[c].size(); ++l) {
+            weight[c][l] =
+                std::log2(std::max(em.m[c][l], kFloor) / std::max(u[c][l], kFloor));
+        }
+    }
+    const double prior = std::log2(em.lambda / (1.0 - em.lambda));
+    std::vector<uint8_t> levels(count, 0);
+    for (const PatternCount& entry : entries) {
+        double bits = prior;
+        for (size_t c = 0; c < count; ++c) {
+            levels[c] = comparisons.LevelOf(entry.gamma, c);
+            if (!excluded[c]) bits += weight[c][levels[c]];
+        }
+        const double responsibility = 1.0 / (1.0 + std::exp2(-bits));
+        tables.Add(levels.data(), static_cast<double>(entry.count) * responsibility);
+    }
+    return tables;
+}
+
 // Whether blocking on one column conditions on the other. Containment and
 // determination are the row-level shapes, and the u-side overlap is the same
 // question in bits; any of the three means the second column's agreement is partly
@@ -479,7 +525,13 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         sampled[c].assign(comparisons.at(c).spec->levels.size(), 0);
     }
     uint64_t drawn = 0;
-    SampleRandomPairs(store, comparisons, options, plan.mode(), &sampled, &drawn);
+    std::vector<size_t> level_counts(count);
+    for (size_t c = 0; c < count; ++c) {
+        level_counts[c] = comparisons.at(c).spec->levels.size();
+    }
+    JointTables random_joint(level_counts);
+    SampleRandomPairs(store, comparisons, options, plan.mode(), &sampled, &drawn,
+                      options.interactions.enabled ? &random_joint : nullptr);
 
     // Nulls are counted per input, because in link mode the two sides of a pair are
     // drawn from different ones and a column present in the first file and empty in
@@ -632,6 +684,7 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         return false;
     };
 
+    std::vector<SessionJoint> session_joints;
     double best_matches = 0.0;
     std::string best_column;
     for (size_t i = 0; i < columns.size(); ++i) {
@@ -713,6 +766,14 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         CheckSession(comparisons, em, u, excluded, &session);
 
         session.merged = session.warnings.empty();
+        if (options.interactions.enabled) {
+            SessionJoint contribution;
+            contribution.tables =
+                SessionJointTables(comparisons, entries, u, excluded, em, level_counts);
+            contribution.excluded = excluded;
+            contribution.usable = session.merged;
+            session_joints.push_back(std::move(contribution));
+        }
         if (session.merged) {
             for (size_t c = 0; c < count; ++c) {
                 if (excluded[c]) continue;
@@ -820,6 +881,14 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         report->warnings.push_back(
             "no session produced a usable lambda, so the prior is a placeholder");
     }
+
+    // --- interactions --------------------------------------------------------
+    // Last, because a correction is measured against the margins the main effects
+    // settled on and would be a different number against any others.
+    if (options.interactions.enabled) {
+        FitInteractions(comparisons, session_joints, random_joint, model->lambda,
+                        options.interactions, model, &report->interactions);
+    }
     return true;
 }
 
@@ -897,6 +966,7 @@ void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
         out << "warning: " << warning << "\n";
     }
     if (!report.warnings.empty()) out << "\n";
+    PrintInteractionReport(report.interactions, out);
 }
 
 }  // namespace cpplink

@@ -12,6 +12,7 @@ interface and how to read what it prints.
 cpplink estimate --schema <schema.json> [--out <model.json>]
                  [--u-sample N] [--session-pairs N] [--threads N]
                  [--iterations N] [--lambda F] [--seed N] [--mode MODE]
+                 [--interactions] [--max-interactions N] [--interaction-bits F]
                  <file.parquet>...
 ```
 
@@ -30,6 +31,12 @@ cpplink estimate --schema <schema.json> [--out <model.json>]
 | `--no-tie-holdout` | off | stop holding out comparisons tied to the column a session blocks on. Off means the hold-out is on; this is for measuring what it is worth |
 | `--tied-bits F` | 0.25 | `u`-side overlap in bits past which two columns count as tied |
 | `--tie-sample-rows N` | 500,000 | rows the tie pass reads. `0` reads every row |
+| `--interactions` | off | fit two-way corrections for the comparison pairs that are not conditionally independent. See [below](#relaxing-conditional-independence) |
+| `--max-interactions N` | 2 | how many terms may enter the model. Implies `--interactions` |
+| `--interaction-bits F` | 0.25 | bits a term must move an average matching pair by, in every session that can see it, to be admitted. Implies `--interactions` |
+| `--min-interaction-sessions N` | 2 | sessions that must be able to see a term before it is identified |
+| `--min-pairs-per-parameter F` | 0 | refuse a term with fewer matching pairs per free parameter than this. Reported either way |
+| `--interaction-clamp F` | 6.0 | the most any single cell of a term may move the weight, in bits |
 | *(positional)* | — | required; the parquet file |
 | `--mode dedup\|link\|link-and-dedup` | link with more than one file, else dedup | which pairs to enumerate; see [linking](../linking.md) |
 
@@ -273,3 +280,183 @@ The cost is quadratic in the number of distinct values: 11.2 billion value pairs
 sample's 149k surnames took 140 s on eight threads, and 16k first names took 0.6 s.
 A near-unique column is refused by `--ball-budget` rather than approximated — 919k distinct
 emails is 423 billion value pairs, and no signature filter makes that affordable.
+
+## Relaxing conditional independence
+
+Fellegi–Sunter multiplies `m` and `u` across comparisons, which is correct only where agreement
+is independent *given the class*.
+On real data it is not: where one column contains another, the model counts one signal twice
+and every matching pair is scored too high.
+`--interactions` fits a small set of two-way corrections and writes them into the model.
+
+The weight becomes
+
+\[
+w(\gamma) \;=\; \log_2\frac{\lambda}{1-\lambda}
+\;+\; \sum_c \log_2 \frac{m_c(\gamma_c)}{u_c(\gamma_c)}
+\;+\; \sum_{(c,d) \in S} \delta_{cd}(\gamma_c, \gamma_d)
+\]
+
+\[
+\delta_{cd}(i,j) \;=\;
+\log_2 \frac{M_{cd}(i,j)}{m_c(i)\,m_d(j)}
+\;-\;
+\log_2 \frac{U_{cd}(i,j)}{u_c(i)\,u_d(j)}
+\]
+
+**Both halves are needed.** Two columns that agree together among matches are double-counted
+only to the extent that they do not also agree together among non-matches, which is what the
+main-effect `u` already prices.
+
+Nothing about scoring changes: \(\delta\) is a function of γ like everything else, so below 22
+bits of γ it is folded into the tabulated base weight once at bind time and the hot loop never
+sees it.
+
+### Where each half comes from
+
+| Half | Source | Why not somewhere else |
+| --- | --- | --- |
+| M | the session histograms, weighted by the responsibility EM already computed, averaged over the sessions that left both comparisons free | it is the fit that already exists; nothing new is enumerated |
+| U | the uniformly random pairs `u` is drawn from | **never candidates.** A source selecting on a column induces agreement correlation involving that column, so dependence measured on the candidate stream measures the blocking plan |
+
+Both are then fitted to the model's own margins by iterative proportional fitting, which moves
+the margins and leaves every odds ratio alone.
+That is what makes the term a *pure* correction: adding it cannot shift `m` or `u`, so the main
+effects keep carrying the margins and the interaction carries only the association.
+
+### Reading the report
+
+```sh
+cpplink estimate --schema historical_50k.json --interactions historical_50k.parquet
+```
+
+```text
+Two-way interactions, ranked by what they move a match by. 0.0 s.
+The u side had 2.71e-04 of its pairs subtracted as this file's own duplicates.
+
+Comparison          Comparison              effect  per match  weakest    dup u  pairs/par         G^2         p  verdict
+------------------------------------------------------------------------------------------------------------------------
+first_name          first_and_surname         4.26      -2.87    -2.86      31%       6164    264053.2   0.0e+00  fitted
+surname             first_and_surname         3.58      -3.14    -3.11      43%       6164     63821.2   0.0e+00  fitted
+first_name          surname                   1.80      -1.63    -1.58      43%       6164     16386.6   0.0e+00  past --max-interactions
+dob                 postcode_fake             0.61      -0.19    -0.04      26%      17742    102502.3   0.0e+00  one session moves a match by only -0.04 bits
+first_and_surname   dob                       0.52       0.16     0.16      49%       6508      5722.7   0.0e+00  only 1 session can see it, so nothing can disagree
+------------------------------------------------------------------------------------------------------------------------
+2 of 28 candidate pairs entered the model; 4 cell(s) hit the clamp.
+```
+
+| Column | Meaning |
+| --- | --- |
+| `effect` | the mean **absolute** correction an average matching pair gets, in bits. This is what the ranking is on |
+| `per match` | the same thing signed. Negative means the plain model was double-counting that many bits on every match |
+| `weakest` | the least any one session says on its own, zero where two disagree about the sign. A term has to clear `--interaction-bits` here, not just on the average |
+| `dup u` | how much of the `u` side was this file's own duplicates before they were subtracted. See below |
+| `pairs/par` | matching pairs per free parameter of the term |
+| `G^2`, `p` | the deviance against independence, printed as a diagnostic and used for nothing |
+
+The two terms admitted here are exactly the two pairs
+[`profile`](profile.md) names from the rows alone — `first_and_surname` contains both name
+columns — reached from the histograms with no notion of containment at all.
+
+!!! warning "`G^2` cannot choose the number of terms, for the same reason it could not in `levels` or `simplify`"
+    Its power is the size of the run. All 28 candidate pairs here read `p = 0` at 18M
+    candidates. The effect size decides: `--interaction-bits` sets the bar and
+    `--max-interactions` caps the count.
+
+### What it is worth
+
+Measured end to end at the shipping defaults, against truth the estimator never sees:
+
+| Dataset | Terms | Plain best F1 | Corrected best F1 |
+| --- | ---: | ---: | ---: |
+| `historical_50k` | 2 | 0.8676 at 12 bits | **0.9107 at 6 bits** |
+| `febrl3` | 0 | 0.9992 at −4 bits | 0.9992 at −4 bits |
+| `fake_1000` | 2 | 0.9386 at −1 bits | **0.8724** at −3 bits |
+
+On `historical_50k` precision *and* recall both rise (0.9259 → 0.9542, 0.8161 → 0.8709) and the
+corrected model dominates the plain one at every recall on the frontier.
+`febrl3` fits nothing and the model is byte-identical, which is the right answer rather than a
+null result: its corruption is applied field by field on independent coins, so there is no
+dependence to find.
+
+!!! danger "Thresholds move, so comparing at a fixed one compares nothing"
+    Each admitted term takes two to three bits off every matching pair, so the whole weight
+    scale shifts down and the operating point moves with it — 12 bits becomes 6. Read at a
+    *fixed* 12 bits the correction on `historical_50k` looks like −0.10 F1. Compare
+    best-against-best, or compare the precision-recall frontiers.
+
+The number of terms is capped at two because that is what measured best:
+
+| Terms | 1 | **2** | 3 | 4 | 8 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `historical_50k` best F1 | 0.8878 | **0.9135** | 0.9091 | 0.9035 | 0.8847 |
+
+Past the real dependencies there is nothing left to correct and the extra terms fit noise.
+
+### The cost, which is the ceiling and not the scoring
+
+A correction is not separable across comparisons, so the pair's own cell is unknown until its
+levels are, and [`predict`](predict.md)'s pair-global ceiling has to add each term's *largest*
+cell to stay admissible. It gets looser:
+
+| | Candidates skipped before any metric | `predict` |
+| --- | ---: | ---: |
+| plain, 12 bits | 37.61% | 1.8 s |
+| corrected, 6 bits | 4.06% | 2.2 s |
+
+At the same threshold the skip rate falls 29.09% to 4.06%, so this is the loosening and not the
+lower operating point. The tabulated weight itself costs nothing at all.
+
+`predict --no-interactions` scores the plain model out of the same file, which is how the two
+were measured against each other.
+
+### Two traps, one of them the standing limit
+
+!!! danger "The `u` side of a joint is the file's own duplicates"
+    A uniformly random pair is a match with probability λ, so a random draw shows
+    \((1-\lambda)u + \lambda m\). For one column that is a small inflation. For the *joint* of
+    two high-cardinality columns it is the entire measurement: on `febrl3` two independent
+    draws land on the `date_of_birth` × `soc_sec_id` exact-agreement cell 0.21 times per
+    million, and the 452 matching pairs in a million random draws land there 335 times — **1,565×
+    the independent rate, all of it duplicates**.
+
+    The first working version therefore put a −4 bit correction on *every one* of that dataset's
+    28 pairs. λ·m is now subtracted back out, and where the subtraction leaves nothing the pair
+    is refused rather than guessed. That is the `dup u` column, and it silences `febrl3`
+    entirely.
+
+!!! warning "The correction is only as good as λ, and λ is a lower bound"
+    A session-derived λ counts only the matches blocking reached. On `fake_1000` it reads
+    1.77e-3 against a true 4.07e-3, low by 2.3×, so the subtraction removes less than half the
+    duplicates it should and the residue pushes every correction negative. Given the true λ on
+    the command line, that file's two largest terms **flip sign** (−1.90, −1.93 → +1.26, +1.06)
+    and best F1 goes 0.8724 → 0.9225.
+
+    The report warns whenever λ is a bound. There are two ways out: pass `--lambda` from a count
+    you trust, or divide the reported one by the pair completeness
+    [`completeness`](completeness.md) estimates with no truth file.
+
+!!! note "Letting a correction run to its full size is worse, and the clamp is why"
+    The arithmetic wants about −10 bits on the `surname` × `first_and_surname` exact-agreement
+    cell; `--interaction-clamp` holds it at −6. Raising the clamp does not help:
+
+    | clamp (bits) | 4 | **6** | 8 | 12 | 20 |
+    | --- | ---: | ---: | ---: | ---: | ---: |
+    | `historical_50k` best F1 | 0.9073 | **0.9107** | 0.9061 | 0.9042 | 0.9042 |
+
+    That cell is 43% duplicates before the subtraction, so its magnitude is the least reliable
+    part of the fit even though its *sign* is certain. The clamp is a shrinkage on exactly the
+    cells whose estimate is worst. The curve is shallow across the whole range, so the default
+    is not load-bearing — but removing the clamp is a measurable loss.
+
+Two guards are not optional. A cell the data barely reaches is a ratio of two floors — a column
+duplicated under two names can never land on "one agrees and the other does not" — so each
+correction is scaled by \(n/(n+5)\), the contingency table's own bar for an expected count; the
+empty cell naming that impossible case was reading +3.7 bits before it. And a term must be
+visible to two sessions, which is the interaction form of the `sessions == 0` refusal
+[`completeness`](completeness.md) already makes.
+
+!!! note "Cross-session *agreement* does not work as a guard, and it was the obvious thing to try"
+    The hypothesis was that a spurious term would read differently in each session and a real
+    one would not. On `fake_1000` the sessions agree to within 0.06 bits on corrections that
+    have the wrong sign. The bias is systematic, so nothing that looks for noise can find it.

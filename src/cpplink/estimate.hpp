@@ -10,6 +10,7 @@
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
+#include "cpplink/interaction.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/neighbourhood.hpp"
 #include "cpplink/profile.hpp"
@@ -53,6 +54,12 @@ struct EstimateOptions {
     // Rows the tie pass reads. It is the profile's pairwise pass and nothing else:
     // no model, no candidate pair, and a fraction of a second on anything small.
     uint64_t tie_sample_rows = 500000;
+    // Relaxing conditional independence: a small forward-selected set of two-way
+    // corrections fitted on the histograms already built. Off by default, because
+    // a term is a claim about the data that has to be measured before it is
+    // believed, and because the plain model is what every number in the
+    // benchmarks was measured with.
+    InteractionOptions interactions;
 };
 
 // One EM session: the sources conditioning on a single column, unioned among
@@ -105,6 +112,7 @@ struct EstimateReport {
     double tie_seconds = 0.0;  // the pairwise pass that says which columns are tied
     std::vector<BallReport> balls;
     std::vector<SessionReport> sessions;
+    InteractionReport interactions;
     std::vector<std::string> warnings;
 };
 

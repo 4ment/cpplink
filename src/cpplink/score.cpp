@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cpplink {
@@ -199,6 +200,52 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
         adjustments_.push_back(adjustment);
     }
 
+    // The two-way corrections, resolved to comparison indices once. A term names
+    // its comparisons rather than their positions, so a schema whose comparisons
+    // have been reordered still gets the term it was fitted with -- and one whose
+    // levels have changed is refused, because the table is indexed by level.
+    interactions_.clear();
+    interaction_ceiling_ = 0.0;
+    if (options.use_interactions) {
+        for (const ModelInteraction& term : model.interactions) {
+            BoundInteraction bound;
+            bound.name = term.left + " x " + term.right;
+            bool found_left = false;
+            bool found_right = false;
+            for (size_t c = 0; c < comparisons.Size(); ++c) {
+                if (comparisons.at(c).spec->name == term.left) {
+                    bound.left = c;
+                    found_left = true;
+                }
+                if (comparisons.at(c).spec->name == term.right) {
+                    bound.right = c;
+                    found_right = true;
+                }
+            }
+            if (!found_left || !found_right) {
+                *error = "the model has an interaction on \"" + bound.name +
+                         "\" but the schema declares no such comparison";
+                return false;
+            }
+            const size_t height = comparisons.at(bound.left).spec->levels.size();
+            const size_t width = comparisons.at(bound.right).spec->levels.size();
+            if (term.left_levels != height || term.right_levels != width) {
+                *error = "the interaction on \"" + bound.name + "\" was fitted over " +
+                         std::to_string(term.left_levels) + " by " +
+                         std::to_string(term.right_levels) +
+                         " levels but the schema declares " + std::to_string(height) +
+                         " by " + std::to_string(width);
+                return false;
+            }
+            bound.right_levels = static_cast<uint8_t>(width);
+            bound.bits = term.bits;
+            double widest = 0.0;
+            for (const double value : bound.bits) widest = std::max(widest, value);
+            interaction_ceiling_ += widest;
+            interactions_.push_back(std::move(bound));
+        }
+    }
+
     // The ceiling's table. A level is worth its own weight plus, where it is the
     // term-frequency level, the most any value in that column could add; sorting
     // by that lets the ceiling stop at the first level the cheap bounds admit.
@@ -280,7 +327,26 @@ double Scorer::ComputeBase(uint32_t gamma) const {
     for (size_t c = 0; c < weight_.size(); ++c) {
         total += weight_[c][comparisons_->LevelOf(gamma, c)];
     }
+    // The corrections are a function of gamma like everything else here, which is
+    // why the tabulated path below 22 bits does not pay for them at all: they are
+    // folded into base_ once at bind time and the hot loop never sees them.
+    for (const BoundInteraction& interaction : interactions_) {
+        total += interaction.bits[comparisons_->LevelOf(gamma, interaction.left) *
+                                      interaction.right_levels +
+                                  comparisons_->LevelOf(gamma, interaction.right)];
+    }
     return total;
+}
+
+const std::string& Scorer::InteractionName(size_t index) const {
+    return interactions_[index].name;
+}
+
+double Scorer::InteractionBits(size_t index, uint32_t gamma) const {
+    const BoundInteraction& interaction = interactions_[index];
+    return interaction
+        .bits[comparisons_->LevelOf(gamma, interaction.left) * interaction.right_levels +
+              comparisons_->LevelOf(gamma, interaction.right)];
 }
 
 double Scorer::BaseWeight(uint32_t gamma) const {
@@ -324,7 +390,10 @@ Zone Scorer::Classify(uint32_t gamma) const {
 }
 
 double Scorer::Ceiling(uint64_t a, uint64_t b) const {
-    double total = prior_;
+    // A correction is not separable across comparisons, so the pair's own cell is
+    // not known until the levels are. Adding each term's largest cell keeps the
+    // bound admissible at the cost of loosening it by that much.
+    double total = prior_ + interaction_ceiling_;
     for (size_t c = 0; c < optimistic_.size(); ++c) {
         // Levels are in decreasing order of what they are worth, so the first one
         // the bounds admit is the most this comparison can contribute. The last

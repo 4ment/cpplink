@@ -215,6 +215,16 @@ It is a bound twice over — blocking recall is below one, and EM's posterior ma
 conservative (a match agreeing only on a 10-bit signal against a 23-bit prior is not called a
 match). Pass `--lambda` to set it from a count you trust.
 
+!!! warning "λ being a bound is harmless for the weights and is *not* harmless for the interactions"
+    The prior shifts every pair by the same amount, so a λ that is low by a factor of two moves
+    the threshold and nothing else. The two-way corrections are different: λ is the rate at
+    which the file's own duplicates contaminate the `u` side of a joint, and it is subtracted
+    there. On a 1,000-record fixture whose λ reads 2.3× low, the two largest fitted terms come
+    out with the **wrong sign**. See
+    [`estimate --interactions`](commands/estimate.md#two-traps-one-of-them-the-standing-limit).
+    `cpplink completeness` estimates the pair completeness this bound is missing, without a
+    truth file.
+
 ## The three floors, which are three different things
 
 They look alike in the output and they are not the same:

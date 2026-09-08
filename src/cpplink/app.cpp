@@ -108,13 +108,14 @@ void PrintUsage(std::ostream& out) {
            "[--mode MODE]\n"
         << "                 [--fuzzy-u] [--ball-budget N] [--no-tie-holdout]\n"
         << "                 [--tied-bits F] [--tie-sample-rows N]\n"
-        << "                 <file.parquet>...\n"
+        << "                 [--interactions] [--max-interactions N]\n"
+        << "                 [--interaction-bits F] <file.parquet>...\n"
         << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--no-ceiling]\n"
         << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
         << "                [--spill-sample R] [--fuzzy-tf] [--ball-budget N]\n"
-        << "                [--mode MODE] <file.parquet>...\n"
+        << "                [--no-interactions] [--mode MODE] <file.parquet>...\n"
         << "cpplink completeness --schema <schema.json> --model <model.json>\n"
         << "                [--truth <pairs.csv>] [--sample R] [--threads N]\n"
         << "                [--value-weighting records|pairs] [--min-observed N]\n"
@@ -1034,6 +1035,25 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--tie-sample-rows") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.tie_sample_rows = std::stoull(value);
+        } else if (args[i] == "--interactions") {
+            options.interactions.enabled = true;
+        } else if (args[i] == "--max-interactions") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.interactions.enabled = true;
+            options.interactions.max_terms = std::stoull(value);
+        } else if (args[i] == "--interaction-clamp") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.interactions.clamp_bits = std::stod(value);
+        } else if (args[i] == "--min-interaction-sessions") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.interactions.min_sessions = std::stoull(value);
+        } else if (args[i] == "--min-pairs-per-parameter") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.interactions.min_pairs_per_parameter = std::stod(value);
+        } else if (args[i] == "--interaction-bits") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.interactions.enabled = true;
+            options.interactions.min_bits = std::stod(value);
         } else if (args[i] == "--fuzzy-u") {
             options.fuzzy_u = true;
         } else if (args[i] == "--ball-budget") {
@@ -1168,6 +1188,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             }
         } else if (args[i] == "--no-signatures") {
             use_signatures = false;
+        } else if (args[i] == "--no-interactions") {
+            score.use_interactions = false;
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink predict: unknown option '" << args[i] << "'\n";
             return 1;
