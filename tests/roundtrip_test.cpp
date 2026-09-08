@@ -1,6 +1,7 @@
 // Copyright 2026 Mathieu Fourment
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -19,6 +20,7 @@
 #include "cpplink/record_store.hpp"
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
+#include "cpplink/string_metrics.hpp"
 
 namespace {
 
@@ -182,6 +184,170 @@ TEST_F(RoundTrip, ListContainsAlignsTwoDictionariesOverLoadedData) {
     // The vocabularies are drawn from one syllable generator, so names and street
     // words collide often enough for this to be testing something.
     EXPECT_GT(fired, 0u);
+}
+
+// The pairwise levels over a list column that a real load interned, checked
+// against the same question asked of the text. What only a load exercises is the
+// signature table built over the *list* column's dictionary: the unit fixtures
+// hold a handful of values, and the bound is only interesting over a vocabulary
+// wide enough for the masks to differ in every way they can.
+constexpr const char* kPairwiseSchema = R"({
+  "unique_id": "id",
+  "columns": [
+    {"name": "address_tokens", "type": "string_list"}
+  ],
+  "comparisons": [
+    {"name": "tokens", "columns": ["address_tokens"], "levels": [
+      {"type": "null"},
+      {"type": "list_levenshtein", "threshold": 1},
+      {"type": "list_jaro_winkler", "threshold": 0.9},
+      {"type": "else"}]}
+  ]
+})";
+
+TEST_F(RoundTrip, PairwiseLevelsAgreeWithTheTextOverLoadedData) {
+    cpplink::SampleOptions options;
+    options.rows = 2000;
+    options.row_group_size = 500;
+    options.truth_path.clear();
+
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kPairwiseSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
+
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+
+    const auto& tokens = std::get<cpplink::StringListColumn>(store.column(0));
+    // The cross product, spelled out over the text and using the metrics
+    // directly: no short-circuit, no signature bound, no interning.
+    const auto closest = [&](uint64_t a, uint64_t b, int* edits, double* similarity) {
+        *edits = -1;
+        *similarity = -1.0;
+        for (uint64_t i = tokens.offsets[a]; i < tokens.offsets[a + 1]; ++i) {
+            for (uint64_t j = tokens.offsets[b]; j < tokens.offsets[b + 1]; ++j) {
+                const std::string_view left = tokens.dict.Value(tokens.ids[i]);
+                const std::string_view right = tokens.dict.Value(tokens.ids[j]);
+                const int distance = cpplink::BoundedLevenshtein(left, right, 1);
+                if (*edits < 0 || distance < *edits) *edits = distance;
+                *similarity = std::max(*similarity, cpplink::JaroWinkler(left, right));
+            }
+        }
+    };
+
+    uint64_t levenshtein = 0;
+    uint64_t jaro = 0;
+    for (uint64_t a = 0; a < 250; ++a) {
+        for (uint64_t b = a + 1; b < 250; ++b) {
+            const bool empty = tokens.offsets[a + 1] == tokens.offsets[a] ||
+                               tokens.offsets[b + 1] == tokens.offsets[b];
+            int edits = 0;
+            double similarity = 0.0;
+            if (!empty) closest(a, b, &edits, &similarity);
+            const uint8_t expected = empty               ? 0
+                                     : edits <= 1        ? 1
+                                     : similarity >= 0.9 ? 2
+                                                         : 3;
+            ASSERT_EQ(comparisons.EvaluateOne(0, a, b), expected) << a << "," << b;
+            if (expected == 1) ++levenshtein;
+            if (expected == 2) ++jaro;
+        }
+    }
+    // Both levels have to be reached, or the loop asserted nothing about them.
+    EXPECT_GT(levenshtein, 0u);
+    EXPECT_GT(jaro, 0u);
+}
+
+// The fuzzy membership levels over two dictionaries a real load interned
+// separately, checked against the same question asked of the text. This is the
+// one shape where a level reads a value id of one dictionary against value ids of
+// another, so both signature tables and the alias map are in play at once.
+constexpr const char* kNearContainsSchema = R"({
+  "unique_id": "id",
+  "columns": [
+    {"name": "first_name", "type": "string"},
+    {"name": "address_tokens", "type": "string_list"}
+  ],
+  "comparisons": [
+    {"name": "alias", "columns": ["first_name", "address_tokens"], "levels": [
+      {"type": "null"},
+      {"type": "list_contains"},
+      {"type": "contains_levenshtein", "threshold": 1},
+      {"type": "contains_jaro_winkler", "threshold": 0.92},
+      {"type": "else"}]}
+  ]
+})";
+
+TEST_F(RoundTrip, FuzzyMembershipAgreesWithTheTextOverLoadedData) {
+    cpplink::SampleOptions options;
+    options.rows = 2000;
+    options.row_group_size = 500;
+    options.truth_path.clear();
+
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kNearContainsSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
+
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+
+    const auto& names = std::get<cpplink::StringColumn>(store.column(0));
+    const auto& tokens = std::get<cpplink::StringListColumn>(store.column(1));
+
+    // One direction, spelled out over the text: no alias map, no signature bound,
+    // no interning. `edits` and `similarity` are the best this direction reaches.
+    const auto direction = [&](uint64_t value_row, uint64_t list_row, int* edits,
+                               double* similarity) {
+        const uint32_t id = names.ids[value_row];
+        if (id == cpplink::kNullId) return;
+        const std::string_view text = names.dict.Value(id);
+        for (uint64_t i = tokens.offsets[list_row]; i < tokens.offsets[list_row + 1];
+             ++i) {
+            const std::string_view other = tokens.dict.Value(tokens.ids[i]);
+            const int distance = cpplink::BoundedLevenshtein(text, other, 1);
+            if (*edits < 0 || distance < *edits) *edits = distance;
+            *similarity = std::max(*similarity, cpplink::JaroWinkler(text, other));
+        }
+    };
+
+    uint64_t contains = 0;
+    uint64_t levenshtein = 0;
+    uint64_t jaro = 0;
+    for (uint64_t a = 0; a < 250; ++a) {
+        for (uint64_t b = a + 1; b < 250; ++b) {
+            const bool null_a = names.ids[a] == cpplink::kNullId &&
+                                tokens.offsets[a + 1] == tokens.offsets[a];
+            const bool null_b = names.ids[b] == cpplink::kNullId &&
+                                tokens.offsets[b + 1] == tokens.offsets[b];
+            int edits = -1;
+            double similarity = -1.0;
+            if (!null_a && !null_b) {
+                direction(a, b, &edits, &similarity);
+                direction(b, a, &edits, &similarity);
+            }
+            const uint8_t expected = (null_a || null_b)   ? 0
+                                     : edits == 0         ? 1
+                                     : edits == 1         ? 2
+                                     : similarity >= 0.92 ? 3
+                                                          : 4;
+            ASSERT_EQ(comparisons.EvaluateOne(0, a, b), expected) << a << "," << b;
+            if (expected == 1) ++contains;
+            if (expected == 2) ++levenshtein;
+            if (expected == 3) ++jaro;
+        }
+    }
+    // Each level has to be reached, or the loop asserted nothing about it.
+    EXPECT_GT(contains, 0u);
+    EXPECT_GT(levenshtein, 0u);
+    EXPECT_GT(jaro, 0u);
 }
 
 TEST_F(RoundTrip, ListValuesAreSortedAndDeduplicatedPerRow) {

@@ -30,7 +30,13 @@ struct BoundComparison {
     // Present only when this comparison has a fuzzy string level, which is the
     // only place the signatures pay for themselves.
     const SignatureTable* signatures = nullptr;
-    // Present only when this comparison has a list_contains level. Indexed by a
+    // The same thing over the list column's own dictionary, for the pairwise
+    // levels. It is worth more here than anywhere else: a pairwise level runs
+    // |a| x |b| metric evaluations where a scalar level runs one, so the pair of
+    // popcounts that rejects an element pair is paid back that many times over.
+    const SignatureTable* list_signatures = nullptr;
+    // Present only when this comparison has one of the membership levels. Indexed
+    // by a
     // value id of `strings`, holding the id the same text has in `lists`'s own
     // dictionary, or kNullId where the list column never saw that text. Dense
     // ids are per column, so "is this first name one of those nicknames" is an
@@ -95,6 +101,24 @@ class ComparisonSet {
     // so that the pair path and the dictionary self-join cannot drift apart.
     bool StringLevelFires(const BoundComparison& comparison, const LevelSpec& level,
                           uint32_t left, uint32_t right) const;
+    // The pairwise levels: whether any element of one row's list is within the
+    // level's threshold of any element of the other's.
+    //
+    // `bounds_only` stops at the signature bound instead of running the metric,
+    // which is what `LevelMaybe` needs and is admissible for the same reason the
+    // scalar filter is. One walk serves both so the bound and the predicate
+    // cannot come to disagree about which element pairs they consider.
+    bool ClosestPairFires(const BoundComparison& comparison, const LevelSpec& level,
+                          uint64_t a, uint64_t b, bool bounds_only) const;
+    // The fuzzy membership levels, in both directions like the exact one: whether
+    // either row's value is within the level's threshold of an element of the
+    // other row's list. `bounds_only` means the same thing it does above.
+    bool NearListFires(const BoundComparison& comparison, const LevelSpec& level,
+                       uint64_t a, uint64_t b, bool bounds_only) const;
+    // One direction of it: `value`, of the scalar column's dictionary, against
+    // every element of `row`'s list.
+    bool NearCell(const BoundComparison& comparison, const LevelSpec& level,
+                  uint32_t value, uint64_t row, bool bounds_only) const;
 
     std::vector<BoundComparison> bound_;
     // unique_ptr so the tables keep their address as the vector grows, and so a

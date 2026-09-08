@@ -111,34 +111,44 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
             }
         }
         bool fuzzy = false;
+        bool list_fuzzy = false;
+        bool contains = false;
         for (const LevelSpec& level : spec.levels) {
             if (level.type == LevelType::kLevenshtein ||
                 level.type == LevelType::kJaroWinkler) {
                 fuzzy = true;
-                break;
-            }
-        }
-        if (use_signatures && fuzzy && bound.strings != nullptr) {
-            const Dictionary* dict = &bound.strings->dict;
-            for (const auto& entry : built) {
-                if (entry.first == dict) {
-                    bound.signatures = entry.second;
-                    break;
-                }
-            }
-            if (bound.signatures == nullptr) {
-                tables_.push_back(std::make_unique<SignatureTable>());
-                tables_.back()->Build(*dict);
-                bound.signatures = tables_.back().get();
-                built.emplace_back(dict, tables_.back().get());
-            }
-        }
-        bool contains = false;
-        for (const LevelSpec& level : spec.levels) {
-            if (level.type == LevelType::kListContains) {
+            } else if (level.type == LevelType::kListLevenshtein ||
+                       level.type == LevelType::kListJaroWinkler) {
+                list_fuzzy = true;
+            } else if (level.type == LevelType::kContainsLevenshtein ||
+                       level.type == LevelType::kContainsJaroWinkler) {
+                // A fuzzy membership level reads a value of one dictionary
+                // against elements of the other, so it wants both tables -- and
+                // the alias map besides, for the exact hit it short-circuits on.
+                fuzzy = true;
+                list_fuzzy = true;
                 contains = true;
-                break;
+            } else if (level.type == LevelType::kListContains) {
+                contains = true;
             }
+        }
+        // Signatures belong to a dictionary rather than to a comparison, so the
+        // same table serves every comparison reading that column -- and a list
+        // column asked for by a pairwise level is just another dictionary.
+        auto table_for = [&](const Dictionary* dict) {
+            for (const auto& entry : built) {
+                if (entry.first == dict) return entry.second;
+            }
+            tables_.push_back(std::make_unique<SignatureTable>());
+            tables_.back()->Build(*dict);
+            built.emplace_back(dict, tables_.back().get());
+            return tables_.back().get();
+        };
+        if (use_signatures && fuzzy && bound.strings != nullptr) {
+            bound.signatures = table_for(&bound.strings->dict);
+        }
+        if (use_signatures && list_fuzzy && bound.lists != nullptr) {
+            bound.list_signatures = table_for(&bound.lists->dict);
         }
         if (contains && bound.strings != nullptr && bound.lists != nullptr) {
             // One pass over the list column's dictionary to index it, then one
@@ -252,6 +262,136 @@ bool ComparisonSet::StringLevelFires(const BoundComparison& comparison,
     }
 }
 
+// The pairwise levels, over the cross product of two cells.
+//
+// The cost is |a| x |b| metric evaluations where every other fuzzy level pays
+// one, which is why the two cheap tests in front of it matter more here than
+// anywhere else: a shared element settles the level outright, and the signature
+// bound rejects an element pair for two popcounts. Neither reads a character.
+bool ComparisonSet::ClosestPairFires(const BoundComparison& comparison,
+                                     const LevelSpec& level, uint64_t a, uint64_t b,
+                                     bool bounds_only) const {
+    const StringListColumn& lists = *comparison.lists;
+    const uint64_t a_begin = lists.offsets[a];
+    const uint64_t a_end = lists.offsets[a + 1];
+    const uint64_t b_begin = lists.offsets[b];
+    const uint64_t b_end = lists.offsets[b + 1];
+    // An empty list holds no element pair, so there is nothing that could fire.
+    if (a_begin == a_end || b_begin == b_end) return false;
+
+    const bool jaro = level.type == LevelType::kListJaroWinkler;
+    const int limit = static_cast<int>(level.threshold);
+    // A shared element is a pair at distance zero and similarity one, which no
+    // other pair of the two cells can beat. Finding one therefore settles the
+    // level either way, and both cells are sorted, so it is a linear merge in
+    // front of a quadratic walk rather than a special case of it.
+    if (OverlapSize(lists, a, b) > 0) {
+        return jaro ? level.threshold <= 1.0 : limit >= 0;
+    }
+
+    const SignatureTable* signatures = comparison.list_signatures;
+    const Dictionary& dict = lists.dict;
+    for (uint64_t i = a_begin; i < a_end; ++i) {
+        const uint32_t left = lists.ids[i];
+        for (uint64_t j = b_begin; j < b_end; ++j) {
+            const uint32_t right = lists.ids[j];
+            // The cells share no element, so no two ids here are equal and the
+            // identical-value shortcut the scalar levels take cannot apply.
+            if (signatures != nullptr) {
+                if (jaro) {
+                    if (JaroWinklerUpperBound(
+                            signatures->Mask(left), signatures->Length(left),
+                            signatures->Mask(right),
+                            signatures->Length(right)) < level.threshold) {
+                        continue;
+                    }
+                } else if (LevenshteinLowerBound(signatures->Mask(left),
+                                                 signatures->Length(left),
+                                                 signatures->Mask(right),
+                                                 signatures->Length(right)) > limit) {
+                    continue;
+                }
+            }
+            if (bounds_only) return true;
+            if (jaro) {
+                if (JaroWinklerAtLeast(dict.Value(left), dict.Value(right),
+                                       level.threshold)) {
+                    return true;
+                }
+            } else if (BoundedLevenshtein(dict.Value(left), dict.Value(right), limit) <=
+                       limit) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// One direction of a fuzzy membership level: a value of the scalar column against
+// every element of one row's list.
+//
+// The two columns have separate dictionaries, so this is the one place a level
+// reads a value id of each -- which is why the signature tables of both are held,
+// and why the exact hit is asked of the alias map rather than of an id equality.
+bool ComparisonSet::NearCell(const BoundComparison& comparison, const LevelSpec& level,
+                             uint32_t value, uint64_t row, bool bounds_only) const {
+    if (value == kNullId) return false;
+    const StringListColumn& lists = *comparison.lists;
+    const uint64_t begin = lists.offsets[row];
+    const uint64_t end = lists.offsets[row + 1];
+    if (begin == end) return false;
+
+    const bool jaro = level.type == LevelType::kContainsJaroWinkler;
+    const int limit = static_cast<int>(level.threshold);
+    // Membership is the value at distance zero from itself, which no element can
+    // beat, so an exact hit settles this direction either way. The alias map has
+    // it for one integer lookup and a walk over sorted ids.
+    if (comparison.alias_ids != nullptr && value < comparison.alias_size &&
+        ListContains(lists, row, comparison.alias_ids[value])) {
+        return jaro ? level.threshold <= 1.0 : limit >= 0;
+    }
+
+    const std::string_view text = comparison.strings->dict.Value(value);
+    const SignatureTable* scalar = comparison.signatures;
+    const SignatureTable* elements = comparison.list_signatures;
+    const bool bounded = scalar != nullptr && elements != nullptr;
+    for (uint64_t i = begin; i < end; ++i) {
+        const uint32_t element = lists.ids[i];
+        if (bounded) {
+            if (jaro) {
+                if (JaroWinklerUpperBound(scalar->Mask(value), scalar->Length(value),
+                                          elements->Mask(element),
+                                          elements->Length(element)) < level.threshold) {
+                    continue;
+                }
+            } else if (LevenshteinLowerBound(scalar->Mask(value), scalar->Length(value),
+                                             elements->Mask(element),
+                                             elements->Length(element)) > limit) {
+                continue;
+            }
+        }
+        if (bounds_only) return true;
+        const std::string_view other = lists.dict.Value(element);
+        if (jaro) {
+            if (JaroWinklerAtLeast(text, other, level.threshold)) return true;
+        } else if (BoundedLevenshtein(text, other, limit) <= limit) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Both directions, for the reason the exact level tests both: the relation is
+// asymmetric, and "Bill is one of William's aliases" is evidence whichever row
+// was drawn first. Comparing the two alias lists to each other instead would be
+// the pairwise level above, which agrees where membership does not.
+bool ComparisonSet::NearListFires(const BoundComparison& comparison,
+                                  const LevelSpec& level, uint64_t a, uint64_t b,
+                                  bool bounds_only) const {
+    return NearCell(comparison, level, comparison.strings->ids[a], b, bounds_only) ||
+           NearCell(comparison, level, comparison.strings->ids[b], a, bounds_only);
+}
+
 uint8_t ComparisonSet::LevelForValues(size_t comparison, uint32_t left,
                                       uint32_t right) const {
     const BoundComparison& bound = bound_[comparison];
@@ -335,6 +475,14 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
             return static_cast<double>(shared) / static_cast<double>(together) >=
                    level.threshold;
         }
+
+        case LevelType::kListLevenshtein:
+        case LevelType::kListJaroWinkler:
+            return ClosestPairFires(comparison, level, a, b, false);
+
+        case LevelType::kContainsLevenshtein:
+        case LevelType::kContainsJaroWinkler:
+            return NearListFires(comparison, level, a, b, false);
 
         case LevelType::kListContains: {
             // Both directions, because the relation is asymmetric: a nickname
@@ -424,6 +572,17 @@ bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, const LevelSpe
             // sizes are two subtractions off the offset array.
             return static_cast<double>(std::min(size_a, size_b)) >= level.threshold;
         }
+
+        case LevelType::kListLevenshtein:
+        case LevelType::kListJaroWinkler:
+            // The same walk over the same element pairs, stopped at the bound.
+            // Every pair the metric would accept clears its own bound first, so
+            // this is never false where the level fires.
+            return ClosestPairFires(comparison, level, a, b, true);
+
+        case LevelType::kContainsLevenshtein:
+        case LevelType::kContainsJaroWinkler:
+            return NearListFires(comparison, level, a, b, true);
 
         case LevelType::kListJaccard: {
             const uint64_t size_a =

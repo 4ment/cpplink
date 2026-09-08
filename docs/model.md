@@ -249,12 +249,19 @@ blocking problem, not a model problem.**
 | `list_overlap` | intersection size ≥ `threshold` | string_list |
 | `list_jaccard` | Jaccard similarity ≥ `threshold` | string_list |
 | `list_contains` | either row's value is an element of the other row's list | string + string_list |
+| `contains_levenshtein` | either row's value is within `threshold` edits of an element of the other's list | string + string_list |
+| `contains_jaro_winkler` | either row's value is `threshold` similar to an element of the other's list | string + string_list |
+| `list_levenshtein` | some element pair is within `threshold` edits | string_list |
+| `list_jaro_winkler` | some element pair is at least `threshold` similar | string_list |
 | `else` | always; must be last | — |
 
 A configuration that applies a level to a column type it cannot read is rejected at parse
-time. `list_contains` is the one level that reads two columns of *different* types, a scalar
-against a list of aliases; see [the schema reference](reference/schema.md#a-value-against-a-list-list_contains)
-for what that shape means and what it costs. The rest of the file format is there too.
+time. The three membership levels are the ones that read two columns of *different* types, a
+scalar against a list of aliases; see [the schema reference](reference/schema.md#a-value-against-a-list-list_contains-and-its-fuzzy-half)
+for what that shape means and what it costs. The two pairwise levels are the other shape
+worth reading about before using: they score a list column on the closest pair of elements
+rather than on the elements two rows share, and they are the only levels whose cost grows
+with the data rather than being fixed per pair. The rest of the file format is there too.
 
 ## Why the comparison is fast
 
