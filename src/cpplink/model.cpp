@@ -3,6 +3,7 @@
 
 #include "cpplink/model.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -47,6 +48,12 @@ double ModelLevel::Weight() const {
     return std::log2(m / u);
 }
 
+double ModelInteraction::Bits(uint8_t left_level, uint8_t right_level) const {
+    if (left_level >= left_levels || right_level >= right_levels) return 0.0;
+    const size_t index = static_cast<size_t>(left_level) * right_levels + right_level;
+    return index < bits.size() ? bits[index] : 0.0;
+}
+
 double Model::PriorWeight() const {
     if (lambda <= 0.0 || lambda >= 1.0) return 0.0;
     return std::log2(lambda / (1.0 - lambda));
@@ -77,6 +84,21 @@ std::string ModelJson(const Model& model) {
             item["levels"].push_back(entry);
         }
         root["comparisons"].push_back(item);
+    }
+    if (!model.interactions.empty()) {
+        root["interactions"] = nlohmann::json::array();
+        for (const ModelInteraction& interaction : model.interactions) {
+            nlohmann::json item;
+            item["left"] = interaction.left;
+            item["right"] = interaction.right;
+            item["left_levels"] = interaction.left_levels;
+            item["right_levels"] = interaction.right_levels;
+            item["bits"] = interaction.bits;
+            item["match_bits"] = interaction.match_bits;
+            item["effect"] = interaction.effect;
+            item["sessions"] = interaction.sessions;
+            root["interactions"].push_back(item);
+        }
     }
     return root.dump(2) + "\n";
 }
@@ -166,6 +188,57 @@ bool ParseModelJson(const std::string& text, Model* model, std::string* error) {
         }
         model->comparisons.push_back(std::move(comparison));
     }
+    model->interactions.clear();
+    if (root.contains("interactions") && root["interactions"].is_array()) {
+        for (const nlohmann::json& item : root["interactions"]) {
+            if (!item.is_object() || !item.contains("bits") || !item["bits"].is_array()) {
+                *error = "every interaction needs a \"bits\" array";
+                return false;
+            }
+            ModelInteraction interaction;
+            if (item.contains("left") && item["left"].is_string()) {
+                interaction.left = item["left"].get<std::string>();
+            }
+            if (item.contains("right") && item["right"].is_string()) {
+                interaction.right = item["right"].get<std::string>();
+            }
+            if (item.contains("left_levels") && item["left_levels"].is_number()) {
+                interaction.left_levels = item["left_levels"].get<uint8_t>();
+            }
+            if (item.contains("right_levels") && item["right_levels"].is_number()) {
+                interaction.right_levels = item["right_levels"].get<uint8_t>();
+            }
+            for (const nlohmann::json& value : item["bits"]) {
+                if (!value.is_number()) {
+                    *error = "an interaction's \"bits\" holds a non-number";
+                    return false;
+                }
+                interaction.bits.push_back(value.get<double>());
+            }
+            // The table is the whole term. A truncated one would silently score a
+            // different model from the one that was fitted.
+            const size_t expected =
+                static_cast<size_t>(interaction.left_levels) * interaction.right_levels;
+            if (expected == 0 || interaction.bits.size() != expected) {
+                *error = "interaction \"" + interaction.left + "\" x \"" +
+                         interaction.right + "\" declares " +
+                         std::to_string(interaction.left_levels) + " by " +
+                         std::to_string(interaction.right_levels) + " levels but holds " +
+                         std::to_string(interaction.bits.size()) + " values";
+                return false;
+            }
+            if (item.contains("match_bits") && item["match_bits"].is_number()) {
+                interaction.match_bits = item["match_bits"].get<double>();
+            }
+            if (item.contains("effect") && item["effect"].is_number()) {
+                interaction.effect = item["effect"].get<double>();
+            }
+            if (item.contains("sessions") && item["sessions"].is_number()) {
+                interaction.sessions = item["sessions"].get<size_t>();
+            }
+            model->interactions.push_back(std::move(interaction));
+        }
+    }
     return true;
 }
 
@@ -223,6 +296,31 @@ void PrintModel(const Model& model, std::ostream& out) {
     }
     out << std::string(92, '-') << "\n";
     out << "Weight is log2(m/u): the bits of evidence agreeing at that level carries.\n";
+    PrintInteractions(model, out);
+}
+
+void PrintInteractions(const Model& model, std::ostream& out) {
+    if (model.interactions.empty()) return;
+    out << "\nTwo-way interactions: the bits the independent model counts twice.\n\n";
+    out << std::left << std::setw(22) << "Comparison" << std::setw(22) << "Comparison"
+        << std::right << std::setw(12) << "per match" << std::setw(10) << "effect"
+        << std::setw(10) << "widest" << std::setw(10) << "sessions" << "\n";
+    out << std::string(86, '-') << "\n";
+    for (const ModelInteraction& interaction : model.interactions) {
+        double widest = 0.0;
+        for (const double value : interaction.bits) {
+            widest = std::max(widest, std::fabs(value));
+        }
+        out << std::left << std::setw(22) << Truncate(interaction.left, 21)
+            << std::setw(22) << Truncate(interaction.right, 21) << std::right
+            << std::setw(12) << Fixed(interaction.match_bits, 2) << std::setw(10)
+            << Fixed(interaction.effect, 2) << std::setw(10) << Fixed(widest, 2)
+            << std::setw(10) << interaction.sessions << "\n";
+    }
+    out << std::string(86, '-') << "\n";
+    out << "\"per match\" is what the term moves an average matching pair by, and it\n"
+        << "is the number to read: a negative one says the model was double-counting\n"
+        << "that many bits of evidence on every match.\n";
 }
 
 }  // namespace cpplink

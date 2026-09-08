@@ -186,6 +186,7 @@ It plants corrupted copies of earlier rows and records them, so the file also se
 - Fuzzy thresholds placed from the data rather than by hand *(done)*
 - Columns derived from other columns at load, once per distinct value *(done)*
 - Merging the comparison levels a run cannot tell apart *(done)*
+- Two-way corrections for the columns that are not conditionally independent *(done)*
 - Validation at the 18M-record target *(not yet run; 4M is measured in [`bench/scale/`](bench/scale/))*
 
 ## Getting Started

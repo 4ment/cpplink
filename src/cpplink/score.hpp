@@ -79,6 +79,10 @@ struct ScoreOptions {
     // Bound the whole pair before comparing any of it. Admissible, so false
     // changes nothing but the work done -- which is what a test compares.
     bool use_ceiling = true;
+    // Apply the model's two-way corrections, where it carries any. False scores
+    // the plain conditionally-independent model out of the same file, which is how
+    // the two are measured against each other.
+    bool use_interactions = true;
 };
 
 // The scoring model bound to a store: base weight per pattern, the term-frequency
@@ -123,6 +127,13 @@ class Scorer {
     // to say which ones did.
     bool AdjustsFuzzyLevels() const;
 
+    // The fitted two-way corrections in force, for the waterfall that has to show
+    // them: without these rows it would explain a different sum from the one that
+    // runs.
+    size_t InteractionCount() const { return interactions_.size(); }
+    const std::string& InteractionName(size_t index) const;
+    double InteractionBits(size_t index, uint32_t gamma) const;
+
     double threshold() const { return options_.threshold; }
     bool Dense() const { return dense_; }
     // Distinct patterns an evaluation can actually produce: the product of the
@@ -147,11 +158,28 @@ class Scorer {
         double value = 0.0;
     };
 
+    // One model interaction resolved against the schema: two comparison indices
+    // and a table indexed by the levels they land on.
+    struct BoundInteraction {
+        std::string name;
+        size_t left = 0;
+        size_t right = 0;
+        uint8_t right_levels = 0;
+        std::vector<double> bits;
+    };
+
     const ComparisonSet* comparisons_ = nullptr;
     ScoreOptions options_;
     double prior_ = 0.0;
     std::vector<std::vector<double>> weight_;  // by comparison, by level
     std::vector<TermFrequencyAdjustment> adjustments_;
+
+    std::vector<BoundInteraction> interactions_;
+    // The most the corrections can add to any pair, summed over the terms. The
+    // weight stops being separable once a term is in, so the ceiling adds each
+    // term's largest cell rather than the cell the pair will land on: still an
+    // upper bound, and a few bits looser.
+    double interaction_ceiling_ = 0.0;
 
     std::vector<std::vector<OptimisticLevel>> optimistic_;
     bool dense_ = false;

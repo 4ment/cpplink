@@ -12,7 +12,7 @@ enumerated, compared, scored, then written or dropped, and forgotten.
 cpplink predict --schema <schema.json> --model <model.json> --out <dir>
                 [--threshold BITS | --probability P] [--format bin|csv]
                 [--threads N] [--limit N] [--no-bounds] [--tf-damping F]
-                [--no-signatures] [--spill <dir>] [--spill-sample R]
+                [--no-signatures] [--no-interactions] [--spill <dir>] [--spill-sample R]
                 [--mode MODE] <file.parquet>...
 ```
 
@@ -30,6 +30,7 @@ cpplink predict --schema <schema.json> --model <model.json> --out <dir>
 | `--no-bounds` | off | score every pair exactly instead of using the admissible bracket. **Verification only** |
 | `--no-signatures` | off | disable the per-value character-mask filter. **Verification only** |
 | `--no-ceiling` | off | score every candidate instead of bounding the whole pair first. **Verification only**; 3.2x slower on the 1M sample |
+| `--no-interactions` | off | ignore any two-way corrections the model carries and score the plain conditionally-independent model out of the same file. This is how the two are [measured against each other](estimate.md#what-it-is-worth) |
 | `--fuzzy-tf` | off | term-frequency adjustment on the fuzzy levels too, from neighbourhood mass. Costs a dictionary self-join per column |
 | `--ball-budget N` | 4e10 | value pairs the self-join may look at for one column; a larger dictionary is refused and keeps today's behaviour |
 | `--spill <dir>` | none | also write `(a, b, γ)` at 12 bytes a pair, so the run can be re-scored by [`rescore`](rescore.md) without comparing again |
@@ -180,6 +181,15 @@ Measured on the 1.8M sample at 20 bits: 116,939,057 candidates in **5.6 s agains
 a 6.8× wall saving, 99.85% of candidates never compared, and the same 169,026 edges.
 The saving tracks the threshold, so a run at 0 bits pays much closer to full price — which
 lands where it is wanted, because 0 to 40 bits select nearly the same edges anyway.
+
+!!! warning "A model carrying two-way corrections loosens the ceiling"
+    A correction is not separable across comparisons, so the cell a pair lands on is unknown
+    until its levels are, and the ceiling has to add each term's *largest* cell to stay
+    admissible. On `historical_50k` that takes candidates skipped before any metric runs from
+    29.09% to 4.06% at the same threshold, and `predict` from 1.8 s to 2.2 s at each model's own
+    operating point. It is the whole cost of
+    [`estimate --interactions`](estimate.md#relaxing-conditional-independence); the weight table
+    itself is free.
 
 ## Term frequency on the fuzzy levels
 

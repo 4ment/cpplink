@@ -131,6 +131,14 @@ hurdle every pair starts behind.
     Splink carries the same exposure. Correlated comparisons double-count evidence and push
     weights apart, which is one reason the posterior saturates so aggressively below.
 
+    [`estimate --interactions`](commands/estimate.md#relaxing-conditional-independence) corrects
+    it, for the two or three pairs where it matters. The weight gains a term
+    \(\delta_{cd}(\gamma_c, \gamma_d)\) per fitted pair, which is a function of γ like
+    everything else, so the tabulated scorer absorbs it for free. On `historical_50k`, where one
+    column literally contains two others, it takes end-to-end F1 from 0.8676 to **0.9107**; on
+    `febrl3`, whose columns are independent by construction, it fits nothing and the model is
+    byte-identical. It is off by default.
+
 ## Term-frequency adjustment
 
 A shared surname of "Zolnerowich" is far stronger evidence than a shared "Smith", but both
