@@ -37,7 +37,9 @@ uint8_t BitsFor(size_t level_count) {
 // Only an ordered chain of one metric can say yes. `levenshtein <= 1` and
 // `jaro_winkler >= 0.88` imply each other in neither direction, and nor does an
 // exact match imply `list_overlap >= 2`, because two identical lists need not
-// hold two elements.
+// hold two elements. The pairwise levels are refused under an exact one for the
+// same reason turned around: two identical lists may be empty, and then there is
+// no element pair for a closest one to be.
 bool Implies(const LevelSpec& upper, const LevelSpec& lower) {
     // Before anything else, including the else level, which absorbs whatever is
     // above it: a null level would be absorbed too, and missing is not a weak
@@ -58,16 +60,34 @@ bool Implies(const LevelSpec& upper, const LevelSpec& lower) {
                 return false;
         }
     }
+    // Exact membership is the value at distance zero from an element, so it
+    // implies the fuzzy membership levels the way an exact match implies a fuzzy
+    // one. It says nothing about the pairwise levels, which read the two lists
+    // against each other rather than either value against a list.
+    if (upper.type == LevelType::kListContains) {
+        switch (lower.type) {
+            case LevelType::kContainsLevenshtein:
+                return lower.threshold >= 0.0;
+            case LevelType::kContainsJaroWinkler:
+                return lower.threshold <= 1.0;
+            default:
+                return false;
+        }
+    }
     if (upper.type != lower.type) return false;
     switch (upper.type) {
         case LevelType::kLevenshtein:
         case LevelType::kDateWithin:
         case LevelType::kNumericWithin:
         case LevelType::kGeoWithin:
+        case LevelType::kListLevenshtein:
+        case LevelType::kContainsLevenshtein:
             return upper.threshold <= lower.threshold;
         case LevelType::kJaroWinkler:
         case LevelType::kListJaccard:
         case LevelType::kListOverlap:
+        case LevelType::kListJaroWinkler:
+        case LevelType::kContainsJaroWinkler:
             return upper.threshold >= lower.threshold;
         default:
             return false;
@@ -78,7 +98,8 @@ std::string WhyNot(const LevelSpec& upper, const LevelSpec& lower) {
     if (upper.type == LevelType::kNull || lower.type == LevelType::kNull) {
         return "missing is not a degree of agreement";
     }
-    if (upper.type != lower.type && upper.type != LevelType::kExact) {
+    if (upper.type != lower.type && upper.type != LevelType::kExact &&
+        upper.type != LevelType::kListContains) {
         return "different metrics: neither predicate implies the other";
     }
     return "the stronger predicate does not imply the weaker one";

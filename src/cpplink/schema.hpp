@@ -86,7 +86,20 @@ enum class LevelType {
     kListOverlap,    // intersection size >= threshold
     kListJaccard,    // Jaccard similarity >= threshold
     kListContains,   // one row's scalar value is an element of the other's list
-    kElse,           // always fires; must be last
+    // The two pairwise levels: the closest pair of elements over the cross
+    // product of the two rows' lists, rather than the elements they share. A set
+    // of email addresses agreeing up to a typo is evidence that an intersection
+    // reads as no agreement at all, and the exact levels above are the special
+    // case where the closest pair is a shared element.
+    kListLevenshtein,  // some element pair is within threshold edits
+    kListJaroWinkler,  // some element pair is at least this similar
+    // The fuzzy half of kListContains, over the same two columns: one row's
+    // scalar value against the elements of the other's list, in both directions.
+    // It costs |a| + |b| metric evaluations where the pairwise levels above cost
+    // |a| x |b|, because only one side of each comparison is a list.
+    kContainsLevenshtein,  // some element is within threshold edits of the value
+    kContainsJaroWinkler,  // some element is at least this similar to the value
+    kElse,                 // always fires; must be last
 };
 
 const char* LevelTypeName(LevelType type);

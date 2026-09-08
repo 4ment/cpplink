@@ -160,6 +160,51 @@ TEST_F(ComparisonConfig, ListContainsReadsAScalarAgainstAList) {
     EXPECT_NE(error_.find("cannot read"), std::string::npos);
 }
 
+// The pairwise levels read one list column, like the set-valued ones beside them:
+// what is different is the relation, not the shape of the columns.
+TEST_F(ComparisonConfig, PairwiseLevelsReadAListColumn) {
+    ASSERT_TRUE(Parse(R"([{"columns":["aliases"],
+        "levels":[{"type":"null"},{"type":"list_levenshtein","threshold":1},
+                  {"type":"list_jaro_winkler","threshold":0.85},
+                  {"type":"else"}]}])"))
+        << error_;
+    // A description reads back as the configuration that produced it, which is
+    // also what keeps it inside the label column every report prints.
+    EXPECT_EQ(schema_.comparisons[0].levels[1].Describe(), "list_levenshtein <= 1");
+    EXPECT_EQ(schema_.comparisons[0].levels[2].Describe(), "list_jaro_winkler >= 0.85");
+    // A scalar column has no cross product to take the closest pair of, and the
+    // level that compares two strings is levenshtein itself.
+    EXPECT_FALSE(Parse(R"([{"columns":["surname"],
+        "levels":[{"type":"list_levenshtein","threshold":1},{"type":"else"}]}])"));
+    EXPECT_NE(error_.find("cannot read"), std::string::npos);
+}
+
+// The fuzzy membership levels read the same two columns list_contains does, so
+// they are checked the same way -- and unlike it, they need a threshold.
+TEST_F(ComparisonConfig, FuzzyMembershipReadsTheSameShapeAsListContains) {
+    ASSERT_TRUE(Parse(R"([{"name":"nickname","columns":["surname","aliases"],
+        "levels":[{"type":"null"},{"type":"list_contains"},
+                  {"type":"contains_levenshtein","threshold":1},
+                  {"type":"contains_jaro_winkler","threshold":0.9},
+                  {"type":"else"}]}])"))
+        << error_;
+    EXPECT_EQ(schema_.comparisons[0].levels[2].Describe(), "contains_levenshtein <= 1");
+    EXPECT_EQ(schema_.comparisons[0].levels[3].Describe(),
+              "contains_jaro_winkler >= 0.90");
+    // One column is not the shape: there is no list for the value to be near.
+    EXPECT_FALSE(Parse(R"([{"columns":["surname"],
+        "levels":[{"type":"contains_levenshtein","threshold":1},{"type":"else"}]}])"));
+    EXPECT_NE(error_.find("cannot read"), std::string::npos);
+    // Reversed, the level would be asking whether a list is near a string.
+    EXPECT_FALSE(Parse(R"([{"columns":["aliases","surname"],
+        "levels":[{"type":"contains_jaro_winkler","threshold":0.9},
+                  {"type":"else"}]}])"));
+    // And a metric level with no threshold is a level with no meaning.
+    EXPECT_FALSE(Parse(R"([{"columns":["surname","aliases"],
+        "levels":[{"type":"contains_levenshtein"},{"type":"else"}]}])"));
+    EXPECT_NE(error_.find("threshold"), std::string::npos);
+}
+
 // Membership is a yes or no: there is no threshold to give it, and offering one
 // would suggest it could be tuned.
 TEST_F(ComparisonConfig, ListContainsTakesNoThreshold) {

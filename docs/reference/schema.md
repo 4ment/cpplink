@@ -172,6 +172,10 @@ the strongest evidence first.
 | `list_overlap` | required | 1 string_list | intersection size ≥ threshold |
 | `list_jaccard` | required | 1 string_list | Jaccard similarity ≥ threshold |
 | `list_contains` | — | 1 string + 1 string_list | either row's value is an element of the other row's list |
+| `contains_levenshtein` | required | 1 string + 1 string_list | either row's value is within threshold edits of an element of the other's list |
+| `contains_jaro_winkler` | required | 1 string + 1 string_list | either row's value is that similar to an element of the other's list |
+| `list_levenshtein` | required | 1 string_list | some element pair is within threshold edits |
+| `list_jaro_winkler` | required | 1 string_list | some element pair is at least this similar |
 | `else` | — | any | always; **must be last** |
 
 An optional `"label"` overrides the generated description in reports:
@@ -180,12 +184,61 @@ An optional `"label"` overrides the generated description in reports:
 {"type": "date_within", "threshold": 370, "label": "within a year"}
 ```
 
-### A value against a list: `list_contains`
+### The closest pair of two lists: `list_levenshtein` and `list_jaro_winkler`
+
+`list_overlap` and `list_jaccard` read the elements two rows **share**.
+The pairwise levels read the closest pair of elements over the **cross product** of the two
+rows' lists, so a pair of rows whose lists intersect in nothing can still agree.
+
+```json
+{"name": "emails", "columns": ["emails"], "levels": [
+  {"type": "null"},
+  {"type": "list_overlap", "threshold": 1},
+  {"type": "list_levenshtein", "threshold": 1},
+  {"type": "list_jaro_winkler", "threshold": 0.9},
+  {"type": "else"}]}
+```
+
+`list_levenshtein` fires when *some* element of one list is within `threshold` edits of
+*some* element of the other; `list_jaro_winkler` when some element pair is at least
+`threshold` similar.
+Both read one `string_list` column, the same as the set-valued levels.
+
+**Put the set-valued levels above them.**
+A shared element is a pair at distance zero and similarity one, which no other pair of the
+two lists can beat, so an intersection level is the special case of a pairwise one and
+belongs higher in the ladder.
+Ordering them the other way makes the intersection level unreachable.
+
+Two things to know before using one.
+
+- **The cost is the cross product.**
+  A pairwise level runs |a| × |b| metric evaluations where a scalar `jaro_winkler` runs one,
+  and the lists are per row, so it is the only level whose per-pair cost is set by the data
+  rather than by the schema.
+  Two cheap tests stand in front of it: a shared element settles the level outright by a
+  linear merge over the two sorted cells, and the per-value signature bound rejects an
+  element pair for two loads and two popcounts without reading a character.
+  Neither helps a column holding lists of hundreds of elements, and that column should be
+  compared some other way.
+- **No term-frequency adjustment, of either kind.**
+  A list column's term frequencies count values rather than sets, the same reason a list
+  `exact` level gets none, and the neighbourhood mass `--fuzzy-tf` and `--fuzzy-u` need is
+  defined over two values of one column rather than two cells of one.
+
+The levels are also accepted inside the `list_contains` shape below, where they read the
+list column, but think before using them there: a pairwise level over two **alias** lists is
+the fuzzy version of intersecting them, and it agrees on the pair the next section explains
+why membership refuses.
+
+### A value against a list: `list_contains` and its fuzzy half
 
 Every other level compares a column against itself.
-`list_contains` is the exception: it reads a scalar string column against a **different**
-column holding a list, and fires when either row's value is an element of the other row's
-list.
+The three membership levels are the exception: they read a scalar string column against a
+**different** column holding a list.
+`list_contains` fires when either row's value is an element of the other row's list;
+`contains_levenshtein` and `contains_jaro_winkler` fire when either row's value is within a
+threshold of an *element* of the other row's list.
 
 The case it exists for is nicknames.
 
@@ -217,8 +270,9 @@ Splitting it into a second comparison would work, but the model would then count
 agree" and "one is the other's alias" as two independent pieces of evidence about the same
 field, which they are not.
 Inside the shape, a one-column level reads whichever of the two columns has the type it
-understands: `exact`, `levenshtein` and `jaro_winkler` the scalar one, `list_overlap` and
-`list_jaccard` the list one.
+understands: `exact`, `levenshtein` and `jaro_winkler` the scalar one, `list_overlap`,
+`list_jaccard` and the two pairwise levels the list one.
+The three membership levels are the ones that read both.
 
 Two consequences worth knowing.
 
@@ -231,7 +285,7 @@ Two consequences worth knowing.
   Keeping a fuzzy level in the same comparison is what makes that harmless: the pair is then
   charged for the names disagreeing, which they do.
 - **No term-frequency adjustment.**
-  A `list_contains` comparison reads two columns and the TF machinery is defined over one, so
+  A membership comparison reads two columns and the TF machinery is defined over one, so
   it is skipped rather than approximated, the same way it is for a list column's `exact`
   level.
   That applies to the [fuzzy-level TF](../model.md#term-frequency-adjustment) too, which is
@@ -241,6 +295,40 @@ Two consequences worth knowing.
   A name column carrying an alias comparison keeps `--fuzzy-tf` only if its fuzzy levels sit
   in a separate single-column comparison, and that is the trade against the dependence
   argument above.
+
+#### The fuzzy half
+
+An alias list is written by someone, so it carries typos like every other field.
+`contains_levenshtein` and `contains_jaro_winkler` are `list_contains` with a metric where it
+has an equality, and everything above holds for them unchanged: the same two columns in the
+same order, the same both-directions rule, the same null rule, and no term frequency.
+
+```json
+{"name": "forename", "columns": ["first_name", "nicknames"], "levels": [
+  {"type": "null"},
+  {"type": "exact"},
+  {"type": "list_contains"},
+  {"type": "contains_levenshtein", "threshold": 1},
+  {"type": "contains_jaro_winkler", "threshold": 0.92},
+  {"type": "else"}]}
+```
+
+**Rank them below `list_contains`.**
+Exact membership is the value at distance zero from an element, so it implies both fuzzy
+levels and they can never fire above it — [`simplify`](../commands/simplify.md) knows that
+implication, and will merge a fuzzy level into the exact one above it where a run cannot tell
+them apart.
+It is also the stronger evidence.
+Being 0.91 similar to something in an alias list is not being in it: on the project's own
+fixture, `william` scores 0.91 against `will`, which sits in an unrelated `robert`'s alias
+list, so the fuzzy level agrees on a pair membership refuses.
+That is a weaker claim, not a wrong one, and the model prices it as such — which is exactly
+what having it as its own level buys.
+
+The cost is |a| + |b| metric evaluations rather than the pairwise levels' |a| × |b|, because
+only one side of each comparison is a list.
+An exact hit short-circuits it through the alias map below, and the signature bound rejects an
+element for two popcounts.
 
 Dense ids are per column, so the two dictionaries are aligned once at bind time into a table
 from scalar value id to list value id.
@@ -262,10 +350,10 @@ Before a data file is opened, cpplink rejects a schema that:
 
 - applies a level to a column type it cannot read (`"comparison "x" applies level "geo_within"
   to a string column, which it cannot read"`);
-- gives a level the wrong number of columns (`geo_within` reads exactly two, `list_contains` a
-  scalar column then a list one);
-- names columns of different types, unless they are the string-then-string_list pair
-  `list_contains` reads;
+- gives a level the wrong number of columns (`geo_within` reads exactly two, the membership
+  levels a scalar column then a list one);
+- names columns of different types, unless they are the string-then-string_list pair the
+  membership levels read;
 - omits a required `threshold`;
 - does not end in `else`, or places an `else` before the end (levels after it can never fire);
 - needs more than 32 bits for the packed γ.

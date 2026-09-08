@@ -3,6 +3,7 @@
 
 #include "cpplink/comparison.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -229,6 +230,162 @@ TEST(SignatureFilterTest, ChangesNoPattern) {
     }
 }
 
+// The pairwise shape: one list column against itself, scored on the *closest*
+// pair of elements rather than the elements the two rows share. Levels in order:
+// null, exact, list_overlap, list_levenshtein, list_jaro_winkler, else -- the
+// pairwise levels below the shared-element ones, because a shared element is the
+// closest pair there can be.
+constexpr const char* kPairwiseConfig = R"({
+  "columns": [
+    {"name": "names", "type": "string_list"}
+  ],
+  "comparisons": [
+    {"name": "names", "columns": ["names"], "levels": [
+      {"type": "null"},
+      {"type": "exact"},
+      {"type": "list_overlap", "threshold": 1},
+      {"type": "list_levenshtein", "threshold": 1},
+      {"type": "list_jaro_winkler", "threshold": 0.85},
+      {"type": "else"}]}
+  ]
+})";
+
+// Rows, in order:
+//   0 {smith, jones}       3 {smyth, jonas}     -- a typo in each, none shared
+//   1 {smith, jones}       4 {}
+//   2 {smith, kowalczyk}   5 {kowalczyk}
+//   6 {smithers}
+class Pairwise : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        std::string error;
+        ASSERT_TRUE(cpplink::ParseSchema(kPairwiseConfig, &schema_, &error)) << error;
+        store_ = std::make_unique<cpplink::RecordStore>(schema_);
+
+        auto& names = std::get<cpplink::StringListColumn>(store_->mutable_column(0));
+        const uint32_t smith = names.dict.Intern("smith");
+        const uint32_t smyth = names.dict.Intern("smyth");
+        const uint32_t jones = names.dict.Intern("jones");
+        const uint32_t jonas = names.dict.Intern("jonas");
+        const uint32_t kowalczyk = names.dict.Intern("kowalczyk");
+        const uint32_t smithers = names.dict.Intern("smithers");
+        // Sorted by id per row, as the loader guarantees.
+        names.ids = {smith,     jones, smith, jones,     smith,
+                     kowalczyk, smyth, jonas, kowalczyk, smithers};
+        names.offsets = {0, 2, 4, 6, 8, 8, 9, 10};
+
+        store_->set_num_records(7);
+        store_->Finalize();
+        ASSERT_TRUE(comparisons_.Bind(schema_, *store_, &error)) << error;
+    }
+
+    cpplink::Schema schema_;
+    std::unique_ptr<cpplink::RecordStore> store_;
+    cpplink::ComparisonSet comparisons_;
+};
+
+// The point of the shape: two rows whose lists intersect in nothing still agree,
+// because "smith" and "smyth" are one edit apart and "jones" and "jonas" are too.
+// Every set-valued level above reads that pair as no agreement at all.
+TEST_F(Pairwise, TheClosestPairDecidesTheLevel) {
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 3), 3);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 3, 0), 3);  // and it is symmetric
+    // "smith" against "smithers" is three edits, so the levenshtein level cannot
+    // fire and the jaro_winkler one below it does.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 6), 4);
+    // Nothing in {kowalczyk} is close to anything in {smith, jones}.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 5), 5);
+}
+
+// A shared element is a pair at distance zero, which no other pair can beat, so
+// the levels reading the intersection are the ones that fire.
+TEST_F(Pairwise, SharedElementsStillWinAbove) {
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 1), 1);  // identical sets
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 2), 2);  // "smith" in both
+}
+
+// An empty list holds no element pair, so there is nothing for a closest pair to
+// be: it is null, not a disagreement, and not an agreement with another empty.
+TEST_F(Pairwise, AnEmptyListIsNull) {
+    EXPECT_TRUE(comparisons_.IsNullValue(0, 4));
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 4), 0);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 4, 4), 0);
+}
+
+// LevelPossible is what Scorer::Ceiling prices a pair with, so it may never be
+// false where the level fires.
+TEST_F(Pairwise, LevelPossibleAgreesWithTheLevelItBounds) {
+    for (uint64_t a = 0; a < store_->NumRecords(); ++a) {
+        for (uint64_t b = 0; b < store_->NumRecords(); ++b) {
+            const uint8_t level = comparisons_.EvaluateOne(0, a, b);
+            EXPECT_TRUE(comparisons_.LevelPossible(0, level, a, b))
+                << "rows " << a << "," << b;
+        }
+    }
+}
+
+// The same admissibility argument the scalar filter is held to, over the cross
+// product instead of one pair of values: the signature bound rejects element
+// pairs, so it must change no pattern.
+TEST(PairwiseSignatureFilterTest, ChangesNoPattern) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(kPairwiseConfig, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+
+    std::mt19937_64 rng(20260909);
+    const std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    std::uniform_int_distribution<size_t> length(3, 12);
+    std::uniform_int_distribution<size_t> cell(0, 3);
+    std::uniform_int_distribution<int> corrupt(0, 2);
+    constexpr uint64_t kRows = 200;
+
+    auto& names = std::get<cpplink::StringListColumn>(store.mutable_column(0));
+    std::vector<std::string> written;
+    names.offsets.push_back(0);
+    for (uint64_t row = 0; row < kRows; ++row) {
+        std::vector<uint32_t> ids;
+        for (size_t i = cell(rng); i > 0; --i) {
+            std::string value;
+            // A third of the elements are corruptions of one written earlier, so
+            // the cross products carry near misses as well as unrelated pairs --
+            // which is the only place the bound has to decide anything.
+            if (!written.empty() && corrupt(rng) == 0) {
+                value = written[rng() % written.size()];
+                if (!value.empty()) value[rng() % value.size()] = alphabet[pick(rng)];
+            } else {
+                for (size_t k = length(rng); k > 0; --k) {
+                    value.push_back(alphabet[pick(rng)]);
+                }
+            }
+            written.push_back(value);
+            ids.push_back(names.dict.Intern(value));
+        }
+        // Sorted and deduplicated, as the loader guarantees.
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        for (const uint32_t id : ids) names.ids.push_back(id);
+        names.offsets.push_back(names.ids.size());
+    }
+    store.set_num_records(kRows);
+    store.Finalize();
+
+    cpplink::ComparisonSet filtered;
+    cpplink::ComparisonSet plain;
+    ASSERT_TRUE(filtered.Bind(schema, store, &error, true)) << error;
+    ASSERT_TRUE(plain.Bind(schema, store, &error, false)) << error;
+    EXPECT_GT(filtered.SignatureBytes(), 0u);
+    EXPECT_EQ(plain.SignatureBytes(), 0u);
+
+    for (uint64_t a = 0; a < kRows; ++a) {
+        for (uint64_t b = a + 1; b < kRows; ++b) {
+            ASSERT_EQ(filtered.Evaluate(a, b), plain.Evaluate(a, b))
+                << "rows " << a << "," << b;
+        }
+    }
+}
+
 // The nickname shape: a forename compared against a forename, with the other
 // row's alias list as a bridge between them. Levels in order: null, exact,
 // list_contains, jaro_winkler, else -- which is the ordering that makes the
@@ -339,6 +496,178 @@ TEST_F(Nicknames, LevelPossibleAgreesWithTheLevelItBounds) {
         for (uint64_t b = 0; b < store_->NumRecords(); ++b) {
             const uint8_t level = comparisons_.EvaluateOne(0, a, b);
             EXPECT_TRUE(comparisons_.LevelPossible(0, level, a, b))
+                << "rows " << a << "," << b;
+        }
+    }
+}
+
+// The fuzzy half of the bridge: the same two columns and the same both-directions
+// rule as list_contains, with a metric where that has an id equality. Levels in
+// order: null, exact, list_contains, contains_levenshtein, contains_jaro_winkler,
+// else -- exact membership above the fuzzy levels it implies.
+constexpr const char* kNearNicknameConfig = R"({
+  "columns": [
+    {"name": "forename", "type": "string"},
+    {"name": "aliases", "type": "string_list"}
+  ],
+  "comparisons": [
+    {"name": "forename", "columns": ["forename", "aliases"], "levels": [
+      {"type": "null"},
+      {"type": "exact"},
+      {"type": "list_contains"},
+      {"type": "contains_levenshtein", "threshold": 1},
+      {"type": "contains_jaro_winkler", "threshold": 0.9},
+      {"type": "else"}]}
+  ]
+})";
+
+// Rows, in order:
+//   0 william, aliases {bill, will}   4 no forename, no aliases
+//   1 bil,     no aliases             5 wilhelmina, no aliases
+//   2 billie,  no aliases             6 bill, no aliases
+//   3 robert,  aliases {bob, will}    7 bill, no aliases
+class NearNicknames : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        std::string error;
+        ASSERT_TRUE(cpplink::ParseSchema(kNearNicknameConfig, &schema_, &error)) << error;
+        store_ = std::make_unique<cpplink::RecordStore>(schema_);
+
+        auto& forename = std::get<cpplink::StringColumn>(store_->mutable_column(0));
+        const uint32_t william = forename.dict.Intern("william");
+        const uint32_t bil = forename.dict.Intern("bil");
+        const uint32_t billie = forename.dict.Intern("billie");
+        const uint32_t robert = forename.dict.Intern("robert");
+        const uint32_t wilhelmina = forename.dict.Intern("wilhelmina");
+        const uint32_t bill = forename.dict.Intern("bill");
+        forename.ids = {william,          bil,        billie, robert,
+                        cpplink::kNullId, wilhelmina, bill,   bill};
+
+        auto& aliases = std::get<cpplink::StringListColumn>(store_->mutable_column(1));
+        const uint32_t a_bob = aliases.dict.Intern("bob");
+        const uint32_t a_bill = aliases.dict.Intern("bill");
+        const uint32_t a_will = aliases.dict.Intern("will");
+        // Sorted per row, as the loader guarantees.
+        aliases.ids = {a_bill, a_will, a_bob, a_will};
+        aliases.offsets = {0, 2, 2, 2, 4, 4, 4, 4, 4};
+
+        store_->set_num_records(8);
+        store_->Finalize();
+        ASSERT_TRUE(comparisons_.Bind(schema_, *store_, &error)) << error;
+    }
+
+    cpplink::Schema schema_;
+    std::unique_ptr<cpplink::RecordStore> store_;
+    cpplink::ComparisonSet comparisons_;
+};
+
+// What the level is for: an alias list that holds "bill" reaches a row named
+// "bil", which exact membership reads as no agreement at all.
+TEST_F(NearNicknames, ReachesAnAliasTheExactLevelMisses) {
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 1), 3);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 1, 0), 3);  // either direction
+    // "billie" is two edits from "bill", so the levenshtein level cannot fire and
+    // the jaro_winkler one below it does.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 2), 4);
+    // "wilhelmina" is neither: 0.86 against a 0.90 threshold.
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 5), 5);
+}
+
+// The levels above are untouched by the ones below them, which is what makes the
+// fuzzy levels an addition rather than a replacement.
+TEST_F(NearNicknames, ExactLevelsStillWinAbove) {
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 6, 7), 1);  // two rows named "bill"
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 6), 2);  // "bill" is william's alias
+}
+
+// Being weaker evidence than membership, it agrees where membership refuses:
+// "william" is 0.91 similar to "will", which is in robert's alias list, so the
+// pair william/robert lands on the jaro_winkler level. That is the reason the
+// fuzzy levels rank *below* the exact one rather than replacing it, and it is a
+// different error from the one the pairwise levels would make on the same two
+// columns -- those would compare the alias lists to each other and agree because
+// both hold "will", which says nothing about either name.
+TEST_F(NearNicknames, IsWeakerEvidenceThanMembership) {
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 3), 4);
+}
+
+TEST_F(NearNicknames, NullIsStillHoldingNeitherPart) {
+    EXPECT_TRUE(comparisons_.IsNullValue(0, 4));
+    // A name with no aliases of its own is reachable through the other row's
+    // list, which here is exactly how the level fires.
+    EXPECT_FALSE(comparisons_.IsNullValue(0, 1));
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 4), 0);
+    EXPECT_EQ(comparisons_.EvaluateOne(0, 4, 4), 0);
+}
+
+TEST_F(NearNicknames, LevelPossibleAgreesWithTheLevelItBounds) {
+    for (uint64_t a = 0; a < store_->NumRecords(); ++a) {
+        for (uint64_t b = 0; b < store_->NumRecords(); ++b) {
+            const uint8_t level = comparisons_.EvaluateOne(0, a, b);
+            EXPECT_TRUE(comparisons_.LevelPossible(0, level, a, b))
+                << "rows " << a << "," << b;
+        }
+    }
+}
+
+// The signature filter reads a value of one dictionary against elements of
+// another here, so the admissibility check is worth running over this shape too.
+TEST(NearNicknameSignatureTest, ChangesNoPattern) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(kNearNicknameConfig, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+
+    std::mt19937_64 rng(20260910);
+    const std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    std::uniform_int_distribution<size_t> length(3, 10);
+    std::uniform_int_distribution<size_t> cell(0, 3);
+    std::uniform_int_distribution<int> corrupt(0, 2);
+    constexpr uint64_t kRows = 300;
+
+    auto& forename = std::get<cpplink::StringColumn>(store.mutable_column(0));
+    auto& aliases = std::get<cpplink::StringListColumn>(store.mutable_column(1));
+    std::vector<std::string> written;
+    const auto value = [&] {
+        std::string text;
+        // A third of the values are corruptions of one written earlier, so names
+        // and alias elements land near each other often enough for the bound to
+        // have to decide something.
+        if (!written.empty() && corrupt(rng) == 0) {
+            text = written[rng() % written.size()];
+            if (!text.empty()) text[rng() % text.size()] = alphabet[pick(rng)];
+        } else {
+            for (size_t k = length(rng); k > 0; --k) text.push_back(alphabet[pick(rng)]);
+        }
+        written.push_back(text);
+        return text;
+    };
+
+    aliases.offsets.push_back(0);
+    for (uint64_t row = 0; row < kRows; ++row) {
+        forename.ids.push_back(forename.dict.Intern(value()));
+        std::vector<uint32_t> ids;
+        for (size_t i = cell(rng); i > 0; --i)
+            ids.push_back(aliases.dict.Intern(value()));
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        for (const uint32_t id : ids) aliases.ids.push_back(id);
+        aliases.offsets.push_back(aliases.ids.size());
+    }
+    store.set_num_records(kRows);
+    store.Finalize();
+
+    cpplink::ComparisonSet filtered;
+    cpplink::ComparisonSet plain;
+    ASSERT_TRUE(filtered.Bind(schema, store, &error, true)) << error;
+    ASSERT_TRUE(plain.Bind(schema, store, &error, false)) << error;
+    EXPECT_GT(filtered.SignatureBytes(), 0u);
+    EXPECT_EQ(plain.SignatureBytes(), 0u);
+
+    for (uint64_t a = 0; a < kRows; ++a) {
+        for (uint64_t b = a + 1; b < kRows; ++b) {
+            ASSERT_EQ(filtered.Evaluate(a, b), plain.Evaluate(a, b))
                 << "rows " << a << "," << b;
         }
     }

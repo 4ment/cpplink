@@ -78,7 +78,7 @@ A comparison can span more than one column: a coordinate pair is one comparison,
   {"type": "else"}]}
 ```
 
-Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`, `numeric_within`, `geo_within`, `list_overlap`, `list_jaccard`, `list_contains`, `else`.
+Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`, `numeric_within`, `geo_within`, `list_overlap`, `list_jaccard`, `list_contains`, `contains_levenshtein`, `contains_jaro_winkler`, `list_levenshtein`, `list_jaro_winkler`, `else`.
 A configuration that applies a level to a column type it cannot read, omits a trailing `else`, or overflows the 32-bit packed pattern is rejected at parse time, before a file is opened.
 
 `list_contains` is the one level whose two columns have different types: a scalar string against a list of aliases, firing when either row's value is an element of the other row's list.
@@ -96,6 +96,25 @@ It is how a `first_name` is checked against a `nicknames` column, and it sits in
   ]
 }
 ```
+
+`list_levenshtein` and `list_jaro_winkler` are the pairwise levels: they read one list column and fire on the *closest* pair of elements over the cross product of the two rows' lists, so two sets of email addresses that share nothing but differ by a typo still agree.
+The set-valued levels above them read the intersection, which is the special case where the closest pair is a shared element, so they belong higher in the same comparison:
+
+```json
+{"name": "emails", "columns": ["emails"], "levels": [
+  {"type": "null"},
+  {"type": "list_overlap", "threshold": 1},
+  {"type": "list_levenshtein", "threshold": 1},
+  {"type": "list_jaro_winkler", "threshold": 0.9},
+  {"type": "else"}]}
+```
+
+The cost is the cross product: |a| x |b| metric evaluations where a scalar fuzzy level runs one.
+A shared element settles the level with a linear merge before that walk starts, and the per-value signature bounds reject an element pair for two popcounts, but a column holding long lists is still the one place a fuzzy level can become expensive.
+
+`contains_levenshtein` and `contains_jaro_winkler` are the fuzzy half of that bridge, over the same two columns and in the same two directions: they fire when either row's value is within the threshold of an *element* of the other row's list, so an alias list holding `bill` reaches a row named `bil`.
+They cost |a| + |b| metric evaluations rather than the pairwise levels' |a| x |b|, because only one side of each comparison is a list.
+Rank them below `list_contains`, which implies them and is stronger evidence: being 0.91 similar to an alias is not being one, and on a fixture where two rows carry `will` for unrelated reasons the fuzzy level agrees where membership refuses.
 
 Blocking sources are declared in the same file and unioned in order.
 Every source here selects on a single column, which is what makes it usable for estimating `m`:

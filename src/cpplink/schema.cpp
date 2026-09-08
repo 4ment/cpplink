@@ -38,6 +38,10 @@ constexpr LevelName kLevelNames[] = {
     {"list_overlap", LevelType::kListOverlap},
     {"list_jaccard", LevelType::kListJaccard},
     {"list_contains", LevelType::kListContains},
+    {"list_levenshtein", LevelType::kListLevenshtein},
+    {"list_jaro_winkler", LevelType::kListJaroWinkler},
+    {"contains_levenshtein", LevelType::kContainsLevenshtein},
+    {"contains_jaro_winkler", LevelType::kContainsJaroWinkler},
     {"else", LevelType::kElse},
 };
 
@@ -200,6 +204,14 @@ std::string LevelSpec::Describe() const {
             return "jaccard >= " + Number(threshold, 2);
         case LevelType::kListContains:
             return "value in list";
+        case LevelType::kListLevenshtein:
+            return "list_levenshtein <= " + Number(threshold, 0);
+        case LevelType::kListJaroWinkler:
+            return "list_jaro_winkler >= " + Number(threshold, 2);
+        case LevelType::kContainsLevenshtein:
+            return "contains_levenshtein <= " + Number(threshold, 0);
+        case LevelType::kContainsJaroWinkler:
+            return "contains_jaro_winkler >= " + Number(threshold, 2);
         case LevelType::kElse:
             return "else";
     }
@@ -291,11 +303,15 @@ bool LevelAcceptsColumn(LevelType level, ColumnType column) {
             return column == ColumnType::kDouble;
         case LevelType::kListOverlap:
         case LevelType::kListJaccard:
+        case LevelType::kListLevenshtein:
+        case LevelType::kListJaroWinkler:
             return column == ColumnType::kStringList;
         case LevelType::kListContains:
+        case LevelType::kContainsLevenshtein:
+        case LevelType::kContainsJaroWinkler:
             // Answered by LevelAcceptsColumns, which sees both columns at once:
-            // this level is the one whose two columns have different types, so a
-            // type at a time cannot decide it.
+            // these are the levels whose two columns have different types, so a
+            // type at a time cannot decide them.
             return false;
     }
     return false;
@@ -311,6 +327,8 @@ size_t LevelColumnCount(LevelType level) {
             return 0;
         case LevelType::kGeoWithin:
         case LevelType::kListContains:
+        case LevelType::kContainsLevenshtein:
+        case LevelType::kContainsJaroWinkler:
             return 2;
         default:
             return 1;
@@ -319,9 +337,9 @@ size_t LevelColumnCount(LevelType level) {
 
 // A comparison ordinarily spans one column type. This is the one shape that does
 // not: a scalar string beside a list of the aliases it may be known by, which is
-// what list_contains reads. Order is part of it -- the scalar first -- because
-// "is this name one of those nicknames" is not the question with the columns the
-// other way round.
+// what the three membership levels read. Order is part of it -- the scalar first
+// -- because "is this name one of those nicknames" is not the question with the
+// columns the other way round.
 bool IsScalarAndList(const std::vector<ColumnType>& types) {
     return types.size() == 2 && types[0] == ColumnType::kString &&
            types[1] == ColumnType::kStringList;
@@ -332,14 +350,18 @@ bool IsScalarAndList(const std::vector<ColumnType>& types) {
 // Almost every level wants one type and every column of it. The exception is the
 // scalar-and-list shape, where a one-column level reads whichever of the two
 // columns has the type it understands: exact and the fuzzy string levels the
-// scalar one, list_overlap and list_jaccard the list one. That is deliberate and
+// scalar one, list_overlap, list_jaccard and the pairwise levels the list one.
+// The membership levels are the ones that read both. That is deliberate and
 // is the reason to want the shape at all. Levels are ordered evidence, so the
 // alias bridge belongs in the same comparison as the name levels it ranks
 // against -- below an exact match and above a fuzzy one -- not in a second
 // comparison whose agreements would then be counted as independent of the
 // first's, which they are not.
 bool LevelAcceptsColumns(LevelType level, const std::vector<ColumnType>& types) {
-    if (level == LevelType::kListContains) return IsScalarAndList(types);
+    if (level == LevelType::kListContains || level == LevelType::kContainsLevenshtein ||
+        level == LevelType::kContainsJaroWinkler) {
+        return IsScalarAndList(types);
+    }
     if (IsScalarAndList(types)) {
         return LevelColumnCount(level) <= 1 && (LevelAcceptsColumn(level, types[0]) ||
                                                 LevelAcceptsColumn(level, types[1]));
