@@ -11,6 +11,7 @@
 #include <variant>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
@@ -65,7 +66,12 @@ constexpr const char* kSampleSchema = R"({
 class RoundTrip : public ::testing::Test {
    protected:
     void SetUp() override {
-        dir_ = std::filesystem::temp_directory_path() / "cpplink_roundtrip";
+        // One directory per process, because the test binary is run once per case:
+        // a fixed name has concurrent cases of this fixture writing the same files
+        // and deleting the directory under one another.
+        dir_ = std::filesystem::temp_directory_path() /
+               ("cpplink_roundtrip_" + std::to_string(::getpid()));
+        std::filesystem::remove_all(dir_);
         std::filesystem::create_directories(dir_);
         data_ = (dir_ / "sample.parquet").string();
         link_ = (dir_ / "sample.b.parquet").string();
