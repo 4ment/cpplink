@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
@@ -30,7 +31,11 @@ struct RawEdge {
 class ClusterFixture : public ::testing::Test {
    protected:
     void SetUp() override {
-        dir_ = std::filesystem::temp_directory_path() / "cpplink_cluster";
+        // One directory per process, because the test binary is run once per case:
+        // a fixed name has concurrent cases of this fixture writing the same files
+        // and deleting the directory under one another.
+        dir_ = std::filesystem::temp_directory_path() /
+               ("cpplink_cluster_" + std::to_string(::getpid()));
         std::filesystem::remove_all(dir_);
         std::filesystem::create_directories(dir_);
 

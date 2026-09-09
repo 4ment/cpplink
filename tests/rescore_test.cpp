@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
@@ -62,7 +63,11 @@ struct Edge {
 class RescoreFixture : public ::testing::Test {
    protected:
     void SetUp() override {
-        dir_ = std::filesystem::temp_directory_path() / "cpplink_rescore";
+        // One directory per process, because the test binary is run once per case:
+        // a fixed name has concurrent cases of this fixture writing the same files
+        // and deleting the directory under one another.
+        dir_ = std::filesystem::temp_directory_path() /
+               ("cpplink_rescore_" + std::to_string(::getpid()));
         std::filesystem::remove_all(dir_);
         std::filesystem::create_directories(dir_);
 
