@@ -4,7 +4,6 @@
 #include "cpplink/string_metrics.hpp"
 
 #include <algorithm>
-#include <bitset>
 #include <cmath>
 #include <cstring>
 #include <string_view>
@@ -22,9 +21,31 @@ constexpr size_t kStackRow = 256;
 // essentially do not occur.
 constexpr size_t kMyersWidth = 64;
 
+// The original formulation's prefix weight and the similarity it starts rewarding
+// at. Named because the screen inside the metric has to apply exactly the metric,
+// not an algebraic rearrangement of it.
+constexpr double kPrefixScale = 0.1;
+constexpr double kBoostThreshold = 0.7;
+
 double ToRadians(double degrees) { return degrees * 3.14159265358979323846 / 180.0; }
 
-int PopCount(uint64_t value) { return static_cast<int>(std::bitset<64>(value).count()); }
+// The prefix bonus, over a Jaro similarity already in hand. Non-decreasing in
+// `jaro` on both sides of the boost threshold -- and non-decreasing in floating
+// point too, since every step of it is -- which is what lets an upper bound on the
+// similarity stand in for an upper bound on the whole metric.
+double ApplyWinkler(std::string_view a, std::string_view b, double jaro,
+                    double prefix_scale, double boost_threshold) {
+    if (jaro < boost_threshold) return jaro;
+    size_t prefix = 0;
+    const size_t limit = std::min<size_t>({a.size(), b.size(), 4});
+    while (prefix < limit && a[prefix] == b[prefix]) ++prefix;
+    return jaro + static_cast<double>(prefix) * prefix_scale * (1.0 - jaro);
+}
+
+// The one instruction, asked for by name. `std::bitset<64>::count()` does not
+// lower to it here -- it leaves a call to the generic bit-iterator count in the
+// binary, which a profile of the scoring loop finds among the hot leaves.
+int PopCount(uint64_t value) { return __builtin_popcountll(value); }
 
 // Myers' bit-vector edit distance (1999). The DP's column of vertical deltas is
 // carried in two words -- vp for +1, vn for -1 -- so a whole column costs a dozen
@@ -67,6 +88,104 @@ int MyersDistance(std::string_view pattern, std::string_view text, int max_dista
 
     for (size_t i = 0; i < m; ++i) peq[static_cast<unsigned char>(pattern[i])] = 0;
     return score > max_distance ? max_distance + 1 : score;
+}
+
+// The classic match window: max(|a|, |b|) / 2 - 1, floored at zero.
+size_t MatchReach(size_t n, size_t m) {
+    const size_t half = std::max<size_t>(n, m) / 2;
+    return half > 0 ? half - 1 : 0;
+}
+
+// Jaro over two values that both fit a 64-bit word, which on the columns this
+// runs against is every value: names and identifiers are not 65 characters long.
+//
+// The two match sets are carried in one word each rather than in two byte arrays,
+// which is what the whole win is. It buys three things at once. The arrays no
+// longer have to be cleared, so a call costs no memset -- two of them, on a
+// function a profile of the scoring loop puts at well over half of all CPU. The
+// inner scan over the window becomes a mask and a count-trailing-zeros, because
+// the positions of each byte of `b` are indexed once up front exactly as Myers'
+// algorithm indexes its pattern. And the transposition pass walks the two match
+// sets bit by bit in step, so it needs no search for the next matched position.
+//
+// The greedy choice is unchanged -- the first unmatched equal position in the
+// window, scanning up -- so this returns bit-for-bit what the byte-array path
+// below returns.
+//
+// `screen` is a Jaro-Winkler threshold the caller is testing against, or zero to
+// ask for the exact similarity. Once the match count is known it caps the
+// similarity on its own, because a transposition can only ever cost bits; where
+// the whole metric applied to that cap already falls short of the threshold, the
+// cap is returned instead of finishing. The caller then reaches the same verdict
+// from it that the exact value would have given, because the metric is
+// non-decreasing in the similarity and the cap is never below the truth -- and
+// because the test made here is the caller's own test, not an algebraic
+// rearrangement of it that floating point could round the other way.
+double JaroWords(std::string_view a, std::string_view b, double screen) {
+    const size_t n = a.size();
+    const size_t m = b.size();
+    const size_t reach = MatchReach(n, m);
+
+    // Cleared again at the end, only for the characters this call set, so the cost
+    // stays proportional to the value and not to the alphabet.
+    thread_local uint64_t positions[256] = {0};
+    for (size_t j = 0; j < m; ++j) {
+        positions[static_cast<unsigned char>(b[j])] |= uint64_t{1} << j;
+    }
+
+    uint64_t taken = 0;    // matched positions of b
+    uint64_t claimed = 0;  // matched positions of a
+    size_t matches = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const size_t lo = i > reach ? i - reach : 0;
+        // `lo` only ever rises, so once the window starts past the end of `b`
+        // no later position can match either.
+        if (lo >= m) break;
+        const size_t hi = std::min(i + reach + 1, m);
+        const size_t span = hi - lo;
+        const uint64_t window = (span >= 64 ? ~uint64_t{0} : ((uint64_t{1} << span) - 1))
+                                << lo;
+        const uint64_t candidates =
+            positions[static_cast<unsigned char>(a[i])] & window & ~taken;
+        if (candidates == 0) continue;
+        taken |= candidates & (~candidates + 1);  // the lowest set bit: first match
+        claimed |= uint64_t{1} << i;
+        ++matches;
+    }
+
+    for (size_t j = 0; j < m; ++j) positions[static_cast<unsigned char>(b[j])] = 0;
+    if (matches == 0) return 0.0;
+
+    const double matched = static_cast<double>(matches);
+    // Transpositions only ever lower it, so the count alone caps the similarity.
+    const double best =
+        (matched / static_cast<double>(n) + matched / static_cast<double>(m) + 1.0) / 3.0;
+    // Zero is the caller asking for the exact value, and `levels` is such a caller:
+    // it bins the similarity rather than testing it, so it must not be charged the
+    // prefix scan of a screen it did not ask for.
+    if (screen > 0.0 &&
+        ApplyWinkler(a, b, best, kPrefixScale, kBoostThreshold) < screen) {
+        return best;
+    }
+
+    // Both words hold `matches` bits, so clearing the lowest of each in step pairs
+    // the k-th matched character of `a` with the k-th of `b`, which is what a
+    // transposition is counted on.
+    size_t transpositions = 0;
+    uint64_t left = claimed;
+    uint64_t right = taken;
+    while (left != 0) {
+        if (a[__builtin_ctzll(left)] != b[__builtin_ctzll(right)]) ++transpositions;
+        left &= left - 1;
+        right &= right - 1;
+    }
+    transpositions /= 2;
+
+    // Spelled exactly as the byte-array path below spells it: the two are one
+    // metric, and a level decision can sit on the last bit of it.
+    return (matched / static_cast<double>(n) + matched / static_cast<double>(m) +
+            (matched - static_cast<double>(transpositions)) / matched) /
+           3.0;
 }
 
 }  // namespace
@@ -114,15 +233,21 @@ int BoundedLevenshtein(std::string_view a, std::string_view b, int max_distance)
     return prev[n] > max_distance ? max_distance + 1 : prev[n];
 }
 
-double Jaro(std::string_view a, std::string_view b) {
+namespace {
+
+// Jaro, with the screen `JaroWords` documents. The byte-array path takes no
+// screen: it runs only on values longer than a word, which the columns this serves
+// do not hold, so there is nothing there worth the second spelling of the metric.
+double JaroScreened(std::string_view a, std::string_view b, double screen) {
     if (a.empty() && b.empty()) return 1.0;
     if (a.empty() || b.empty()) return 0.0;
 
     const size_t n = a.size();
     const size_t m = b.size();
-    // The classic match window: max(|a|, |b|) / 2 - 1, floored at zero.
-    const size_t half = std::max<size_t>(n, m) / 2;
-    const size_t reach = half > 0 ? half - 1 : 0;
+    // Both sides fit one word on every column this is asked about; the byte-array
+    // path below stays for the values that do not.
+    if (n <= kMyersWidth && m <= kMyersWidth) return JaroWords(a, b, screen);
+    const size_t reach = MatchReach(n, m);
 
     char stack_a[kStackRow];
     char stack_b[kStackRow];
@@ -170,14 +295,13 @@ double Jaro(std::string_view a, std::string_view b) {
            3.0;
 }
 
+}  // namespace
+
+double Jaro(std::string_view a, std::string_view b) { return JaroScreened(a, b, 0.0); }
+
 double JaroWinkler(std::string_view a, std::string_view b, double prefix_scale,
                    double boost_threshold) {
-    const double jaro = Jaro(a, b);
-    if (jaro < boost_threshold) return jaro;
-    size_t prefix = 0;
-    const size_t limit = std::min<size_t>({a.size(), b.size(), 4});
-    while (prefix < limit && a[prefix] == b[prefix]) ++prefix;
-    return jaro + static_cast<double>(prefix) * prefix_scale * (1.0 - jaro);
+    return ApplyWinkler(a, b, Jaro(a, b), prefix_scale, boost_threshold);
 }
 
 double JaroWinklerUpperBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
@@ -211,7 +335,15 @@ bool JaroWinklerAtLeast(std::string_view a, std::string_view b, double threshold
     const double ratio = static_cast<double>(shorter) / static_cast<double>(longer);
     const double jaro_bound = (2.0 + ratio) / 3.0;
     if (0.4 + 0.6 * jaro_bound < threshold) return false;
-    return JaroWinkler(a, b) >= threshold;
+    // The threshold goes down into the metric, so the match count alone can end the
+    // call before a transposition is counted. The count is what the signature bound
+    // could only bound, since a presence mask knows nothing of position, of
+    // multiplicity, or of the match window. Where it does end the call the value
+    // that comes back is an over-estimate the metric has already been shown to
+    // score below the threshold, so the same test decides both cases and there is
+    // nothing here that can disagree with `JaroWinkler(a, b) >= threshold`.
+    const double jaro = JaroScreened(a, b, threshold);
+    return ApplyWinkler(a, b, jaro, kPrefixScale, kBoostThreshold) >= threshold;
 }
 
 double HaversineKm(double lat_a, double lon_a, double lat_b, double lon_b) {
