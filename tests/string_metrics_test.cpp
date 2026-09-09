@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -30,6 +31,46 @@ int ReferenceLevenshtein(const std::string& a, const std::string& b) {
         previous = current;
     }
     return previous[b.size()];
+}
+
+// The textbook Jaro, kept as deliberately dumb as the reference edit distance
+// above and for the same reason: it is what the bit-parallel implementation has to
+// agree with, so it shares no line of code with it.
+double ReferenceJaro(const std::string& a, const std::string& b) {
+    if (a.empty() && b.empty()) return 1.0;
+    if (a.empty() || b.empty()) return 0.0;
+    const size_t n = a.size();
+    const size_t m = b.size();
+    const size_t half = std::max(n, m) / 2;
+    const size_t reach = half > 0 ? half - 1 : 0;
+    std::vector<bool> hit_a(n, false);
+    std::vector<bool> hit_b(m, false);
+    size_t matches = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const size_t lo = i > reach ? i - reach : 0;
+        const size_t hi = std::min(i + reach + 1, m);
+        for (size_t j = lo; j < hi; ++j) {
+            if (hit_b[j] || a[i] != b[j]) continue;
+            hit_a[i] = true;
+            hit_b[j] = true;
+            ++matches;
+            break;
+        }
+    }
+    if (matches == 0) return 0.0;
+    size_t transpositions = 0;
+    size_t k = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (!hit_a[i]) continue;
+        while (!hit_b[k]) ++k;
+        if (a[i] != b[k]) ++transpositions;
+        ++k;
+    }
+    transpositions /= 2;
+    const double matched = static_cast<double>(matches);
+    return (matched / static_cast<double>(n) + matched / static_cast<double>(m) +
+            (matched - static_cast<double>(transpositions)) / matched) /
+           3.0;
 }
 
 TEST(LevenshteinTest, CountsSingleEdits) {
@@ -86,6 +127,56 @@ TEST(JaroWinklerTest, BoostsSharedPrefixesOnlyAboveTheThreshold) {
     const double jaro = cpplink::Jaro("abcde", "abxyz");
     ASSERT_LT(jaro, 0.7);
     EXPECT_DOUBLE_EQ(cpplink::JaroWinkler("abcde", "abxyz"), jaro);
+}
+
+// Jaro has two implementations -- one word per match set where both values fit a
+// word, the byte arrays where they do not -- and they are one metric, so the
+// lengths here straddle that boundary deliberately. A disagreement in the last bit
+// is a level decision that moves, not a rounding curiosity.
+TEST(JaroTest, BothPathsAgreeWithTheReferenceOverRandomPairs) {
+    std::mt19937_64 rng(13);
+    const std::string alphabet = "abcdefgh";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    for (const std::pair<size_t, size_t>& span :
+         {std::pair<size_t, size_t>{0, 14}, std::pair<size_t, size_t>{55, 72}}) {
+        std::uniform_int_distribution<size_t> length(span.first, span.second);
+        for (int trial = 0; trial < 20000; ++trial) {
+            std::string a;
+            std::string b;
+            for (size_t i = length(rng); i > 0; --i) a.push_back(alphabet[pick(rng)]);
+            for (size_t i = length(rng); i > 0; --i) b.push_back(alphabet[pick(rng)]);
+            ASSERT_DOUBLE_EQ(cpplink::Jaro(a, b), ReferenceJaro(a, b))
+                << "'" << a << "' vs '" << b << "'";
+        }
+    }
+}
+
+// The threshold reaches the metric, so the match count can end a call before a
+// transposition is counted. That is only sound while it never changes the answer,
+// which is the whole of what this asserts -- at thresholds either side of the
+// prefix boost, over pairs near enough to sit on the decision.
+TEST(JaroWinklerTest, AtLeastAgreesWithTheMetricItScreens) {
+    std::mt19937_64 rng(14);
+    const std::string alphabet = "abcd";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    std::uniform_int_distribution<size_t> length(1, 12);
+    for (int trial = 0; trial < 20000; ++trial) {
+        std::string a;
+        std::string b;
+        for (size_t i = length(rng); i > 0; --i) a.push_back(alphabet[pick(rng)]);
+        // Mostly a corruption of `a`, so the pairs land near the thresholds rather
+        // than being rejected on length or on a mask before the metric runs.
+        b = a;
+        if (!b.empty()) b[pick(rng) % b.size()] = alphabet[pick(rng)];
+        if (trial % 3 == 0) {
+            for (size_t i = length(rng); i > 0; --i) b.push_back(alphabet[pick(rng)]);
+        }
+        for (const double threshold : {0.5, 0.68, 0.7, 0.8, 0.88, 0.9, 0.95, 1.0}) {
+            ASSERT_EQ(cpplink::JaroWinklerAtLeast(a, b, threshold),
+                      cpplink::JaroWinkler(a, b) >= threshold)
+                << "'" << a << "' vs '" << b << "' at " << threshold;
+        }
+    }
 }
 
 TEST(HaversineTest, MeasuresKnownDistances) {
