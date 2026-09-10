@@ -11,7 +11,8 @@ data.
 
 ```sh
 cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>
-                --out <dir> [--threshold BITS | --probability P]
+                --out <dir|file.csv|file.parquet>
+                [--threshold BITS | --probability P]
                 [--format bin|csv] [--threads N] [--limit N]
                 [--mode MODE] <file.parquet>...
 ```
@@ -21,12 +22,12 @@ cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>
 | `--schema <file>` | — | required; must be the schema the spill was written with |
 | `--model <file>` | — | required; the **new** model to score under |
 | `--spill <dir>` | — | required; a directory written by [`predict --spill`](predict.md) |
-| `--out <dir>` | — | required; directory for the edge shards |
-| `--threshold BITS` | — | keep edges with match weight ≥ this many bits |
+| `--out <path>` | — | required. As in [`predict`](predict.md#one-file-or-one-shard-per-thread): a name ending `.csv`, `.parquet` or `.pq` is one merged file, anything else a directory of shards |
+| `--threshold BITS` | — | keep predictions with match weight ≥ this many bits |
 | `--probability P` | — | same, expressed as a posterior in (0, 1) |
 | `--format bin\|csv` | `bin` | as in [`predict`](predict.md) |
 | `--threads N` | hardware | capped at the number of spill shards |
-| `--limit N` | unlimited | stop after N edges |
+| `--limit N` | unlimited | stop after N predictions |
 | `--tf-damping F` | 1.0 | scale the term-frequency adjustment |
 | `--no-bounds` | off | score every pair exactly instead of using the bracket. **Verification only** |
 | *(positional)* | — | required; the parquet file |
@@ -67,7 +68,7 @@ candidate alongside the above-threshold pairs:
 
 ```sh
 cpplink predict --schema examples/sample_schema.json --model model.json \
-                --out edges/ --spill spill/ --spill-sample 0.01 \
+                --out predictions/ --spill spill/ --spill-sample 0.01 \
                 --threshold 20 examples/sample.parquet
 ```
 
@@ -87,10 +88,10 @@ A shard truncated mid-pair is refused too.
 
 ```sh
 cpplink predict --schema examples/sample_schema.json --model model.json \
-                --out edges/ --spill spill/ --threshold 0 examples/sample.parquet
+                --out predictions/ --spill spill/ --threshold 0 examples/sample.parquet
 
 cpplink rescore --schema examples/sample_schema.json --model tuned.json \
-                --spill spill/ --out edges2/ --threshold 20 examples/sample.parquet
+                --spill spill/ --out predictions2/ --threshold 20 examples/sample.parquet
 ```
 
 ```text
@@ -98,7 +99,7 @@ Spill          93,816 pairs from 44,925,919 candidates, written at 0.000 bits
 Threshold      20.000 bits
 Threads        8
 Pairs read     93,816
-Edges          93,816
+Predictions    93,816
 Elapsed        0.02 s  (5836052 pairs/s)
 
 Re-scoring reads only the pairs the spilling run retained. Every pair here is

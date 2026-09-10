@@ -1,6 +1,6 @@
 # `cluster`
 
-**Goal:** join the scored edges into duplicate clusters with a union–find, write the partition,
+**Goal:** join the predictions into duplicate clusters with a union–find, write the partition,
 and — given ground truth — score it.
 
 For deduplication, the connected components at a threshold τ *are* the answer.
@@ -8,7 +8,9 @@ For deduplication, the connected components at a threshold τ *are* the answer.
 ## Synopsis
 
 ```sh
-cpplink cluster --schema <schema.json> --edges <dir> [--out <file.csv>]
+cpplink cluster --schema <schema.json>
+                --predictions <dir|file.csv|file.parquet>
+                [--out <file.csv>]
                 [--threshold BITS | --probability P] [--truth <file.csv>]
                 [--min-size N] <file.parquet>...
 ```
@@ -16,18 +18,49 @@ cpplink cluster --schema <schema.json> --edges <dir> [--out <file.csv>]
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--schema <file>` | — | required. Only `unique_id` is used |
-| `--edges <dir>` | — | required; the directory of `shard-*.bin` from [`predict`](predict.md) |
+| `--predictions <path>` | — | required; either the directory of `shard-*.bin` from [`predict`](predict.md) or the single `.csv` or `.parquet` file it merged them into |
 | `--out <file.csv>` | none | write the partition. Without it the report is printed and nothing is saved |
-| `--threshold BITS` | −∞ | keep only edges at or above this weight. **Re-filters without re-scoring** |
+| `--threshold BITS` | −∞ | keep only predictions at or above this weight. **Re-filters without re-scoring** |
 | `--probability P` | — | the same threshold as a posterior in (0, 1) |
 | `--truth <file.csv>` | none | known duplicate pairs; adds a quality section |
 | `--min-size N` | 2 | smallest cluster written to the output file |
 | *(positional)* | — | required; the parquet file |
 
 !!! tip "Clustering is where you sweep the threshold"
-    The shards carry each edge's weight, so clustering above the threshold `predict` wrote at
-    costs a re-read and **no re-scoring**. Write edges at a low threshold once, then sweep here
+    Every prediction carries its weight, so clustering above the threshold `predict` wrote at
+    costs a re-read and **no re-scoring**. Write at a low threshold once, then sweep here
     in seconds.
+
+## Shards or one file
+
+Both inputs are the same predictions and close into the same partition; what differs is how a row is
+named. A binary shard carries **row indices**, which cost nothing to read and mean nothing
+outside the run that wrote them. A merged file carries `unique_id`s, which is what makes it
+worth anything to another tool and what costs an index to read back:
+
+```text
+Read 142,541 predictions from predictions.parquet in 0.350294 s
+Resolved their ids against the record ids in 0.21232 s
+```
+
+That index is one `uint32` per record kept in the order of the id it names, so a lookup is a
+binary search and the structure is 4 bytes a record beside the union-find's 5. A hash map over
+20M ids would cost an order of magnitude more than the thing it feeds. On the 1.8M-row sample
+it builds in 0.21 s and the whole pass takes 0.35 s, against 0.014 s to read the same predictions as
+shards. Clustering the merged file of a run gives a **byte-identical** partition to clustering
+that run's shards; `tests/cluster_test.cpp` asserts it both ways.
+
+A prediction naming an id no loaded record has is counted and skipped rather than failing the
+run,
+and the report warns:
+
+```text
+WARNING: 12 predictions name a record this data file does not hold (0.01%); they were skipped
+```
+
+That is the wrong data file, the wrong schema, or predictions from another run. It is loud
+because
+it is silent damage otherwise: those pairs simply do not join anything.
 
 `cluster` loads only the id column — it clears `schema.columns` before handing the schema to
 the loader, so no dictionary is built and no comparison column is interned.
@@ -35,13 +68,13 @@ the loader, so no dictionary is built and no comparison column is interned.
 ## Example
 
 ```sh
-cpplink cluster --schema examples/sample_schema.json --edges edges/ \
+cpplink cluster --schema examples/sample_schema.json --predictions predictions/ \
                 --out clusters.csv --truth examples/sample.truth.csv \
                 examples/sample.parquet
 ```
 
 ```text
-Read 169,026 edges from 8 shards in 0.0170545 s
+Read 169,026 predictions from 8 shards in 0.0170545 s
 Weights 30.017 to 115.841 bits
 143,062 of them merged two components (84.64%)
 
@@ -75,19 +108,22 @@ Wrote clusters.csv
 
 ## Reading the output
 
-### The edge pass
+### The prediction pass
+
+Clustering reads the predictions as the edges of a graph, so this section counts them as edges:
+a prediction that joins two components is an edge that did something.
 
 ```text
-Read 169,026 edges from 8 shards in 0.0170545 s
+Read 169,026 predictions from 8 shards in 0.0170545 s
 Weights 30.017 to 115.841 bits
 143,062 of them merged two components (84.64%)
 ```
 
 | Line | Meaning |
 | --- | --- |
-| `Read ... edges` | edges above the clustering threshold, and the shards they came from |
+| `Read ... predictions` | predictions above the clustering threshold, and the shards or the file they came from |
 | `Weights` | the range of weights actually used. The minimum tells you whether `--threshold` bit |
-| `... merged two components` | edges that changed the partition. The rest were redundant — both endpoints were already connected |
+| `... merged two components` | predictions that changed the partition. The rest were redundant — both endpoints were already connected |
 
 **The merge rate is a structural read on the edge set.** 84.64% means the edges are close to a
 forest: the duplicate groups are small and there is not much redundancy for union–find to
@@ -100,9 +136,9 @@ the file.
 | Line | Meaning |
 | --- | --- |
 | `N clusters of two or more, covering R records` | the answer, and its coverage of the file |
-| `records stayed alone` | singletons — records with no above-threshold edge |
+| `records stayed alone` | singletons — records with no above-threshold prediction |
 | `Largest cluster` | **watch this.** Union–find is transitive, so one bad edge between two correct clusters merges both entirely. A largest cluster in the thousands means a chain ran away |
-| `asserts N duplicate pairs` | \(\sum \binom{\text{size}}{2}\) over clusters — the pairs the partition *claims*, which is more than the edges scored |
+| `asserts N duplicate pairs` | \(\sum \binom{\text{size}}{2}\) over clusters — the pairs the partition *claims*, which is more than the pairs scored |
 | `rows written` | rows in the output file, subject to `--min-size` |
 
 Here 14.74% of records land in a cluster of two or more against a planted duplicate rate of 8%
@@ -118,7 +154,7 @@ inside it.
 ### The quality section
 
 Given `--truth`, pairwise precision and recall of the partition — **over the transitive
-closure, not the edges**:
+closure, not the predictions**:
 
 | Field | Meaning |
 | --- | --- |
@@ -142,21 +178,21 @@ closure, not the edges**:
     now closes the truth side before comparing and prints `listed` beside `true` so the gap
     stays visible.
 
-!!! warning "Cluster precision is stricter than edge precision, and it is the one that matters"
+!!! warning "Cluster precision is stricter than the precision `predict` reports"
     A chain a–b–c asserts a–c whether or not that pair was ever scored, so the partition
-    claims pairs `predict` never wrote an edge for. Here it asserts 169,922 pairs against
-    169,026 edges.
+    claims pairs `predict` never wrote a prediction for. Here it asserts 169,922 pairs against
+    169,026 predictions.
 
-    **That gap is the number to watch when blocking widens.** One wrong edge between two
+    **That gap is the number to watch when blocking widens.** One wrong prediction between two
     correct clusters turns into every cross pair between them, and it is completely invisible
-    in the edge-level numbers `predict` reports.
+    in the pair-level numbers `predict` reports.
 
 ## Sweeping the threshold
 
-Because re-clustering costs a re-read, sweeping is cheap. On a 1M-row sample over a fixed edge
-set:
+Because re-clustering costs a re-read, sweeping is cheap. On a 1M-row sample over a fixed set
+of predictions:
 
-| Threshold (bits) | Edges kept | Clusters | Asserted pairs | Precision | Recall | F1 |
+| Threshold (bits) | Predictions kept | Clusters | Asserted pairs | Precision | Recall | F1 |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 0 | 93,816 | 67,802 | 94,315 | 1.0000 | 0.9953 | **0.9976** |
 | 20 | 93,816 | 67,802 | 94,315 | 1.0000 | 0.9953 | **0.9976** |
@@ -190,6 +226,8 @@ written; singletons are excluded by default.
 ## Cost
 
 The union–find is `uint32` parent plus `uint8` rank — **5 bytes a record**, 100 MB at 20M rows —
-and the shards are streamed past it with **no edge retained**. The pass over 142k edges and
-1.8M records took 0.016 s against 36 s to produce those edges, which is why the lock-free
+and the predictions are streamed past it with **none retained**, from a shard directory or from
+a merged file alike (a merged file adds the id index, 4 bytes a record). The pass over 142k
+predictions and 1.8M records took 0.016 s against 36 s to produce them, which is why the
+lock-free
 CAS version the design mentions stays unbuilt.

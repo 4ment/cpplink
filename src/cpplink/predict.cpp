@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "cpplink/merge_edges.hpp"
 #include "cpplink/pair_stream.hpp"
 #include "cpplink/spill.hpp"
 
@@ -307,6 +308,15 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         manifest.layout = GammaLayout(comparisons);
         if (!WriteSpillManifest(options.spill_dir, manifest, error)) return false;
     }
+    if (!options.merge_path.empty()) {
+        if (!MergeStagedShards(store, options.out_dir, options.merge_path,
+                               options.format == EdgeFormat::kBinary,
+                               &report->merge_seconds, error)) {
+            return false;
+        }
+        report->shards.clear();
+        report->merged_path = options.merge_path;
+    }
     report->seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return true;
@@ -323,7 +333,7 @@ void PrintPredictReport(const PredictReport& report, const Scorer& scorer,
             << report.datasets << " inputs\n";
     }
     out << "Candidates     " << WithThousands(report.enumerated) << "\n"
-        << "Edges          " << WithThousands(report.edges) << "  ("
+        << "Predictions    " << WithThousands(report.edges) << "  ("
         << Percent(report.edges, report.enumerated) << " of candidates)\n"
         << "Elapsed        " << std::setprecision(1) << report.seconds << " s";
     if (report.seconds > 0.0) {
@@ -357,11 +367,20 @@ void PrintPredictReport(const PredictReport& report, const Scorer& scorer,
         << WithThousands(report.dropped) << " ("
         << Percent(report.dropped, report.enumerated) << ").\n"
         << "The ceiling and the bracket are both admissible, so skipping and\n"
-        << "dropping on them emit exactly the edges scoring every pair would have.\n";
+        << "dropping on them emit exactly the predictions scoring every pair would\n"
+           "have.\n";
     if (report.truncated) {
-        out << "\nWARNING: the edge limit was reached; the output is incomplete.\n";
+        out << "\nWARNING: the prediction limit was reached; the output is "
+               "incomplete.\n";
     }
-    out << "\nShards\n";
+    if (!report.merged_path.empty()) {
+        out << "\nPredictions\n  " << report.merged_path << "\n"
+            << "  " << report.threads << " shard" << (report.threads == 1 ? "" : "s")
+            << " merged and removed in " << std::setprecision(2) << report.merge_seconds
+            << " s\n";
+        return;
+    }
+    out << "\nPredictions\n";
     for (const std::string& shard : report.shards) out << "  " << shard << "\n";
 }
 

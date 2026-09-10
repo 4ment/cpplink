@@ -17,8 +17,11 @@ commands:
               and with --why, diagnose the ones it does not
   estimate    learn m, u and lambda and write the model
   completeness  estimate blocking recall with no known pairs at all
-  predict     score the candidate pairs and write the edges above a threshold
-  cluster     join the scored edges into duplicate clusters
+  predict     score the candidate pairs and write the predictions above a
+              threshold, as one file or as one shard per thread
+  cluster     join the predictions into duplicate clusters, from either a
+              merged prediction file or a shard directory
+  merge-predictions  combine the prediction shards into one csv or parquet file
   rescore     re-score a spilled run under a new model, without comparing again
   gen-sample  write a sample parquet file with planted duplicates
 
@@ -44,9 +47,10 @@ one store and each becomes a dataset, so two files mean linking rather than dedu
 | [`recall`](recall.md) | What fraction of true matches does blocking even reach? | parquet + schema + truth | stdout |
 | [`estimate`](estimate.md) | What are `m`, `u` and `λ`? | parquet + schema | `model.json` |
 | [`completeness`](completeness.md) | What fraction of true matches does blocking reach, with no truth file? | parquet + schema + model | stdout |
-| [`predict`](predict.md) | Which pairs score above the threshold? | parquet + schema + model | edge shards |
-| [`rescore`](rescore.md) | What would a different model have scored? | parquet + schema + model + spill | edge shards |
-| [`cluster`](cluster.md) | Which records are the same entity? | parquet + schema + edges | `clusters.csv` |
+| [`predict`](predict.md) | Which pairs score above the threshold? | parquet + schema + model | one prediction file, or one shard per thread |
+| [`rescore`](rescore.md) | What would a different model have scored? | parquet + schema + model + spill | the same, one file or shards |
+| [`cluster`](cluster.md) | Which records are the same entity? | parquet + schema + predictions (a file or a shard directory) | `clusters.csv` |
+| [`merge-predictions`](merge-predictions.md) | Give me the predictions as one file something else can open. | prediction shards (+ parquet + schema for the ids) | one csv or parquet file |
 | [`gen-sample`](gen-sample.md) | Give me realistic data with known answers. | — | parquet + truth csv |
 
 ## The order you actually run them
@@ -58,9 +62,9 @@ gen-sample ──▶ inspect ──▶ profile ──▶ levels ──▶ explai
                              to find?     right?                       the matches?
                                                                                   │
    ┌──────────────────────────────────────────────────────────────────────────────┘
-   └▶ estimate ──▶ simplify ──▶ predict ──▶ cluster
-       model.json   which levels   edges/     clusters.csv
-                    are worth
+   └▶ estimate ──▶ simplify ──▶ predict ──────▶ cluster
+       model.json   which levels   predictions.  clusters.csv
+                    are worth      parquet
                     keeping?
 ```
 

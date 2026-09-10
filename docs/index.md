@@ -59,7 +59,7 @@ machine, and what it ran out of was scratch space rather than memory.
 4 Estimate u in closed form, m and λ by EM           cpplink estimate
 5 Score    TF-adjusted, bound-pruned                 cpplink predict
                                                      cpplink rescore
-6 Cluster  union–find over the edge stream           cpplink cluster
+6 Cluster  union–find over the predictions            cpplink cluster
 ```
 
 Every data command takes one or more parquet files. One file deduplicates, two link, and

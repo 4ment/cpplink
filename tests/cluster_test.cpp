@@ -14,8 +14,10 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include "cpplink/merge_edges.hpp"
 #include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
+#include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
 
 namespace {
@@ -71,7 +73,7 @@ class ClusterFixture : public ::testing::Test {
 
     cpplink::ClusterOptions Options() const {
         cpplink::ClusterOptions options;
-        options.edge_dir = dir_.string();
+        options.edge_path = dir_.string();
         return options;
     }
 
@@ -103,7 +105,7 @@ TEST_F(ClusterFixture, TransitiveClosureJoinsAChain) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error))
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error))
         << error;
 
     EXPECT_TRUE(assignment.SameCluster(0, 2));
@@ -126,7 +128,7 @@ TEST_F(ClusterFixture, ShardsAreReadAsOneStream) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error))
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error))
         << error;
     EXPECT_EQ(report.shards.size(), 2u);
     EXPECT_EQ(assignment.clusters, 1u);
@@ -138,7 +140,7 @@ TEST_F(ClusterFixture, RedundantEdgesMergeNothing) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error))
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error))
         << error;
     EXPECT_EQ(report.edges_used, 3u);
     EXPECT_EQ(report.merges, 2u) << "three edges over three records, one is a cycle";
@@ -150,14 +152,14 @@ TEST_F(ClusterFixture, ThresholdSplitsTheWeakLink) {
 
     cpplink::ClusterAssignment loose;
     cpplink::ClusterReport loose_report;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &loose, &loose_report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &loose, &loose_report, &error));
     EXPECT_TRUE(loose.SameCluster(0, 2));
 
     cpplink::ClusterOptions strict = Options();
     strict.threshold = 20.0;
     cpplink::ClusterAssignment tight;
     cpplink::ClusterReport tight_report;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, strict, &tight, &tight_report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, strict, &tight, &tight_report, &error));
     EXPECT_TRUE(tight.SameCluster(0, 1));
     EXPECT_FALSE(tight.SameCluster(0, 2))
         << "re-clustering at a higher threshold needs no re-scoring";
@@ -173,12 +175,12 @@ TEST_F(ClusterFixture, RaisingTheThresholdOnlyRefines) {
     std::string error;
     cpplink::ClusterAssignment previous;
     cpplink::ClusterReport report;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &previous, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &previous, &report, &error));
     for (const double threshold : {10.0, 20.0, 28.0, 35.0, 50.0}) {
         cpplink::ClusterOptions options = Options();
         options.threshold = threshold;
         cpplink::ClusterAssignment current;
-        ASSERT_TRUE(cpplink::Cluster(kRecords, options, &current, &report, &error));
+        ASSERT_TRUE(cpplink::Cluster(*store_, options, &current, &report, &error));
         for (uint32_t a = 0; a < kRecords; ++a) {
             for (uint32_t b = a + 1; b < kRecords; ++b) {
                 if (current.SameCluster(a, b)) {
@@ -198,7 +200,7 @@ TEST_F(ClusterFixture, BucketsAccountForEveryRecord) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error));
     uint64_t records = 0;
     uint64_t clusters = 0;
     for (const cpplink::SizeBucket& bucket : report.buckets) {
@@ -214,7 +216,7 @@ TEST_F(ClusterFixture, QualityIsMeasuredOverTheClosure) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error));
 
     cpplink::TruthPairs truth;
     truth.rows = {{0, 1}, {0, 2}, {1, 2}, {7, 8}};
@@ -234,7 +236,7 @@ TEST_F(ClusterFixture, TruthIsClosedBeforeItIsCompared) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error));
 
     cpplink::TruthPairs truth;
     truth.rows = {{0, 1}, {1, 2}};
@@ -256,7 +258,7 @@ TEST_F(ClusterFixture, ChainingCostsPrecision) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error));
 
     cpplink::TruthPairs truth;
     truth.rows = {{0, 1}, {2, 3}};
@@ -274,7 +276,7 @@ TEST_F(ClusterFixture, WritesTheRepresentativeAndSize) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, options, &assignment, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, options, &assignment, &report, &error));
     uint64_t written = 0;
     ASSERT_TRUE(cpplink::WriteClusters(assignment, *store_, options, &written, &error))
         << error;
@@ -302,7 +304,7 @@ TEST_F(ClusterFixture, MinSizeSelectsLargerClustersOnly) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, options, &assignment, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, options, &assignment, &report, &error));
     uint64_t written = 0;
     ASSERT_TRUE(cpplink::WriteClusters(assignment, *store_, options, &written, &error));
     EXPECT_EQ(written, 3u) << "the pair is below min-size, the triple is not";
@@ -315,8 +317,8 @@ TEST_F(ClusterFixture, RefusesAForeignFile) {
     file.close();
     cpplink::ClusterAssignment assignment;
     std::string error;
-    EXPECT_FALSE(cpplink::Cluster(kRecords, Options(), &assignment, nullptr, &error));
-    EXPECT_NE(error.find("not a cpplink edge shard"), std::string::npos) << error;
+    EXPECT_FALSE(cpplink::Cluster(*store_, Options(), &assignment, nullptr, &error));
+    EXPECT_NE(error.find("not a cpplink prediction shard"), std::string::npos) << error;
 }
 
 TEST_F(ClusterFixture, RefusesAFileTruncatedMidEdge) {
@@ -324,7 +326,7 @@ TEST_F(ClusterFixture, RefusesAFileTruncatedMidEdge) {
     std::filesystem::resize_file(path, std::filesystem::file_size(path) - 6);
     cpplink::ClusterAssignment assignment;
     std::string error;
-    EXPECT_FALSE(cpplink::Cluster(kRecords, Options(), &assignment, nullptr, &error));
+    EXPECT_FALSE(cpplink::Cluster(*store_, Options(), &assignment, nullptr, &error));
     EXPECT_NE(error.find("truncated"), std::string::npos) << error;
 }
 
@@ -332,20 +334,22 @@ TEST_F(ClusterFixture, RefusesAnEdgeOutsideTheData) {
     WriteShard("shard-000.bin", {{0, 1, 30.0}, {1, kRecords + 3, 30.0}});
     cpplink::ClusterAssignment assignment;
     std::string error;
-    EXPECT_FALSE(cpplink::Cluster(kRecords, Options(), &assignment, nullptr, &error));
+    EXPECT_FALSE(cpplink::Cluster(*store_, Options(), &assignment, nullptr, &error));
     EXPECT_NE(error.find("but the data has"), std::string::npos) << error;
 }
 
 TEST_F(ClusterFixture, RefusesADirectoryWithNoShards) {
     cpplink::ClusterAssignment assignment;
     std::string error;
-    EXPECT_FALSE(cpplink::Cluster(kRecords, Options(), &assignment, nullptr, &error));
+    EXPECT_FALSE(cpplink::Cluster(*store_, Options(), &assignment, nullptr, &error));
     EXPECT_NE(error.find("no shard-*.bin"), std::string::npos) << error;
 
+    // A path that is not a directory is read as a merged edge file, and one
+    // whose name says neither csv nor parquet is not one of those either.
     cpplink::ClusterOptions missing = Options();
-    missing.edge_dir = (dir_ / "nowhere").string();
-    EXPECT_FALSE(cpplink::Cluster(kRecords, missing, &assignment, nullptr, &error));
-    EXPECT_NE(error.find("not a directory"), std::string::npos) << error;
+    missing.edge_path = (dir_ / "nowhere").string();
+    EXPECT_FALSE(cpplink::Cluster(*store_, missing, &assignment, nullptr, &error));
+    EXPECT_NE(error.find("neither a directory of shards"), std::string::npos) << error;
 }
 
 TEST_F(ClusterFixture, NoEdgesLeavesEveryRecordAlone) {
@@ -353,7 +357,7 @@ TEST_F(ClusterFixture, NoEdgesLeavesEveryRecordAlone) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error));
     EXPECT_EQ(assignment.clusters, 0u);
     EXPECT_EQ(assignment.singletons, kRecords);
     EXPECT_EQ(assignment.implied_pairs, 0u);
@@ -364,13 +368,110 @@ TEST_F(ClusterFixture, ReportNamesWhatItDid) {
     cpplink::ClusterAssignment assignment;
     cpplink::ClusterReport report;
     std::string error;
-    ASSERT_TRUE(cpplink::Cluster(kRecords, Options(), &assignment, &report, &error));
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &assignment, &report, &error));
     std::ostringstream out;
     cpplink::PrintClusterReport(report, out);
     const std::string text = out.str();
     EXPECT_NE(text.find("clusters of two or more"), std::string::npos);
     EXPECT_NE(text.find("Largest cluster 3"), std::string::npos);
     EXPECT_NE(text.find("1 (singleton)"), std::string::npos);
+}
+
+// A merged file is the same edges by another name, so it has to close into the
+// same partition. It names records by unique_id rather than by row, which is the
+// one thing that differs between the two inputs.
+TEST_F(ClusterFixture, AMergedFileClustersToTheSamePartitionAsItsShards) {
+    WriteShard("shard-000.bin", {{0, 1, 30.0}, {1, 2, 30.0}});
+    WriteShard("shard-001.bin", {{5, 6, 30.0}, {7, 8, 12.0}});
+    cpplink::ClusterAssignment from_shards;
+    cpplink::ClusterReport shard_report;
+    std::string error;
+    ASSERT_TRUE(cpplink::Cluster(*store_, Options(), &from_shards, &shard_report, &error))
+        << error;
+
+    for (const char* name : {"edges.csv", "edges.parquet"}) {
+        cpplink::MergeOptions merge;
+        merge.edge_dir = dir_.string();
+        merge.out_path = (dir_ / name).string();
+        ASSERT_TRUE(cpplink::MergedFormatOf(merge.out_path, &merge.format));
+        cpplink::MergeReport merged;
+        ASSERT_TRUE(cpplink::MergeEdges(store_.get(), merge, &merged, &error)) << error;
+
+        cpplink::ClusterOptions options = Options();
+        options.edge_path = merge.out_path;
+        cpplink::ClusterAssignment from_file;
+        cpplink::ClusterReport report;
+        ASSERT_TRUE(cpplink::Cluster(*store_, options, &from_file, &report, &error))
+            << error;
+
+        EXPECT_EQ(report.edges_read, shard_report.edges_read) << name;
+        EXPECT_EQ(report.merges, shard_report.merges) << name;
+        EXPECT_EQ(report.unresolved, 0u) << name;
+        EXPECT_EQ(report.edge_file, options.edge_path);
+        EXPECT_TRUE(report.shards.empty());
+        EXPECT_EQ(from_file.root, from_shards.root) << name;
+        EXPECT_EQ(from_file.clusters, from_shards.clusters) << name;
+    }
+}
+
+TEST_F(ClusterFixture, AMergedFileFiltersOnTheThresholdToo) {
+    WriteShard("shard-000.bin", {{0, 1, 30.0}, {5, 6, 12.0}});
+    cpplink::MergeOptions merge;
+    merge.edge_dir = dir_.string();
+    merge.out_path = (dir_ / "edges.csv").string();
+    cpplink::MergeReport merged;
+    std::string error;
+    ASSERT_TRUE(cpplink::MergeEdges(store_.get(), merge, &merged, &error)) << error;
+
+    cpplink::ClusterOptions options = Options();
+    options.edge_path = merge.out_path;
+    options.threshold = 20.0;
+    cpplink::ClusterAssignment assignment;
+    cpplink::ClusterReport report;
+    ASSERT_TRUE(cpplink::Cluster(*store_, options, &assignment, &report, &error))
+        << error;
+    EXPECT_EQ(report.edges_read, 2u);
+    EXPECT_EQ(report.edges_used, 1u);
+    EXPECT_TRUE(assignment.SameCluster(0, 1));
+    EXPECT_FALSE(assignment.SameCluster(5, 6));
+}
+
+// An edge naming a record this file does not hold is the wrong data or the wrong
+// run, and it is counted rather than being allowed to fail the whole clustering.
+TEST_F(ClusterFixture, IdsNoRecordCarriesAreCountedNotFatal) {
+    const std::string path = (dir_ / "edges.csv").string();
+    {
+        std::ofstream file(path);
+        file << "id_a,id_b,gamma,match_weight,match_probability\n"
+             << "r0,r1,7,30.000000,1.000000000\n"
+             << "r0,ghost,7,30.000000,1.000000000\n";
+    }
+    cpplink::ClusterOptions options = Options();
+    options.edge_path = path;
+    cpplink::ClusterAssignment assignment;
+    cpplink::ClusterReport report;
+    std::string error;
+    ASSERT_TRUE(cpplink::Cluster(*store_, options, &assignment, &report, &error))
+        << error;
+    EXPECT_EQ(report.edges_read, 2u);
+    EXPECT_EQ(report.unresolved, 1u);
+    EXPECT_EQ(report.edges_used, 1u);
+    EXPECT_TRUE(assignment.SameCluster(0, 1));
+}
+
+TEST_F(ClusterFixture, AParquetFileThatIsNotAnEdgeFileIsRefused) {
+    // The right extension and the wrong columns.
+    const std::string path = (dir_ / "wrong.parquet").string();
+    cpplink::SampleOptions sample;
+    sample.rows = 4;
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(path, sample, &error)) << error;
+
+    cpplink::ClusterOptions options = Options();
+    options.edge_path = path;
+    cpplink::ClusterAssignment assignment;
+    EXPECT_FALSE(cpplink::Cluster(*store_, options, &assignment, nullptr, &error));
+    EXPECT_NE(error.find("no column"), std::string::npos) << error;
 }
 
 }  // namespace

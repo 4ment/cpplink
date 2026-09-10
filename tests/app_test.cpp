@@ -64,7 +64,7 @@ TEST(RunTest, UsageListsEveryCommand) {
     EXPECT_EQ(cpplink::Run({"--help"}, out, err), 0);
     for (const char* command :
          {"inspect", "explain", "explain-blocking", "recall", "estimate", "predict",
-          "rescore", "cluster", "gen-sample"}) {
+          "rescore", "cluster", "merge-predictions", "gen-sample"}) {
         EXPECT_NE(out.str().find(command), std::string::npos) << command;
     }
 }
@@ -111,11 +111,11 @@ TEST(RunTest, PredictRejectsABadSpillSample) {
     EXPECT_NE(err.str().find("(0, 1]"), std::string::npos);
 }
 
-TEST(RunTest, ClusterNeedsSchemaEdgesAndData) {
+TEST(RunTest, ClusterNeedsSchemaPredictionsAndData) {
     std::ostringstream out;
     std::ostringstream err;
     EXPECT_EQ(cpplink::Run({"cluster"}, out, err), 1);
-    EXPECT_NE(err.str().find("--edges"), std::string::npos);
+    EXPECT_NE(err.str().find("--predictions"), std::string::npos);
 }
 
 TEST(RunTest, ClusterRejectsABadProbability) {
@@ -130,4 +130,42 @@ TEST(RunTest, ClusterRejectsAnUnknownOption) {
     std::ostringstream err;
     EXPECT_EQ(cpplink::Run({"cluster", "--parent-array"}, out, err), 1);
     EXPECT_NE(err.str().find("unknown option"), std::string::npos);
+}
+
+TEST(RunTest, MergePredictionsNeedsShardsAndOut) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"merge-predictions", "--shards", "edges"}, out, err), 1);
+    EXPECT_NE(err.str().find("--out"), std::string::npos);
+}
+
+TEST(RunTest, MergePredictionsRejectsAnUnknownFormat) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run(
+                  {"merge-predictions", "--shards", "e", "--out", "o", "--format", "orc"},
+                  out, err),
+              1);
+    EXPECT_NE(err.str().find("csv or parquet"), std::string::npos);
+}
+
+TEST(RunTest, MergePredictionsWantsBothHalvesOfTheIdLookup) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"merge-predictions", "--shards", "e", "--out", "o.csv",
+                            "--schema", "s.json"},
+                           out, err),
+              1);
+    EXPECT_NE(err.str().find("parquet input"), std::string::npos);
+}
+
+TEST(RunTest, PredictRefusesAShardFormatForASingleFileOut) {
+    std::ostringstream out;
+    std::ostringstream err;
+    EXPECT_EQ(cpplink::Run({"predict", "--schema", "s.json", "--model", "m.json", "--out",
+                            "edges.parquet", "--threshold", "20", "--format", "csv",
+                            "data.parquet"},
+                           out, err),
+              1);
+    EXPECT_NE(err.str().find("single file"), std::string::npos) << err.str();
 }

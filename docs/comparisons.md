@@ -239,7 +239,7 @@ Instead, every comparison is granted the best level its cheap bounds still admit
 weights are summed, and if that ceiling is under the threshold the pair is dropped before a
 single metric runs.
 Measured at 20 bits on a 1M-row sample: **90% of candidates never compared, 11.2 s against
-36.3 s, and the edges byte-identical**.
+36.3 s, and the predictions byte-identical**.
 The saving grows with the threshold, which is the right direction.
 
 !!! note "Why branch-and-bound on the running weight does not work"

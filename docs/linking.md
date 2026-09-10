@@ -6,7 +6,7 @@ year's extract against last year's. It is the same model, the same comparisons a
 scoring; only the set of pairs changes.
 
 ```sh
-cpplink predict --schema schema.json --model model.json --out edges/ \
+cpplink predict --schema schema.json --model model.json --out predictions/ \
                 left.parquet right.parquet
 ```
 
@@ -110,9 +110,9 @@ A truth pair that lies *inside* one file is not a miss when linking — it is ou
 
 ## Clustering a link run
 
-[`cluster`](commands/cluster.md) is unchanged. Connected components over cross-file edges give
-the linked groups, and because the partition is transitive it will assert pairs *within* a file
-that no edge scored — two rows of the right-hand file both linked to the same left-hand row are
+[`cluster`](commands/cluster.md) is unchanged. Connected components over the cross-file
+predictions give the linked groups, and because the partition is transitive it will assert
+pairs *within* a file that nothing scored — two rows of the right-hand file both linked to the same left-hand row are
 the same person as each other. That is a correct inference, and `cluster --truth` scores it
 against a transitively closed truth side so it is judged as one.
 

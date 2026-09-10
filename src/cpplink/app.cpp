@@ -3,6 +3,7 @@
 
 #include "cpplink/app.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -17,6 +18,7 @@
 #include "cpplink/explain_blocking.hpp"
 #include "cpplink/inspect.hpp"
 #include "cpplink/levels.hpp"
+#include "cpplink/merge_edges.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/neighbourhood.hpp"
 #include "cpplink/parquet_loader.hpp"
@@ -57,9 +59,14 @@ void PrintUsage(std::ostream& out) {
         << "              and with --why, diagnose the ones it does not\n"
         << "  estimate    learn m, u and lambda and write the model\n"
         << "  completeness  estimate blocking recall with no known pairs at all\n"
-        << "  predict     score the candidate pairs and write the edges above a "
-           "threshold\n"
-        << "  cluster     join the scored edges into duplicate clusters\n"
+        << "  predict     score the candidate pairs and write the predictions "
+           "above a\n"
+        << "              threshold, as one file or as one shard per thread\n"
+        << "  cluster     join the predictions into duplicate clusters, from "
+           "either a\n"
+        << "              merged prediction file or a shard directory\n"
+        << "  merge-predictions  combine the prediction shards into one csv or "
+           "parquet file\n"
         << "  rescore     re-score a spilled run under a new model, without "
            "comparing again\n"
         << "  gen-sample  write a sample parquet file with planted duplicates\n"
@@ -116,7 +123,8 @@ void PrintUsage(std::ostream& out) {
         << "                 [--interactions] [--max-interactions N]\n"
         << "                 [--interaction-bits F] [--all-pairs] "
            "<file.parquet>...\n"
-        << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
+        << "cpplink predict --schema <schema.json> --model <model.json>\n"
+        << "                --out <dir|file.csv|file.parquet>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--no-ceiling]\n"
         << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
@@ -129,13 +137,22 @@ void PrintUsage(std::ostream& out) {
         << "                [--bound-only] [--json] [--mode MODE] [--all-pairs]\n"
         << "                <file.parquet>...\n"
         << "cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>\n"
-        << "                --out <dir> [--threshold BITS | --probability P]\n"
+        << "                --out <dir|file.csv|file.parquet>\n"
+        << "                [--threshold BITS | --probability P]\n"
         << "                [--format bin|csv] [--threads N] [--limit N] "
            "[--mode MODE]\n"
         << "                <file.parquet>...\n"
-        << "cpplink cluster --schema <schema.json> --edges <dir> [--out <file.csv>]\n"
+        << "cpplink cluster --schema <schema.json>\n"
+        << "                --predictions <dir|file.csv|file.parquet>\n"
+        << "                [--out <file.csv>]\n"
         << "                [--threshold BITS | --probability P] [--truth <file.csv>]\n"
         << "                [--min-size N] <file.parquet>...\n"
+        << "cpplink merge-predictions --shards <dir> "
+           "--out <file.csv|file.parquet>\n"
+        << "                          [--format csv|parquet] [--from bin|csv]\n"
+        << "                          [--threshold BITS | --probability P]\n"
+        << "                          [--schema <schema.json>] "
+           "[<file.parquet>...]\n"
         << "cpplink gen-sample --out <file.parquet> [--rows N] [--seed N]\n"
         << "                   [--duplicate-rate F] [--truth <file.csv>]\n"
         << "                   [--out-b <file.parquet>]\n";
@@ -1141,6 +1158,30 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
+// `--out` names either a directory of shards or the single file they are to be
+// merged into, and the extension is what says which. The staging directory sits
+// beside the file so a run that dies mid-merge leaves its shards somewhere
+// obvious rather than in a temporary directory nobody looks in.
+bool ResolveEdgeOutput(const std::string& command, const std::string& out,
+                       bool format_given, std::string* out_dir, std::string* merge_path,
+                       std::ostream& err) {
+    MergeFormat format = MergeFormat::kCsv;
+    if (!MergedFormatOf(out, &format)) {
+        *out_dir = out;
+        return true;
+    }
+    if (format_given) {
+        err << "cpplink " << command << ": --format names the shard format, and --out "
+            << out
+            << " asks for a single file; the file's extension picks csv or "
+               "parquet\n";
+        return false;
+    }
+    *merge_path = out;
+    *out_dir = out + ".shards";
+    return true;
+}
+
 int RunPredict(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
@@ -1156,6 +1197,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
     bool all_pairs = false;
+    bool format_given = false;
+    std::string out_path;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
@@ -1168,7 +1211,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--model") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
         } else if (args[i] == "--out") {
-            if (!TakeValue(args, &i, &options.out_dir, err)) return 1;
+            if (!TakeValue(args, &i, &out_path, err)) return 1;
         } else if (args[i] == "--threshold") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             score.threshold = std::stod(value);
@@ -1192,6 +1235,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
                 err << "cpplink predict: --format wants bin or csv\n";
                 return 1;
             }
+            format_given = true;
         } else if (args[i] == "--threads") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.threads = static_cast<unsigned>(std::stoul(value));
@@ -1231,9 +1275,14 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
         }
     }
     if (schema_path.empty() || data_paths.empty() || model_path.empty() ||
-        options.out_dir.empty()) {
+        out_path.empty()) {
         err << "cpplink predict: --schema <schema.json>, --model <model.json>, "
-               "--out <dir> and a parquet file are required\n";
+               "--out <dir|file.csv|file.parquet> and a parquet file are "
+               "required\n";
+        return 1;
+    }
+    if (!ResolveEdgeOutput("predict", out_path, format_given, &options.out_dir,
+                           &options.merge_path, err)) {
         return 1;
     }
     if (!have_threshold) {
@@ -1321,8 +1370,8 @@ int RunCluster(const std::vector<std::string>& args, std::ostream& out,
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
-        } else if (args[i] == "--edges") {
-            if (!TakeValue(args, &i, &options.edge_dir, err)) return 1;
+        } else if (args[i] == "--predictions") {
+            if (!TakeValue(args, &i, &options.edge_path, err)) return 1;
         } else if (args[i] == "--out") {
             if (!TakeValue(args, &i, &options.out_path, err)) return 1;
         } else if (args[i] == "--truth") {
@@ -1348,9 +1397,9 @@ int RunCluster(const std::vector<std::string>& args, std::ostream& out,
             data_paths.push_back(args[i]);
         }
     }
-    if (schema_path.empty() || data_paths.empty() || options.edge_dir.empty()) {
-        err << "cpplink cluster: --schema <schema.json>, --edges <dir> and a parquet "
-               "file are required\n";
+    if (schema_path.empty() || data_paths.empty() || options.edge_path.empty()) {
+        err << "cpplink cluster: --schema <schema.json>, --predictions <dir|file> "
+               "and a parquet file are required\n";
         return 1;
     }
 
@@ -1360,7 +1409,7 @@ int RunCluster(const std::vector<std::string>& args, std::ostream& out,
     std::string error;
     ClusterAssignment assignment;
     ClusterReport report;
-    if (!Cluster(store->NumRecords(), options, &assignment, &report, &error)) {
+    if (!Cluster(*store, options, &assignment, &report, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -1384,6 +1433,98 @@ int RunCluster(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
+int RunMergeEdges(const std::vector<std::string>& args, std::ostream& out,
+                  std::ostream& err) {
+    std::string schema_path;
+    std::vector<std::string> data_paths;
+    std::string value;
+    MergeOptions options;
+    bool format_given = false;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--shards") {
+            if (!TakeValue(args, &i, &options.edge_dir, err)) return 1;
+        } else if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &options.out_path, err)) return 1;
+        } else if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--format") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (value == "csv") {
+                options.format = MergeFormat::kCsv;
+            } else if (value == "parquet") {
+                options.format = MergeFormat::kParquet;
+            } else {
+                err << "cpplink merge-predictions: --format wants csv or parquet\n";
+                return 1;
+            }
+            format_given = true;
+        } else if (args[i] == "--from") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            if (value == "bin") {
+                options.source = MergeSource::kBinary;
+            } else if (value == "csv") {
+                options.source = MergeSource::kCsv;
+            } else {
+                err << "cpplink merge-predictions: --from wants bin or csv\n";
+                return 1;
+            }
+        } else if (args[i] == "--threshold") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threshold = std::stod(value);
+        } else if (args[i] == "--probability") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            const double probability = std::stod(value);
+            if (probability <= 0.0 || probability >= 1.0) {
+                err << "cpplink merge-predictions: --probability wants a value in (0, "
+                       "1)\n";
+                return 1;
+            }
+            options.threshold = WeightForProbability(probability);
+        } else if (args[i] == "--batch-rows") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.batch_rows = static_cast<size_t>(std::stoull(value));
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink merge-predictions: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else {
+            data_paths.push_back(args[i]);
+        }
+    }
+    if (options.edge_dir.empty() || options.out_path.empty()) {
+        err << "cpplink merge-predictions: --shards <dir> and --out <file> are "
+               "required\n";
+        return 1;
+    }
+    // The extension is what a user means by the format; --format is for a name
+    // that does not carry one.
+    if (!format_given) {
+        const std::string suffix = std::filesystem::path(options.out_path).extension();
+        if (suffix == ".parquet" || suffix == ".pq") {
+            options.format = MergeFormat::kParquet;
+        }
+    }
+    if (schema_path.empty() != data_paths.empty()) {
+        err << "cpplink merge-predictions: naming the ids takes both --schema and the "
+               "parquet input\n";
+        return 1;
+    }
+
+    // Binary shards name rows; only the store can turn one back into an id.
+    std::unique_ptr<RecordStore> store;
+    if (!schema_path.empty()) {
+        if (!LoadIdsOnly(schema_path, data_paths, &store, err)) return 1;
+    }
+
+    std::string error;
+    MergeReport report;
+    if (!MergeEdges(store.get(), options, &report, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    PrintMergeReport(report, out);
+    return 0;
+}
+
 int RunRescore(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
@@ -1393,6 +1534,8 @@ int RunRescore(const std::vector<std::string>& args, std::ostream& out,
     RescoreOptions options;
     ScoreOptions score;
     bool have_threshold = false;
+    bool format_given = false;
+    std::string out_path;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -1407,7 +1550,7 @@ int RunRescore(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--spill") {
             if (!TakeValue(args, &i, &options.spill_dir, err)) return 1;
         } else if (args[i] == "--out") {
-            if (!TakeValue(args, &i, &options.out_dir, err)) return 1;
+            if (!TakeValue(args, &i, &out_path, err)) return 1;
         } else if (args[i] == "--threshold") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             score.threshold = std::stod(value);
@@ -1431,6 +1574,7 @@ int RunRescore(const std::vector<std::string>& args, std::ostream& out,
                 err << "cpplink rescore: --format wants bin or csv\n";
                 return 1;
             }
+            format_given = true;
         } else if (args[i] == "--threads") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.threads = static_cast<unsigned>(std::stoul(value));
@@ -1450,9 +1594,14 @@ int RunRescore(const std::vector<std::string>& args, std::ostream& out,
         }
     }
     if (schema_path.empty() || data_paths.empty() || model_path.empty() ||
-        options.spill_dir.empty() || options.out_dir.empty()) {
+        options.spill_dir.empty() || out_path.empty()) {
         err << "cpplink rescore: --schema <schema.json>, --model <model.json>, "
-               "--spill <dir>, --out <dir> and a parquet file are required\n";
+               "--spill <dir>, --out <dir|file.csv|file.parquet> and a parquet "
+               "file are required\n";
+        return 1;
+    }
+    if (!ResolveEdgeOutput("rescore", out_path, format_given, &options.out_dir,
+                           &options.merge_path, err)) {
         return 1;
     }
     if (!have_threshold) {
@@ -1568,6 +1717,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     if (first == "predict") return RunPredict(rest, out, err);
     if (first == "rescore") return RunRescore(rest, out, err);
     if (first == "cluster") return RunCluster(rest, out, err);
+    if (first == "merge-predictions") return RunMergeEdges(rest, out, err);
     if (first == "gen-sample") return RunGenSample(rest, out, err);
 
     err << "cpplink: unknown command '" << first << "'\n";

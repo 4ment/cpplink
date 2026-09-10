@@ -9,6 +9,9 @@ compile_commands.json
 
 # Pipeline output
 edges/
+predictions/
+predictions.csv
+*.shards/
 clusters.csv
 
 # Local working notes, not part of the repo

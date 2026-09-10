@@ -49,6 +49,12 @@ std::string EdgeShardName(unsigned thread);
 
 struct PredictOptions {
     std::string out_dir;
+    // When set, `out_dir` is a staging directory: the per-thread shards are
+    // written into it and merged into this one file at the end of the run, and
+    // the staging directory is removed. The extension picks csv or parquet.
+    // Threads still write a shard each, because a single writer would have them
+    // contending on it; the merge is one sequential pass afterwards.
+    std::string merge_path;
     EdgeFormat format = EdgeFormat::kBinary;
     unsigned threads = 0;
     uint64_t max_edges = 0;  // 0 is unlimited
@@ -83,6 +89,9 @@ struct PredictReport {
     PairMode mode = PairMode::kAll;
     size_t datasets = 1;
     std::vector<std::string> shards;
+    // The single file the shards were merged into, empty when they were kept.
+    std::string merged_path;
+    double merge_seconds = 0.0;
 };
 
 // Scores the deduplicated union of every source and writes the edges above the
