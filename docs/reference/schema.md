@@ -104,7 +104,7 @@ interned key is an integer equality. A derived column is interned, counted, bloc
 compared and profiled exactly like a read one, and nothing downstream knows it was derived.
 
 **The transform runs once per distinct value of the source dictionary**, not once per row.
-A phonetic key over 18M records is one Soundex per distinct surname plus a gather.
+A phonetic key over 20M records is one Soundex per distinct surname plus a gather.
 
 !!! note "An empty result is a missing value, not an empty one"
     If the transform yields nothing — a name that was entirely punctuation, say — the derived

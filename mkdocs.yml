@@ -37,6 +37,7 @@ nav:
   - Getting started: getting-started.md
   - Concepts:
       - The model: model.md
+      - Comparisons: comparisons.md
       - Estimation and EM: em.md
       - Blocking: blocking.md
       - Linking two files: linking.md

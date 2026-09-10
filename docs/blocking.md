@@ -1,7 +1,7 @@
 # Blocking
 
-Scoring every pair of 1.8M records means 1.6 trillion comparisons; at 18M records it is
-1.6×10¹⁴. Blocking is what makes the problem finite: it generates a *candidate set* that
+Scoring every pair of 1.8M records means 1.6 trillion comparisons; at 20M records it is
+2.0×10¹⁴. Blocking is what makes the problem finite: it generates a *candidate set* that
 contains nearly all the true matches and a vanishing fraction of everything else.
 
 ```text
@@ -12,9 +12,17 @@ Union, deduplicated                               116,939,057
 Blocking keeps 8.08e-05 of all possible pairs.
 ```
 
-Unlike splink, cpplink's blocking is **automatic** rather than rule-written. At 18M records
+Unlike splink, cpplink's blocking is **automatic** rather than rule-written. At 20M records
 hand-tuning rules is the slowest part of the work, and the term-frequency tables the model
 already needs turn out to be enough to generate good candidates on their own.
+
+What is automatic is the *knob*, not the plan.
+A source is a column and a threshold rather than a join condition, the threshold re-selects
+its own values as the data changes, and every source prices itself exactly from the
+term-frequency tables before anything is enumerated.
+Which columns go in the plan, and at what cap or window, is still declared in the schema and
+still chosen by measurement: [`recall`](commands/recall.md) reports what each source
+contributes over and above the ones before it, and no command proposes a plan for you.
 
 ## A blocking source is an iterator, not a join
 
@@ -31,6 +39,17 @@ Several sources run in union, in the order they are declared.
   {"type": "sorted_neighbourhood", "column": "last_name", "window": 20}
 ]
 ```
+
+!!! note "One plan, two unions"
+    The `"blocking"` array is declared once and read twice.
+    [`predict`](commands/predict.md) walks every source in it;
+    [`estimate`](commands/estimate.md) walks only the sources marked **EM-safe**, running one
+    EM session per column those sources condition on, and refuses to estimate `m` at all when
+    none qualify.
+    Everything priced and measured on this page is the prediction union, which is the larger of
+    the two.
+    Why the estimation side has to be narrower, and what it costs when it is not, is the
+    [EM-safety criterion](em.md#em-safety).
 
 ### Union without a global DISTINCT
 
@@ -103,8 +122,8 @@ Three properties fall out, and the third is the interesting one:
   coincide** — no other source here has that alignment.
 
 !!! note "The cap cannot be one global constant"
-    At 18M rows with a cap of 100, `dob` yields 40 pairs and `postcode` yields zero, because
-    18M records over 21k dates puts every value far above the cap. Rare-value blocking is
+    At 20M rows with a cap of 100, `dob` yields 65 pairs and `postcode` yields zero, because
+    20M records over 21k dates puts every value far above the cap. Rare-value blocking is
     useless on low-cardinality columns; those belong in `exact_value` instead. `inspect`
     prints a "Rare pairs" column so this is visible before a run.
 
@@ -125,26 +144,28 @@ with \(s\) the Jaccard similarity, \(r\) rows per band and \(b\) bands — so re
 similarity threshold is computed before the run rather than measured after.
 
 !!! danger "Measured: MinHash over a single column is strictly dominated on this data"
-    Two EM-safe configurations at 18M rows, priced by `explain-blocking` and scored against
-    1.44M planted duplicate pairs:
+    Two EM-safe configurations at 20M rows, priced by `explain-blocking` and scored against
+    1,600,095 planted duplicate pairs:
 
     | Configuration | Candidate pairs | Recall |
     | --- | ---: | ---: |
-    | email + phone + rare(last_name) + SN + **10 MinHash bands** | 63,463,910,811 | 89.46% |
-    | email + phone + **dob exact** + rare(last_name) + wider SN | 8,328,758,176 | **91.12%** |
+    | email + phone + rare(last_name) + SN + **10 MinHash bands** | 74,943,118,464 | 96.40% |
+    | email + phone + **dob exact** + rare(last_name) + wider SN | 10,147,740,082 | **98.58%** |
 
-    **7.6× the cost for less recall.** The ten bands account for 63.2 billion of the 63.5
-    billion candidates and add 4.3% recall between them — roughly a million candidate pairs
-    per additional true pair found. Worse, nine of the ten are near-pure waste: band 0
-    contributed 55,545 pairs no earlier source reached, bands 1–9 contributed 533 to 867 each.
+    **7.4× the cost for less recall.** The ten bands account for 74.6 billion of the 74.9
+    billion candidates and add 5.6 points of recall between them — roughly 840,000 candidate
+    pairs per additional true pair found. Worse, nine of the ten are near-pure waste: band 0
+    contributed 80,006 pairs no earlier source reached, bands 1–9 contributed 684 to 1,293
+    each.
 
     The reason is that **bands over the same column are strongly correlated in the population
     that matters**, even though the S-curve treats them as independent given Jaccard
     similarity. A duplicate's surname is bimodal — either it survived corruption intact and
     every band agrees, or it was mangled and they all miss. There is little probability mass
-    in between for extra bands to catch. The S-curve is not wrong; it is being averaged over
-    the wrong distribution. A band also degenerated: one key covered 95,808 records and
-    produced 14.2 billion pairs by itself.
+    in between for extra bands to catch. Every band reads 60.8% to 61.1% pair completeness
+    alone, and the ten together reach almost none of the pairs the others miss. The S-curve is
+    not wrong; it is being averaged over the wrong distribution. A band also degenerated: one
+    key covered 71,425 records and produced 2.55 billion pairs by itself.
 
 ### `sorted_neighbourhood` — the cheap complement
 
@@ -232,13 +253,14 @@ slightly above the ceiling because it is transitive; see
 
 ## Enumeration is not the bottleneck
 
-Walking the deduplicated union of 8.25 billion pairs at 18M records, including the
-earlier-source predicate, took **142 seconds single-threaded** — about 17 ns per pair. Against
-the ~4,090 ns it takes to *evaluate* a pair, candidate generation is **240× cheaper than the
-comparison it feeds**.
+Walking the deduplicated union of 1.01×10¹⁰ pairs at 20M records, including the
+earlier-source predicate, took **132 seconds single-threaded** and 41 s of that was the load —
+about **9 ns per pair**. Against the ~4,090 ns it takes to *evaluate* a pair, candidate
+generation is **450× cheaper than the comparison it feeds**, and still 23× cheaper than the
+207 ns a candidate the same run's scoring pass costs with the pair-global ceiling on.
 
 Effort spent making blocking faster is effort wasted. The place to spend it is either the
-comparison (see [the model](model.md#why-the-comparison-is-fast)) or the plan itself: a
+comparison (see [comparisons](comparisons.md#what-a-level-costs)) or the plan itself: a
 frequency cap or band count yielding 10¹¹ candidates instead of 5×10⁹ turns a two-minute run
 into a day, and no amount of engineering below it helps. `explain-blocking` exists to make
 that visible in seconds rather than hours.

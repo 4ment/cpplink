@@ -4,7 +4,7 @@
 
 [`recall`](recall.md) is the falsifiability check for automatic blocking, and it needs a truth
 file.
-On an 18M-row production file there is no truth file, which leaves the most important number in
+On a 20M-row production file there is no truth file, which leaves the most important number in
 the pipeline unmeasurable exactly where it matters most.
 This command estimates it instead, from the model and the term frequencies, and reports what it
 assumed to do so.

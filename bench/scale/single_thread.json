@@ -1,0 +1,500 @@
+{
+  "threads": 1,
+  "runs": [
+    {
+      "tag": "s250k",
+      "records": 250000,
+      "candidate_pairs": 6554050,
+      "sum_over_sources": 7077325,
+      "pairs_unblocked": 31249875000,
+      "edges": 23199,
+      "candidates_per_second": 4411291,
+      "skipped_share": 99.57,
+      "f1": 0.9978,
+      "precision": 1.0,
+      "recall": 0.9955,
+      "stages": {
+        "blocking": {
+          "seconds": 0.35,
+          "rss_bytes": 229933056
+        },
+        "estimate": {
+          "seconds": 6.34,
+          "rss_bytes": 290324480
+        },
+        "predict": {
+          "seconds": 1.86,
+          "rss_bytes": 248954880
+        },
+        "cluster": {
+          "seconds": 0.1,
+          "rss_bytes": 66093056
+        }
+      },
+      "wall_seconds": 8.3,
+      "peak_rss_bytes": 290324480,
+      "gen_seconds": 0.63
+    },
+    {
+      "tag": "s500k",
+      "records": 500000,
+      "candidate_pairs": 16227174,
+      "sum_over_sources": 17937150,
+      "pairs_unblocked": 124999750000,
+      "edges": 46966,
+      "candidates_per_second": 4551441,
+      "skipped_share": 99.61,
+      "f1": 0.9977,
+      "precision": 1.0,
+      "recall": 0.9954,
+      "stages": {
+        "blocking": {
+          "seconds": 0.76,
+          "rss_bytes": 348553216
+        },
+        "estimate": {
+          "seconds": 13.53,
+          "rss_bytes": 418627584
+        },
+        "predict": {
+          "seconds": 4.31,
+          "rss_bytes": 361349120
+        },
+        "cluster": {
+          "seconds": 0.14,
+          "rss_bytes": 89571328
+        }
+      },
+      "wall_seconds": 17.98,
+      "peak_rss_bytes": 418627584,
+      "gen_seconds": 1.16
+    },
+    {
+      "tag": "s1m",
+      "records": 1000000,
+      "candidate_pairs": 44919878,
+      "sum_over_sources": 50362162,
+      "pairs_unblocked": 499999500000,
+      "edges": 94289,
+      "candidates_per_second": 4775644,
+      "skipped_share": 99.71,
+      "f1": 0.9975,
+      "precision": 1.0,
+      "recall": 0.9951,
+      "stages": {
+        "blocking": {
+          "seconds": 1.71,
+          "rss_bytes": 495796224
+        },
+        "estimate": {
+          "seconds": 19.05,
+          "rss_bytes": 488816640
+        },
+        "predict": {
+          "seconds": 11.07,
+          "rss_bytes": 516538368
+        },
+        "cluster": {
+          "seconds": 0.27,
+          "rss_bytes": 142852096
+        }
+      },
+      "wall_seconds": 30.39,
+      "peak_rss_bytes": 516538368,
+      "gen_seconds": 2.2
+    },
+    {
+      "tag": "s2m",
+      "records": 2000000,
+      "candidate_pairs": 139934399,
+      "sum_over_sources": 156307210,
+      "pairs_unblocked": 1999999000000,
+      "edges": 187986,
+      "candidates_per_second": 4967572,
+      "skipped_share": 99.76,
+      "f1": 0.9973,
+      "precision": 1.0,
+      "recall": 0.9946,
+      "stages": {
+        "blocking": {
+          "seconds": 3.48,
+          "rss_bytes": 822116352
+        },
+        "estimate": {
+          "seconds": 24.77,
+          "rss_bytes": 832389120
+        },
+        "predict": {
+          "seconds": 31.73,
+          "rss_bytes": 829882368
+        },
+        "cluster": {
+          "seconds": 0.64,
+          "rss_bytes": 237977600
+        }
+      },
+      "wall_seconds": 57.14,
+      "peak_rss_bytes": 832389120,
+      "gen_seconds": 4.35
+    },
+    {
+      "tag": "s4m",
+      "records": 4000000,
+      "candidate_pairs": 480680096,
+      "sum_over_sources": 523835683,
+      "pairs_unblocked": 7999998000000,
+      "edges": 375970,
+      "candidates_per_second": 5282313,
+      "skipped_share": 99.82,
+      "f1": 0.997,
+      "precision": 1.0,
+      "recall": 0.994,
+      "stages": {
+        "blocking": {
+          "seconds": 7.42,
+          "rss_bytes": 1216708608
+        },
+        "estimate": {
+          "seconds": 35.77,
+          "rss_bytes": 1581629440
+        },
+        "predict": {
+          "seconds": 98.68,
+          "rss_bytes": 1566130176
+        },
+        "cluster": {
+          "seconds": 1.3,
+          "rss_bytes": 391774208
+        }
+      },
+      "wall_seconds": 135.75,
+      "peak_rss_bytes": 1581629440,
+      "gen_seconds": 8.64
+    },
+    {
+      "tag": "s8m",
+      "records": 8000000,
+      "candidate_pairs": 1759554498,
+      "sum_over_sources": 1845875127,
+      "pairs_unblocked": 31999996000000,
+      "edges": 751246,
+      "candidates_per_second": 5161107,
+      "skipped_share": 99.89,
+      "f1": 0.9964,
+      "precision": 1.0,
+      "recall": 0.9928,
+      "stages": {
+        "blocking": {
+          "seconds": 15.87,
+          "rss_bytes": 1903820800
+        },
+        "estimate": {
+          "seconds": 59.14,
+          "rss_bytes": 2383036416
+        },
+        "predict": {
+          "seconds": 357.25,
+          "rss_bytes": 2164342784
+        },
+        "cluster": {
+          "seconds": 3.49,
+          "rss_bytes": 715685888
+        }
+      },
+      "wall_seconds": 419.88,
+      "peak_rss_bytes": 2383036416,
+      "gen_seconds": 17.54
+    },
+    {
+      "tag": "s20m",
+      "records": 20000000,
+      "candidate_pairs": 10090976646,
+      "sum_over_sources": 10147740082,
+      "pairs_unblocked": 199999990000000,
+      "edges": 1869388,
+      "candidates_per_second": 4819832,
+      "skipped_share": 99.96,
+      "f1": 0.9946,
+      "precision": 1.0,
+      "recall": 0.9892,
+      "stages": {
+        "blocking": {
+          "seconds": 40.98,
+          "rss_bytes": 3224207360
+        },
+        "estimate": {
+          "seconds": 143.91,
+          "rss_bytes": 4488445952
+        },
+        "predict": {
+          "seconds": 2133.33,
+          "rss_bytes": 4383653888
+        },
+        "cluster": {
+          "seconds": 10.24,
+          "rss_bytes": 1925677056
+        }
+      },
+      "wall_seconds": 2287.48,
+      "peak_rss_bytes": 4488445952,
+      "gen_seconds": 42.7
+    }
+  ],
+  "parity": {
+    "cpplink": [
+      {
+        "tag": "s250k",
+        "records": 250000,
+        "candidate_pairs": 5645873,
+        "sum_over_sources": 5706269,
+        "pairs_unblocked": 31249875000,
+        "edges": 23209,
+        "candidates_per_second": 6104016,
+        "skipped_share": 99.41,
+        "f1": 0.9981,
+        "precision": 0.9998,
+        "recall": 0.9963,
+        "stages": {
+          "blocking": {
+            "seconds": 0.29,
+            "rss_bytes": 171671552
+          },
+          "estimate": {
+            "seconds": 4.25,
+            "rss_bytes": 216875008
+          },
+          "predict": {
+            "seconds": 1.15,
+            "rss_bytes": 174505984
+          },
+          "cluster": {
+            "seconds": 0.09,
+            "rss_bytes": 66371584
+          }
+        },
+        "wall_seconds": 5.49,
+        "peak_rss_bytes": 216875008,
+        "gen_seconds": null
+      },
+      {
+        "tag": "s500k",
+        "records": 500000,
+        "candidate_pairs": 22471689,
+        "sum_over_sources": 22594529,
+        "pairs_unblocked": 124999750000,
+        "edges": 46998,
+        "candidates_per_second": 6625548,
+        "skipped_share": 99.73,
+        "f1": 0.9979,
+        "precision": 0.9998,
+        "recall": 0.996,
+        "stages": {
+          "blocking": {
+            "seconds": 0.46,
+            "rss_bytes": 259129344
+          },
+          "estimate": {
+            "seconds": 11.19,
+            "rss_bytes": 340656128
+          },
+          "predict": {
+            "seconds": 3.92,
+            "rss_bytes": 261570560
+          },
+          "cluster": {
+            "seconds": 0.14,
+            "rss_bytes": 87670784
+          }
+        },
+        "wall_seconds": 15.25,
+        "peak_rss_bytes": 340656128,
+        "gen_seconds": null
+      },
+      {
+        "tag": "s1m",
+        "records": 1000000,
+        "candidate_pairs": 89846415,
+        "sum_over_sources": 90095215,
+        "pairs_unblocked": 499999500000,
+        "edges": 94367,
+        "candidates_per_second": 6983473,
+        "skipped_share": 99.83,
+        "f1": 0.9978,
+        "precision": 0.9996,
+        "recall": 0.996,
+        "stages": {
+          "blocking": {
+            "seconds": 1.09,
+            "rss_bytes": 389758976
+          },
+          "estimate": {
+            "seconds": 18.15,
+            "rss_bytes": 458752000
+          },
+          "predict": {
+            "seconds": 13.94,
+            "rss_bytes": 391905280
+          },
+          "cluster": {
+            "seconds": 0.25,
+            "rss_bytes": 134447104
+          }
+        },
+        "wall_seconds": 32.339999999999996,
+        "peak_rss_bytes": 458752000,
+        "gen_seconds": null
+      },
+      {
+        "tag": "s2m",
+        "records": 2000000,
+        "candidate_pairs": 359425964,
+        "sum_over_sources": 359931517,
+        "pairs_unblocked": 1999999000000,
+        "edges": 188177,
+        "candidates_per_second": 7277981,
+        "skipped_share": 99.89,
+        "f1": 0.9978,
+        "precision": 0.9998,
+        "recall": 0.9957,
+        "stages": {
+          "blocking": {
+            "seconds": 2.53,
+            "rss_bytes": 664600576
+          },
+          "estimate": {
+            "seconds": 24.52,
+            "rss_bytes": 682213376
+          },
+          "predict": {
+            "seconds": 51.88,
+            "rss_bytes": 687456256
+          },
+          "cluster": {
+            "seconds": 0.53,
+            "rss_bytes": 237928448
+          }
+        },
+        "wall_seconds": 76.93,
+        "peak_rss_bytes": 687456256,
+        "gen_seconds": null
+      },
+      {
+        "tag": "s4m",
+        "records": 4000000,
+        "candidate_pairs": 1438216166,
+        "sum_over_sources": 1439262877,
+        "pairs_unblocked": 7999998000000,
+        "edges": 376680,
+        "candidates_per_second": 7026919,
+        "skipped_share": 99.92,
+        "f1": 0.9977,
+        "precision": 0.9996,
+        "recall": 0.9957,
+        "stages": {
+          "blocking": {
+            "seconds": 5.36,
+            "rss_bytes": 1220771840
+          },
+          "estimate": {
+            "seconds": 38.73,
+            "rss_bytes": 1238679552
+          },
+          "predict": {
+            "seconds": 209.93,
+            "rss_bytes": 1217773568
+          },
+          "cluster": {
+            "seconds": 1.18,
+            "rss_bytes": 398983168
+          }
+        },
+        "wall_seconds": 249.84,
+        "peak_rss_bytes": 1238679552,
+        "gen_seconds": null
+      }
+    ],
+    "splink": [
+      {
+        "tag": "s250k",
+        "records": 250000,
+        "candidate_pairs": 5645873,
+        "edges": 23076,
+        "wall_seconds": 21.142700290045468,
+        "peak_rss_bytes": 1865400320,
+        "peak_spill_bytes": 0,
+        "stages": {
+          "load": {
+            "seconds": 0.25424016601755284
+          },
+          "estimate_u": {
+            "seconds": 1.6040039579966106
+          },
+          "estimate_m": {
+            "seconds": 10.343260666006245
+          },
+          "predict": {
+            "seconds": 8.677964250004152
+          },
+          "cluster": {
+            "seconds": 0.2632312500209082
+          }
+        },
+        "f1": 0.9964
+      },
+      {
+        "tag": "s500k",
+        "records": 500000,
+        "candidate_pairs": 22471689,
+        "edges": 46708,
+        "wall_seconds": 76.87591016708757,
+        "peak_rss_bytes": 2166095872,
+        "peak_spill_bytes": 0,
+        "stages": {
+          "load": {
+            "seconds": 0.26708412502193823
+          },
+          "estimate_u": {
+            "seconds": 1.5727593339979649
+          },
+          "estimate_m": {
+            "seconds": 38.9417380830273
+          },
+          "predict": {
+            "seconds": 35.51957670901902
+          },
+          "cluster": {
+            "seconds": 0.5747519160213415
+          }
+        },
+        "f1": 0.9961
+      },
+      {
+        "tag": "s1m",
+        "records": 1000000,
+        "candidate_pairs": 89846415,
+        "edges": 93757,
+        "wall_seconds": 343.48535316897323,
+        "peak_rss_bytes": 3343597568,
+        "peak_spill_bytes": 6630047744,
+        "stages": {
+          "load": {
+            "seconds": 0.46372929197968915
+          },
+          "estimate_u": {
+            "seconds": 1.5552894170104992
+          },
+          "estimate_m": {
+            "seconds": 189.76953483500984
+          },
+          "predict": {
+            "seconds": 150.59066274997895
+          },
+          "cluster": {
+            "seconds": 1.106136874994263
+          }
+        },
+        "f1": 0.9961
+      }
+    ]
+  }
+}

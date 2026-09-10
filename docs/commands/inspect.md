@@ -97,8 +97,10 @@ rare-value source there produces nothing. That column belongs in `exact_value` i
 ### The memory table
 
 One row per allocated structure, with the basis it was computed from, ending in a resident
-total and bytes per record. This is the number to extrapolate: at 194 bytes per record, 18M
-records is about 3.5 GB, which is what the design budget predicts.
+total and bytes per record. This is the number to extrapolate: at 194 bytes per record here,
+20M records would be about 3.9 GB, and the measured figure at 20M rows on this schema is
+229 bytes per record for 4.27 GB — the difference is dictionary growth, since email and phone
+are near-unique and their dictionaries grow with the file while every id column does not.
 
 Useful things it makes visible:
 
