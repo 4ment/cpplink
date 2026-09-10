@@ -4,10 +4,14 @@
 """Serve the cluster viewer over a DuckDB cache, for runs too large to embed.
 
     tools/cluster_server.py --schema s.json --clusters clusters.csv \
-        --edges edges --truth truth.csv data.parquet
+        --predictions predictions.parquet --truth truth.csv data.parquet
 
 Same page as cluster_view.py, but the clusters are queried rather than written
 into the file, so every cluster of the run is reachable instead of a sample.
+
+`--clusters` and `--predictions` each name one file, csv or parquet, picked by
+the extension; `--predictions` also takes the shard directory, which names
+records by row and so costs the pass that names them.
 
 The cache is built once and reused until an input changes. It holds only what
 the viewer can ever show -- the clustered records, never the singletons -- so
@@ -36,11 +40,26 @@ from cluster_view import (EDGE_DTYPE, EDGE_MAGIC, cell,  # noqa: E402
                           read_truth, schema_columns)
 
 EDGE_CHUNK = 1 << 20
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 def quoted(name):
     return '"' + name.replace('"', '""') + '"'
+
+
+def scan(path, types):
+    """The duckdb table function that reads one csv or parquet file.
+
+    Both of a run's outputs are one file whose extension picks the format, so
+    that is what picks the reader here. The ids are pinned to VARCHAR rather than
+    sniffed, because a file of numeric ids would otherwise read as integers and
+    join against nothing.
+    """
+    path = os.path.abspath(path)
+    if path.endswith(".parquet"):
+        return f"read_parquet('{path}')"
+    pinned = ", ".join(f"'{name}': 'VARCHAR'" for name in types)
+    return f"read_csv('{path}', header = true, types = {{{pinned}}})"
 
 
 def fingerprint(args, columns):
@@ -50,15 +69,20 @@ def fingerprint(args, columns):
         if path:
             parts.append([os.path.abspath(path), os.path.getmtime(path),
                           os.path.getsize(path)])
-    if args.edges:
-        for name in sorted(os.listdir(args.edges)):
-            if name.endswith(".bin"):
-                full = os.path.join(args.edges, name)
-                parts.append([full, os.path.getmtime(full), os.path.getsize(full)])
+    if args.predictions:
+        if os.path.isdir(args.predictions):
+            for name in sorted(os.listdir(args.predictions)):
+                if name.endswith(".bin"):
+                    full = os.path.join(args.predictions, name)
+                    parts.append([full, os.path.getmtime(full), os.path.getsize(full)])
+        else:
+            parts.append([os.path.abspath(args.predictions),
+                          os.path.getmtime(args.predictions),
+                          os.path.getsize(args.predictions)])
     return json.dumps(parts, sort_keys=True)
 
 
-def load_edges(conn, directory):
+def load_shard_edges(conn, directory):
     """Every shard edge into `raw_edges`, a chunk at a time.
 
     The shards hold row indices rather than ids, which is why this is worth
@@ -92,10 +116,10 @@ def build(conn, args, id_column, columns, say):
     say("reading the cluster assignment")
     conn.execute(f"""
         CREATE TABLE members AS
-        SELECT unique_id AS uid, cluster_id, cluster_size AS size
-        FROM read_csv('{args.clusters}', header = true,
-                      columns = {{'unique_id': 'VARCHAR', 'cluster_id': 'VARCHAR',
-                                  'cluster_size': 'BIGINT'}})
+        SELECT CAST(unique_id AS VARCHAR) AS uid,
+               CAST(cluster_id AS VARCHAR) AS cluster_id,
+               CAST(cluster_size AS BIGINT) AS size
+        FROM {scan(args.clusters, ("unique_id", "cluster_id"))}
         WHERE cluster_size >= {args.min_size}
     """)
 
@@ -108,31 +132,52 @@ def build(conn, args, id_column, columns, say):
         JOIN members m ON m.uid = d.{quoted(id_column)}
     """)
 
-    if args.edges:
-        say("naming the edges")
-        # A row index in a shard is a position in the inputs read in order, and
-        # file_row_number is that position inside one file, so the offsets that
-        # separate the inputs are the only thing to carry across.
-        conn.execute("CREATE TABLE rowmap (rid BIGINT, uid VARCHAR)")
-        offset = 0
-        for path in files:
-            conn.execute(f"""
-                INSERT INTO rowmap
-                SELECT {offset} + file_row_number, {quoted(id_column)}
-                FROM read_parquet('{path}', file_row_number = true)
+    if args.predictions:
+        if os.path.isdir(args.predictions):
+            say("naming the predictions")
+            # A row index in a shard is a position in the inputs read in order,
+            # and file_row_number is that position inside one file, so the
+            # offsets that separate the inputs are the only thing to carry.
+            conn.execute("CREATE TABLE rowmap (rid BIGINT, uid VARCHAR)")
+            offset = 0
+            for path in files:
+                conn.execute(f"""
+                    INSERT INTO rowmap
+                    SELECT {offset} + file_row_number, {quoted(id_column)}
+                    FROM read_parquet('{path}', file_row_number = true)
+                """)
+                offset += pq.ParquetFile(path).metadata.num_rows
+            load_shard_edges(conn, args.predictions)
+            conn.execute("""
+                CREATE TABLE named_edges AS
+                SELECT ra.uid AS a, rb.uid AS b, e.w AS weight
+                FROM raw_edges e
+                JOIN rowmap ra ON ra.rid = e.a
+                JOIN rowmap rb ON rb.rid = e.b
             """)
-            offset += pq.ParquetFile(path).metadata.num_rows
-        load_edges(conn, args.edges)
+            conn.execute("DROP TABLE raw_edges")
+            conn.execute("DROP TABLE rowmap")
+        else:
+            # A merged file already names records by unique_id, which is the
+            # whole of what the rowmap above exists to recover.
+            say("reading the predictions")
+            conn.execute(f"""
+                CREATE TABLE named_edges AS
+                SELECT CAST(id_a AS VARCHAR) AS a, CAST(id_b AS VARCHAR) AS b,
+                       match_weight AS weight
+                FROM {scan(args.predictions, ("id_a", "id_b"))}
+            """)
+        # Both ends, because clustering at a threshold above the one the run
+        # wrote at leaves predictions that cross two clusters or land outside
+        # every one, and the page shows a weight only inside a cluster.
         conn.execute("""
             CREATE TABLE edges AS
-            SELECT m.cluster_id, ra.uid AS a, rb.uid AS b, e.w AS weight
-            FROM raw_edges e
-            JOIN rowmap ra ON ra.rid = e.a
-            JOIN rowmap rb ON rb.rid = e.b
-            JOIN members m ON m.uid = ra.uid
+            SELECT m.cluster_id, e.a, e.b, e.weight
+            FROM named_edges e
+            JOIN members m ON m.uid = e.a
+            JOIN members mb ON mb.uid = e.b AND mb.cluster_id = m.cluster_id
         """)
-        conn.execute("DROP TABLE raw_edges")
-        conn.execute("DROP TABLE rowmap")
+        conn.execute("DROP TABLE named_edges")
         conn.execute("CREATE INDEX edges_by_cluster ON edges (cluster_id)")
     else:
         conn.execute("CREATE TABLE edges (cluster_id VARCHAR, a VARCHAR, "
@@ -326,14 +371,20 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("data", nargs="+", help="the parquet file(s) the run read, in order")
     ap.add_argument("--schema", required=True)
-    ap.add_argument("--clusters", required=True, help="clusters.csv from cpplink cluster")
-    ap.add_argument("--edges", help="the shard directory, for within-cluster weights")
+    ap.add_argument("--clusters", required=True,
+                    help="the csv or parquet cpplink cluster wrote")
+    ap.add_argument("--predictions", "--edges", dest="predictions",
+                    help="the run's predictions -- one csv or parquet file, or the "
+                         "shard directory -- for within-cluster weights")
     ap.add_argument("--truth", help="known pairs, to colour members by true entity")
     ap.add_argument("--cache", default="cluster_view.duckdb")
     ap.add_argument("--rebuild", action="store_true", help="rebuild the cache first")
     ap.add_argument("--min-size", type=int, default=2)
     ap.add_argument("--max-rows", type=int, default=200,
                     help="members shown per cluster; the rest are counted only")
+    ap.add_argument("--memory", default="4GB",
+                    help="what DuckDB may use while building the cache")
+    ap.add_argument("--threads", type=int, default=0, help="0 = DuckDB's own default")
     ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--open", action="store_true", help="open a browser on it")
     args = ap.parse_args()
@@ -355,6 +406,10 @@ def main():
             os.remove(args.cache)
         start = time.time()
         conn = duckdb.connect(args.cache)
+        conn.execute(f"SET memory_limit = '{args.memory}'")
+        conn.execute("SET preserve_insertion_order = false")
+        if args.threads:
+            conn.execute(f"SET threads = {args.threads}")
 
         def say(what):
             print(f"  {time.time() - start:6.1f}s  {what}", flush=True)
@@ -368,6 +423,7 @@ def main():
         print(f"  {time.time() - start:6.1f}s  done, {size:.0f} MB")
 
     conn = duckdb.connect(args.cache, read_only=True)
+    conn.execute(f"SET memory_limit = '{args.memory}'")
     viewer = Viewer(conn, columns, ", ".join(os.path.basename(p) for p in args.data),
                     args.max_rows, bool(args.truth))
 
