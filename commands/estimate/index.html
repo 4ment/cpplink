@@ -1,0 +1,2335 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A streaming Fellegi-Sunter record linker in C++ that never materializes a candidate-pair table.">
+      
+      
+      
+        <link rel="canonical" href="https://4ment.github.io/cpplink/commands/estimate/">
+      
+      
+        <link rel="prev" href="../completeness/">
+      
+      
+        <link rel="next" href="../predict/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>estimate - cpplink</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#estimate" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="cpplink" class="md-header__button md-logo" aria-label="cpplink" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            cpplink
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              estimate
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/4ment/cpplink" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    4ment/cpplink
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="cpplink" class="md-nav__button md-logo" aria-label="cpplink" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    cpplink
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/4ment/cpplink" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    4ment/cpplink
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparisons/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparisons
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../em/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation and EM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../blocking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blocking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../linking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Linking two files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Commands
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inspect/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    inspect
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../profile/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../levels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    levels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../simplify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    simplify
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../explain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    explain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../explain-blocking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    explain-blocking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    recall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../completeness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    completeness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    estimate
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    estimate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synopsis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-the-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the output
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reading the output">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-u-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The u line
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-session-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The session table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-per-session-detail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The per-session detail
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#and-the-prior-weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        λ and the prior weight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-parameter-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The parameter table
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exact-u-for-the-fuzzy-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exact u for the fuzzy levels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relaxing-conditional-independence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relaxing conditional independence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Relaxing conditional independence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-each-half-comes-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where each half comes from
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the report
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-is-worth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it is worth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-cost-which-is-the-ceiling-and-not-the-scoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cost, which is the ceiling and not the scoring
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-traps-one-of-them-the-standing-limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two traps, one of them the standing limit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../predict/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    predict
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rescore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rescore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cluster/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cluster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gen-sample/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gen-sample
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema file
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/output-formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synopsis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-the-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the output
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reading the output">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-u-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The u line
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-session-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The session table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-per-session-detail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The per-session detail
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#and-the-prior-weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        λ and the prior weight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-parameter-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The parameter table
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exact-u-for-the-fuzzy-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exact u for the fuzzy levels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relaxing-conditional-independence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relaxing conditional independence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Relaxing conditional independence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-each-half-comes-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where each half comes from
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the report
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-is-worth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it is worth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-cost-which-is-the-ceiling-and-not-the-scoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cost, which is the ceiling and not the scoring
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-traps-one-of-them-the-standing-limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two traps, one of them the standing limit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="estimate"><code>estimate</code><a class="headerlink" href="#estimate" title="Permanent link">&para;</a></h1>
+<p><strong>Goal:</strong> learn the model — <code>m</code>, <code>u</code> and <code>λ</code> — from the data itself, and write it to
+<code>model.json</code>.</p>
+<p>The concepts behind this command are on <a href="../../em/">Estimation and EM</a>; this page is the
+interface and how to read what it prints.</p>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cpplink<span class="w"> </span>estimate<span class="w"> </span>--schema<span class="w"> </span>&lt;schema.json&gt;<span class="w"> </span><span class="o">[</span>--out<span class="w"> </span>&lt;model.json&gt;<span class="o">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                 </span><span class="o">[</span>--u-sample<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--session-pairs<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--threads<span class="w"> </span>N<span class="o">]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                 </span><span class="o">[</span>--iterations<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--lambda<span class="w"> </span>F<span class="o">]</span><span class="w"> </span><span class="o">[</span>--seed<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--mode<span class="w"> </span>MODE<span class="o">]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                 </span><span class="o">[</span>--interactions<span class="o">]</span><span class="w"> </span><span class="o">[</span>--max-interactions<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--interaction-bits<span class="w"> </span>F<span class="o">]</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">                 </span>&lt;file.parquet&gt;...
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--schema &lt;file&gt;</code></td>
+<td>—</td>
+<td>required; must declare both <code>comparisons</code> and <code>blocking</code></td>
+</tr>
+<tr>
+<td><code>--out &lt;file&gt;</code></td>
+<td>none</td>
+<td>write the model as JSON. Without it the model is printed and discarded</td>
+</tr>
+<tr>
+<td><code>--u-sample N</code></td>
+<td>1,000,000</td>
+<td>uniformly random pairs drawn to estimate <code>u</code> for levels the closed form cannot reach</td>
+</tr>
+<tr>
+<td><code>--session-pairs N</code></td>
+<td>10,000,000</td>
+<td>per-session cap on pairs actually <em>compared</em>. Above it, the fold becomes a Bernoulli sample</td>
+</tr>
+<tr>
+<td><code>--threads N</code></td>
+<td>hardware</td>
+<td>threads for the histogram fold</td>
+</tr>
+<tr>
+<td><code>--iterations N</code></td>
+<td>500</td>
+<td>EM iteration cap. Reaching it is a symptom, not a setting to raise: a session that will not converge is usually one whose blocking conditions on a column it is trying to estimate</td>
+</tr>
+<tr>
+<td><code>--lambda F</code></td>
+<td>derived</td>
+<td>override the prior match rate with a count you trust</td>
+</tr>
+<tr>
+<td><code>--seed N</code></td>
+<td>20260903</td>
+<td>seed for <code>u</code> sampling and session subsampling</td>
+</tr>
+<tr>
+<td><code>--fuzzy-u</code></td>
+<td>off</td>
+<td>compute <code>u</code> for the fuzzy levels exactly, by self-joining each column's dictionary, instead of sampling and rescaling</td>
+</tr>
+<tr>
+<td><code>--ball-budget N</code></td>
+<td>4e10</td>
+<td>value pairs the self-join may look at for one column</td>
+</tr>
+<tr>
+<td><code>--no-tie-holdout</code></td>
+<td>off</td>
+<td>stop holding out comparisons tied to the column a session blocks on. Off means the hold-out is on; this is for measuring what it is worth</td>
+</tr>
+<tr>
+<td><code>--tied-bits F</code></td>
+<td>0.25</td>
+<td><code>u</code>-side overlap in bits past which two columns count as tied</td>
+</tr>
+<tr>
+<td><code>--tie-sample-rows N</code></td>
+<td>500,000</td>
+<td>rows the tie pass reads. <code>0</code> reads every row</td>
+</tr>
+<tr>
+<td><code>--interactions</code></td>
+<td>off</td>
+<td>fit two-way corrections for the comparison pairs that are not conditionally independent. See <a href="#relaxing-conditional-independence">below</a></td>
+</tr>
+<tr>
+<td><code>--max-interactions N</code></td>
+<td>2</td>
+<td>how many terms may enter the model. Implies <code>--interactions</code></td>
+</tr>
+<tr>
+<td><code>--interaction-bits F</code></td>
+<td>0.25</td>
+<td>bits a term must move an average matching pair by, in every session that can see it, to be admitted. Implies <code>--interactions</code></td>
+</tr>
+<tr>
+<td><code>--min-interaction-sessions N</code></td>
+<td>2</td>
+<td>sessions that must be able to see a term before it is identified</td>
+</tr>
+<tr>
+<td><code>--min-pairs-per-parameter F</code></td>
+<td>0</td>
+<td>refuse a term with fewer matching pairs per free parameter than this. Reported either way</td>
+</tr>
+<tr>
+<td><code>--interaction-clamp F</code></td>
+<td>6.0</td>
+<td>the most any single cell of a term may move the weight, in bits</td>
+</tr>
+<tr>
+<td><em>(positional)</em></td>
+<td>—</td>
+<td>required; the parquet file</td>
+</tr>
+<tr>
+<td><code>--mode dedup\|link\|link-and-dedup</code></td>
+<td>link with more than one file, else dedup</td>
+<td>which pairs to enumerate; see <a href="../../linking/">linking</a></td>
+</tr>
+<tr>
+<td><code>--all-pairs</code></td>
+<td>off</td>
+<td>estimate from every pair the mode admits, in one session that holds nothing out. <strong>Read the warning in <a href="../../blocking/#no-blocking-at-all">no blocking at all</a> first</strong>: without a hold-out, dependence between comparisons goes straight into <code>m</code></td>
+</tr>
+</tbody>
+</table>
+<p>The two knobs that matter are <code>--u-sample</code> and <code>--session-pairs</code>. Raising <code>--u-sample</code> buys
+precision on fuzzy-level <code>u</code> values only — exact and null levels are closed form and unaffected
+by it. Raising <code>--session-pairs</code> buys very little: 10⁷ pairs already saturates the pattern
+counts, and estimation needs <em>counts</em>, not pairs.</p>
+<h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cpplink<span class="w"> </span>estimate<span class="w"> </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">                 </span>--out<span class="w"> </span>model.json<span class="w"> </span>examples/sample.parquet
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>u from 999,999 random pairs in 0.5 s, plus 14 levels in closed form from the term frequencies
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>Session               Enumerated      Compared  Patterns  Iters Match rate  Seconds
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>-----------------------------------------------------------------------------------
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>email                     90,600        90,600       242      3   0.999934      0.0
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>phone                    121,195       121,195       274      2   0.870795      0.1
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>dob                   77,931,552    10,002,206       270      4   0.001535      3.5
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>last_name             39,059,914     7,413,527       553     10   0.003205      3.2
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>-----------------------------------------------------------------------------------
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>Session dob
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>  sources    dob exact_value
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>  held out   dob
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>  sampled    1.28e-01 of 77,931,552 enumerated pairs
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>  em         4 iterations, last change 4.5e-11, converged
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>  implies    119630 matching pairs among the 77,931,552 it reached
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>Session last_name
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>  sources    last_name rare_value, last_name sorted_neighbourhood
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>  held out   last_name
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>  sampled    1.90e-01 of 39,059,914 enumerated pairs
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>  em         10 iterations, last change 3.9e-07, converged
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>  implies    125201 matching pairs among the 39,059,914 it reached
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>warning: lambda is a lower bound: it counts only the matches a session's blocking reached,
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>and blocking recall is below one. Pass --lambda to set it from a count you trust.
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>lambda       7.73e-08  (lower bound: session last_name implies 125,201 matches over 1,619,999,100,000 pairs)
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>prior weight -23.625 bits
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>Comparison        Level                                m             u    weight  note
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>--------------------------------------------------------------------------------------------
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>last_name         null                          1.00e-12      1.00e-12      0.00  unreachable: no pair can land here
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a>                  exact                         0.609559      2.38e-05     14.64  u exact
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>                  jaro_winkler &gt;= 0.92          0.279753      6.00e-06     15.51  u from only 6 random pairs
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a>                  jaro_winkler &gt;= 0.85          0.078072      0.000209      8.55
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a>                  else                          0.032616      0.999761     -4.94
+<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a>email             null                          0.335455      0.055215      2.60  u exact
+<a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a>                  exact                         0.577950      5.96e-07     19.89  u exact
+<a id="__codelineno-2-40" name="__codelineno-2-40" href="#__codelineno-2-40"></a>                  jaro_winkler &gt;= 0.93          0.086592      5.00e-07     17.40  u below the sampling floor
+<a id="__codelineno-2-41" name="__codelineno-2-41" href="#__codelineno-2-41"></a>                  else                          3.46e-06      0.944784    -18.06  m at the floor: no matching pair reached this level
+<a id="__codelineno-2-42" name="__codelineno-2-42" href="#__codelineno-2-42"></a>--------------------------------------------------------------------------------------------
+<a id="__codelineno-2-43" name="__codelineno-2-43" href="#__codelineno-2-43"></a>Weight is log2(m/u): the bits of evidence agreeing at that level carries.
+<a id="__codelineno-2-44" name="__codelineno-2-44" href="#__codelineno-2-44"></a>
+<a id="__codelineno-2-45" name="__codelineno-2-45" href="#__codelineno-2-45"></a>Wrote model.json
+</code></pre></div>
+<h2 id="reading-the-output">Reading the output<a class="headerlink" href="#reading-the-output" title="Permanent link">&para;</a></h2>
+<h3 id="the-u-line">The <code>u</code> line<a class="headerlink" href="#the-u-line" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>u from 999,999 random pairs in 0.5 s, plus 14 levels in closed form from the term frequencies
+</code></pre></div>
+<p>Two sources of truth, deliberately. <strong>14 levels needed no sampling at all</strong>: every <code>exact</code>
+level on a single interned column, and every leading <code>null</code> level, is computed exactly as
+<span class="arithmatex">\(\sum_v c_v(c_v-1) \,/\, N(N-1)\)</span> or as a null count. The sampled levels take what the exact
+ones leave, so the two cannot disagree about the total. See
+<a href="../../em/#u-in-closed-form"><code>u</code> in closed form</a>, which explains why the numerator is
+<span class="arithmatex">\(c_v(c_v-1)\)</span> and not <span class="arithmatex">\(c_v^2\)</span>.</p>
+<h3 id="the-session-table">The session table<a class="headerlink" href="#the-session-table" title="Permanent link">&para;</a></h3>
+<p>One row per column that an EM-safe blocking source conditions on. Each session holds that
+column out and estimates every other comparison's <code>m</code> from it.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Enumerated</code></td>
+<td>candidate pairs the session's sources produced</td>
+</tr>
+<tr>
+<td><code>Compared</code></td>
+<td>pairs actually evaluated. Below <code>Enumerated</code> means Bernoulli sampling kicked in at <code>--session-pairs</code></td>
+</tr>
+<tr>
+<td><code>Patterns</code></td>
+<td><strong>distinct</strong> γ values in the histogram — the entire input to EM</td>
+</tr>
+<tr>
+<td><code>Iters</code></td>
+<td>EM iterations to <code>max|Δ| &lt; 1e-6</code></td>
+</tr>
+<tr>
+<td><code>Match rate</code></td>
+<td>the session's own λ, i.e. the posterior match mass among <em>its</em> pairs</td>
+</tr>
+<tr>
+<td><code>Seconds</code></td>
+<td>wall time for enumeration, comparison and EM together</td>
+</tr>
+</tbody>
+</table>
+<p>Three things to notice:</p>
+<ul>
+<li><strong><code>Patterns</code> is tiny.</strong> 242 to 553 distinct patterns is the whole reason EM is free here.
+  The cost of EM is <code>patterns × comparisons × iterations</code> and has nothing to do with how many
+  pairs were folded.</li>
+<li><strong><code>Compared</code> ≪ <code>Enumerated</code> is fine and intended.</strong> The <code>dob</code> session sampled 12.8% of its
+  78M pairs and still converged in 4 iterations. Since <code>m</code>, <code>u</code> and <code>λ</code> are all <em>ratios</em> of
+  pattern counts, a Bernoulli sample needs no reweighting.</li>
+<li><strong><code>Match rate</code> differs wildly by session and that is expected.</strong> The <code>email</code> session is
+  99.99% matches — agreeing on an exact email is nearly conclusive — while <code>dob</code> is 0.15%.
+  A session at ~1.0 gets a note saying its <code>m</code> is close to a direct count over blocked pairs
+  rather than a mixture split.</li>
+</ul>
+<h3 id="the-per-session-detail">The per-session detail<a class="headerlink" href="#the-per-session-detail" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Session last_name
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  sources    last_name rare_value, last_name sorted_neighbourhood
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  held out   last_name
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  sampled    1.90e-01 of 39,059,914 enumerated pairs
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  em         10 iterations, last change 3.9e-07, converged
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  implies    125201 matching pairs among the 39,059,914 it reached
+</code></pre></div>
+<p><code>held out</code> is the identifiability mechanism: every comparison reading that column is excluded
+from this session's EM, because blocking selected on it and its <code>m</code> is degenerate. <code>implies</code>
+is what feeds λ.</p>
+<p><code>also tied</code> is the same discipline one step wider, and it is not optional:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Session first_name
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  sources    first_name exact_value
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  held out   first_name
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  also tied  first_and_surname   (blocking on this column conditions on theirs)
+</code></pre></div>
+<p>Blocking on a column conditions on <strong>everything that column decides</strong>, not only on the column
+itself.
+<code>first_and_surname</code> contains <code>first_name</code>, so among the pairs this session blocks on, two rows
+named "john smith" and "john brown" clear <code>jaro_winkler &gt;= 0.80</code> on the strength of the shared
+first token alone.
+Their agreement rate on <code>first_and_surname</code> inside the session is nothing like the <code>u</code> the
+model holds for it over the whole file, and EM has no way to read the difference as anything
+but evidence that the pairs are matches.</p>
+<p>Measured on <code>historical_50k</code>: <strong>the <code>first_name</code> session's match rate reads 0.9996 where the
+truth is 0.0080</strong>, a factor of 125, and it reads 0.018 once <code>first_and_surname</code> is held out
+too.
+End to end that is worth <strong>0.8536 to 0.8676 F1</strong>.
+Ties are found by one pairwise pass over the rows, the same one <a href="../profile/"><code>profile</code></a> runs,
+which reads no candidate pair and no model; two columns count as tied when one occurs inside
+the other on 90% of rows or their <code>u</code>-side overlap is worth <code>--tied-bits</code>, 0.25 by default.
+<code>--no-tie-holdout</code> turns it off, which is how the two numbers above were measured against each
+other.</p>
+<p>A column tied to the blocked column in <em>every</em> session ends up with no estimate at all, and the
+run says so with the <code>held out of every session</code> warning below.
+That is the cost of the discipline and it is the right price: an <code>m</code> from a session that
+conditioned on the answer is worse than no <code>m</code>.</p>
+<p>Warnings that can appear here, and what each means:</p>
+<table>
+<thead>
+<tr>
+<th>Warning</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>only N comparison(s) are free in this session</code></td>
+<td>Fewer than three free comparisons does not identify the mixture — a 2×2 table has two exact roots and EM returns whichever it walked to. <strong>The session is refused, not merged.</strong> Give the schema more comparisons that do not read that column</td>
+</tr>
+<tr>
+<td><code>every comparison reads this column</code></td>
+<td>The session can learn nothing and is skipped</td>
+</tr>
+<tr>
+<td><code>this session's m estimates were not merged into the model</code></td>
+<td>Follows any of the above, or the label-swap check firing</td>
+</tr>
+<tr>
+<td><code>comparison "x" was held out of every session</code></td>
+<td>Its <code>m</code> is a starting value, not an estimate. Add a blocking source on a different column, or break the tie that keeps holding it out</td>
+</tr>
+</tbody>
+</table>
+<h3 id="and-the-prior-weight">λ and the prior weight<a class="headerlink" href="#and-the-prior-weight" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>lambda       7.73e-08  (lower bound: session last_name implies 125,201 matches over 1,619,999,100,000 pairs)
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>prior weight -23.625 bits
+</code></pre></div>
+<p>λ is put back on the <strong>full-data</strong> pair count, never a session's own match rate, which
+blocking biases upward by exactly the thing blocking is for. It is a <strong>lower bound</strong> twice
+over — blocking recall is below one, and EM's posterior mass is itself conservative. <code>prior
+weight</code> is <span class="arithmatex">\(\log_2(\lambda/(1-\lambda))\)</span>: the −23.6 bit hurdle every pair starts behind.</p>
+<p>Pass <code>--lambda</code> if you have a count you trust; it is the single parameter most worth
+overriding, since it shifts every score by a constant.</p>
+<h3 id="the-parameter-table">The parameter table<a class="headerlink" href="#the-parameter-table" title="Permanent link">&para;</a></h3>
+<p>The model itself, one block per comparison, one row per level.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>m</code></td>
+<td><span class="arithmatex">\(P(\text{level} \mid \text{match})\)</span> — how reliable the field is</td>
+</tr>
+<tr>
+<td><code>u</code></td>
+<td><span class="arithmatex">\(P(\text{level} \mid \text{non-match})\)</span> — how discriminating it is</td>
+</tr>
+<tr>
+<td><code>weight</code></td>
+<td><span class="arithmatex">\(\log_2(m/u)\)</span>, the bits of evidence this level carries</td>
+</tr>
+<tr>
+<td><code>note</code></td>
+<td>provenance and floors, <strong>never hidden</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The <code>note</code> column is the part to read carefully. Four kinds appear:</p>
+<table>
+<thead>
+<tr>
+<th>Note</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>u exact</code></td>
+<td>closed form from term frequencies. Trust it</td>
+</tr>
+<tr>
+<td><code>u from only N random pairs</code></td>
+<td>sampled, and thinly. The weight is real but noisy</td>
+</tr>
+<tr>
+<td><code>u below the sampling floor</code></td>
+<td>the sample never hit this level; <code>u</code> is half a sampled pair. <strong>These are the least trustworthy numbers in the model</strong></td>
+</tr>
+<tr>
+<td><code>m at the floor: no matching pair reached this level</code></td>
+<td>no matching pair landed here; <code>m</code> is <code>0.5 / matching mass</code> — half a pair, the resolution of the evidence</td>
+</tr>
+<tr>
+<td><code>unreachable: no pair can land here</code></td>
+<td>closed-form <code>u</code> is exactly zero, e.g. the null level of a column with no missing values. Weight is set to <strong>exactly 0</strong> rather than floored</td>
+</tr>
+</tbody>
+</table>
+<p>In the run above, <code>location within 1.00 km</code> at 20.83 bits and <code>address exact</code> at 20.08 bits
+both rest on <code>u</code> below the sampling floor. They are the weights to distrust, and raising
+<code>--u-sample</code> is the way to firm them up — geo radii and list-set equality are precisely what
+the closed form cannot reach.</p>
+<h2 id="output">Output<a class="headerlink" href="#output" title="Permanent link">&para;</a></h2>
+<p>With <code>--out</code>, a <code>model.json</code> carrying per-level <code>m</code>, <code>u</code>, whether <code>u</code> was exact, how many
+sampled pairs supported it, the EM support mass behind <code>m</code>, plus <code>lambda</code>, <code>lambda_basis</code> and
+<code>records</code>. See <a href="../../reference/output-formats/#modeljson">Output formats</a>.</p>
+<p>Because the model is a small JSON file, it can be hand-edited: overriding a suspect <code>u</code>, or a
+weight you have external knowledge about, needs no re-run.</p>
+<h2 id="exact-u-for-the-fuzzy-levels">Exact <code>u</code> for the fuzzy levels<a class="headerlink" href="#exact-u-for-the-fuzzy-levels" title="Permanent link">&para;</a></h2>
+<p><code>u</code> is closed form for a leading null level and for a single-column exact level, and <em>sampled</em>
+for everything else, then rescaled to fill what the exact levels leave.
+A sample of a million random pairs sees a fuzzy level that fires on one pair in 300,000 about
+three times, which is not an estimate of anything.</p>
+<p><code>--fuzzy-u</code> computes it instead. <code>u</code> for a level is the chance two random records land on it,
+which is a sum over pairs of <em>values</em>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>u_l = sum over ordered value pairs landing on l of p_v * p_w
+</code></pre></div>
+<p>and the dictionary self-join enumerates exactly that. Measured on the 1M sample:</p>
+<table>
+<thead>
+<tr>
+<th>Comparison</th>
+<th>Level</th>
+<th style="text-align: right;">Sampled <code>u</code></th>
+<th style="text-align: right;">Exact <code>u</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>first_name</code></td>
+<td>levenshtein ≤ 1</td>
+<td style="text-align: right;">1.320e-03</td>
+<td style="text-align: right;">1.306e-03</td>
+</tr>
+<tr>
+<td><code>first_name</code></td>
+<td>jaro_winkler ≥ 0.88</td>
+<td style="text-align: right;">6.140e-04</td>
+<td style="text-align: right;">6.072e-04</td>
+</tr>
+<tr>
+<td><code>last_name</code></td>
+<td>jaro_winkler ≥ 0.85</td>
+<td style="text-align: right;">1.810e-04</td>
+<td style="text-align: right;">1.985e-04</td>
+</tr>
+<tr>
+<td><code>last_name</code></td>
+<td>jaro_winkler ≥ 0.92</td>
+<td style="text-align: right;">3.000e-06</td>
+<td style="text-align: right;"><strong>6.389e-06</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Where the sample has support it was already within 1%. Where it does not — the last row, which
+the sample hit about three times — it is <strong>wrong by a factor of 2.1</strong>, which is 1.1 bits on
+every pair that lands there.</p>
+<p>The cost is quadratic in the number of distinct values: 11.2 billion value pairs for the 1M
+sample's 149k surnames took 140 s on eight threads, and 16k first names took 0.6 s.
+A near-unique column is refused by <code>--ball-budget</code> rather than approximated — 919k distinct
+emails is 423 billion value pairs, and no signature filter makes that affordable.</p>
+<h2 id="relaxing-conditional-independence">Relaxing conditional independence<a class="headerlink" href="#relaxing-conditional-independence" title="Permanent link">&para;</a></h2>
+<p>Fellegi–Sunter multiplies <code>m</code> and <code>u</code> across comparisons, which is correct only where agreement
+is independent <em>given the class</em>.
+On real data it is not: where one column contains another, the model counts one signal twice
+and every matching pair is scored too high.
+<code>--interactions</code> fits a small set of two-way corrections and writes them into the model.</p>
+<p>The weight becomes</p>
+<div class="arithmatex">\[
+w(\gamma) \;=\; \log_2\frac{\lambda}{1-\lambda}
+\;+\; \sum_c \log_2 \frac{m_c(\gamma_c)}{u_c(\gamma_c)}
+\;+\; \sum_{(c,d) \in S} \delta_{cd}(\gamma_c, \gamma_d)
+\]</div>
+<div class="arithmatex">\[
+\delta_{cd}(i,j) \;=\;
+\log_2 \frac{M_{cd}(i,j)}{m_c(i)\,m_d(j)}
+\;-\;
+\log_2 \frac{U_{cd}(i,j)}{u_c(i)\,u_d(j)}
+\]</div>
+<p><strong>Both halves are needed.</strong> Two columns that agree together among matches are double-counted
+only to the extent that they do not also agree together among non-matches, which is what the
+main-effect <code>u</code> already prices.</p>
+<p>Nothing about scoring changes: <span class="arithmatex">\(\delta\)</span> is a function of γ like everything else, so below 22
+bits of γ it is folded into the tabulated base weight once at bind time and the hot loop never
+sees it.</p>
+<h3 id="where-each-half-comes-from">Where each half comes from<a class="headerlink" href="#where-each-half-comes-from" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Half</th>
+<th>Source</th>
+<th>Why not somewhere else</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M</td>
+<td>the session histograms, weighted by the responsibility EM already computed, averaged over the sessions that left both comparisons free</td>
+<td>it is the fit that already exists; nothing new is enumerated</td>
+</tr>
+<tr>
+<td>U</td>
+<td>the uniformly random pairs <code>u</code> is drawn from</td>
+<td><strong>never candidates.</strong> A source selecting on a column induces agreement correlation involving that column, so dependence measured on the candidate stream measures the blocking plan</td>
+</tr>
+</tbody>
+</table>
+<p>Both are then fitted to the model's own margins by iterative proportional fitting, which moves
+the margins and leaves every odds ratio alone.
+That is what makes the term a <em>pure</em> correction: adding it cannot shift <code>m</code> or <code>u</code>, so the main
+effects keep carrying the margins and the interaction carries only the association.</p>
+<h3 id="reading-the-report">Reading the report<a class="headerlink" href="#reading-the-report" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>cpplink<span class="w"> </span>estimate<span class="w"> </span>--schema<span class="w"> </span>historical_50k.json<span class="w"> </span>--interactions<span class="w"> </span>historical_50k.parquet
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Two-way interactions, ranked by what they move a match by. 0.0 s.
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>The u side had 2.71e-04 of its pairs subtracted as this file's own duplicates.
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>Comparison          Comparison              effect  per match  weakest    dup u  pairs/par         G^2         p  verdict
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>------------------------------------------------------------------------------------------------------------------------
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>first_name          first_and_surname         4.26      -2.87    -2.86      31%       6164    264053.2   0.0e+00  fitted
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>surname             first_and_surname         3.58      -3.14    -3.11      43%       6164     63821.2   0.0e+00  fitted
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>first_name          surname                   1.80      -1.63    -1.58      43%       6164     16386.6   0.0e+00  past --max-interactions
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>dob                 postcode_fake             0.61      -0.19    -0.04      26%      17742    102502.3   0.0e+00  one session moves a match by only -0.04 bits
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>first_and_surname   dob                       0.52       0.16     0.16      49%       6508      5722.7   0.0e+00  only 1 session can see it, so nothing can disagree
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>------------------------------------------------------------------------------------------------------------------------
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>2 of 28 candidate pairs entered the model; 4 cell(s) hit the clamp.
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>effect</code></td>
+<td>the mean <strong>absolute</strong> correction an average matching pair gets, in bits. This is what the ranking is on</td>
+</tr>
+<tr>
+<td><code>per match</code></td>
+<td>the same thing signed. Negative means the plain model was double-counting that many bits on every match</td>
+</tr>
+<tr>
+<td><code>weakest</code></td>
+<td>the least any one session says on its own, zero where two disagree about the sign. A term has to clear <code>--interaction-bits</code> here, not just on the average</td>
+</tr>
+<tr>
+<td><code>dup u</code></td>
+<td>how much of the <code>u</code> side was this file's own duplicates before they were subtracted. See below</td>
+</tr>
+<tr>
+<td><code>pairs/par</code></td>
+<td>matching pairs per free parameter of the term</td>
+</tr>
+<tr>
+<td><code>G^2</code>, <code>p</code></td>
+<td>the deviance against independence, printed as a diagnostic and used for nothing</td>
+</tr>
+</tbody>
+</table>
+<p>The two terms admitted here are exactly the two pairs
+<a href="../profile/"><code>profile</code></a> names from the rows alone — <code>first_and_surname</code> contains both name
+columns — reached from the histograms with no notion of containment at all.</p>
+<div class="admonition warning">
+<p class="admonition-title"><code>G^2</code> cannot choose the number of terms, for the same reason it could not in <code>levels</code> or <code>simplify</code></p>
+<p>Its power is the size of the run. All 28 candidate pairs here read <code>p = 0</code> over
+<code>historical_50k</code>'s 18.4M candidate pairs. The effect size decides: <code>--interaction-bits</code>
+sets the bar and
+<code>--max-interactions</code> caps the count.</p>
+</div>
+<h3 id="what-it-is-worth">What it is worth<a class="headerlink" href="#what-it-is-worth" title="Permanent link">&para;</a></h3>
+<p>Measured end to end at the shipping defaults, against truth the estimator never sees:</p>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th style="text-align: right;">Terms</th>
+<th style="text-align: right;">Plain best F1</th>
+<th style="text-align: right;">Corrected best F1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>historical_50k</code></td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0.8676 at 12 bits</td>
+<td style="text-align: right;"><strong>0.9107 at 6 bits</strong></td>
+</tr>
+<tr>
+<td><code>febrl3</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.9992 at −4 bits</td>
+<td style="text-align: right;">0.9992 at −4 bits</td>
+</tr>
+<tr>
+<td><code>fake_1000</code></td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0.9386 at −1 bits</td>
+<td style="text-align: right;"><strong>0.8724</strong> at −3 bits</td>
+</tr>
+</tbody>
+</table>
+<p>On <code>historical_50k</code> precision <em>and</em> recall both rise (0.9259 → 0.9542, 0.8161 → 0.8709) and the
+corrected model dominates the plain one at every recall on the frontier.
+<code>febrl3</code> fits nothing and the model is byte-identical, which is the right answer rather than a
+null result: its corruption is applied field by field on independent coins, so there is no
+dependence to find.</p>
+<div class="admonition danger">
+<p class="admonition-title">Thresholds move, so comparing at a fixed one compares nothing</p>
+<p>Each admitted term takes two to three bits off every matching pair, so the whole weight
+scale shifts down and the operating point moves with it — 12 bits becomes 6. Read at a
+<em>fixed</em> 12 bits the correction on <code>historical_50k</code> looks like −0.10 F1. Compare
+best-against-best, or compare the precision-recall frontiers.</p>
+</div>
+<p>The number of terms is capped at two because that is what measured best:</p>
+<table>
+<thead>
+<tr>
+<th>Terms</th>
+<th style="text-align: right;">1</th>
+<th style="text-align: right;"><strong>2</strong></th>
+<th style="text-align: right;">3</th>
+<th style="text-align: right;">4</th>
+<th style="text-align: right;">8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>historical_50k</code> best F1</td>
+<td style="text-align: right;">0.8878</td>
+<td style="text-align: right;"><strong>0.9135</strong></td>
+<td style="text-align: right;">0.9091</td>
+<td style="text-align: right;">0.9035</td>
+<td style="text-align: right;">0.8847</td>
+</tr>
+</tbody>
+</table>
+<p>Past the real dependencies there is nothing left to correct and the extra terms fit noise.</p>
+<h3 id="the-cost-which-is-the-ceiling-and-not-the-scoring">The cost, which is the ceiling and not the scoring<a class="headerlink" href="#the-cost-which-is-the-ceiling-and-not-the-scoring" title="Permanent link">&para;</a></h3>
+<p>A correction is not separable across comparisons, so the pair's own cell is unknown until its
+levels are, and <a href="../predict/"><code>predict</code></a>'s pair-global ceiling has to add each term's <em>largest</em>
+cell to stay admissible. It gets looser:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th style="text-align: right;">Candidates skipped before any metric</th>
+<th style="text-align: right;"><code>predict</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>plain, 12 bits</td>
+<td style="text-align: right;">37.61%</td>
+<td style="text-align: right;">1.8 s</td>
+</tr>
+<tr>
+<td>corrected, 6 bits</td>
+<td style="text-align: right;">4.06%</td>
+<td style="text-align: right;">2.2 s</td>
+</tr>
+</tbody>
+</table>
+<p>At the same threshold the skip rate falls 29.09% to 4.06%, so this is the loosening and not the
+lower operating point. The tabulated weight itself costs nothing at all.</p>
+<p><code>predict --no-interactions</code> scores the plain model out of the same file, which is how the two
+were measured against each other.</p>
+<h3 id="two-traps-one-of-them-the-standing-limit">Two traps, one of them the standing limit<a class="headerlink" href="#two-traps-one-of-them-the-standing-limit" title="Permanent link">&para;</a></h3>
+<div class="admonition danger">
+<p class="admonition-title">The <code>u</code> side of a joint is the file's own duplicates</p>
+<p>A uniformly random pair is a match with probability λ, so a random draw shows
+<span class="arithmatex">\((1-\lambda)u + \lambda m\)</span>. For one column that is a small inflation. For the <em>joint</em> of
+two high-cardinality columns it is the entire measurement: on <code>febrl3</code> two independent
+draws land on the <code>date_of_birth</code> × <code>soc_sec_id</code> exact-agreement cell 0.21 times per
+million, and the 452 matching pairs in a million random draws land there 335 times — <strong>1,565×
+the independent rate, all of it duplicates</strong>.</p>
+<p>The first working version therefore put a −4 bit correction on <em>every one</em> of that dataset's
+28 pairs. λ·m is now subtracted back out, and where the subtraction leaves nothing the pair
+is refused rather than guessed. That is the <code>dup u</code> column, and it silences <code>febrl3</code>
+entirely.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">The correction is only as good as λ, and λ is a lower bound</p>
+<p>A session-derived λ counts only the matches blocking reached. On <code>fake_1000</code> it reads
+1.77e-3 against a true 4.07e-3, low by 2.3×, so the subtraction removes less than half the
+duplicates it should and the residue pushes every correction negative. Given the true λ on
+the command line, that file's two largest terms <strong>flip sign</strong> (−1.90, −1.93 → +1.26, +1.06)
+and best F1 goes 0.8724 → 0.9225.</p>
+<p>The report warns whenever λ is a bound. There are two ways out: pass <code>--lambda</code> from a count
+you trust, or divide the reported one by the pair completeness
+<a href="../completeness/"><code>completeness</code></a> estimates with no truth file.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Letting a correction run to its full size is worse, and the clamp is why</p>
+<p>The arithmetic wants about −10 bits on the <code>surname</code> × <code>first_and_surname</code> exact-agreement
+cell; <code>--interaction-clamp</code> holds it at −6. Raising the clamp does not help:</p>
+<table>
+<thead>
+<tr>
+<th>clamp (bits)</th>
+<th style="text-align: right;">4</th>
+<th style="text-align: right;"><strong>6</strong></th>
+<th style="text-align: right;">8</th>
+<th style="text-align: right;">12</th>
+<th style="text-align: right;">20</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>historical_50k</code> best F1</td>
+<td style="text-align: right;">0.9073</td>
+<td style="text-align: right;"><strong>0.9107</strong></td>
+<td style="text-align: right;">0.9061</td>
+<td style="text-align: right;">0.9042</td>
+<td style="text-align: right;">0.9042</td>
+</tr>
+</tbody>
+</table>
+<p>That cell is 43% duplicates before the subtraction, so its magnitude is the least reliable
+part of the fit even though its <em>sign</em> is certain. The clamp is a shrinkage on exactly the
+cells whose estimate is worst. The curve is shallow across the whole range, so the default
+is not load-bearing — but removing the clamp is a measurable loss.</p>
+</div>
+<p>Two guards are not optional. A cell the data barely reaches is a ratio of two floors — a column
+duplicated under two names can never land on "one agrees and the other does not" — so each
+correction is scaled by <span class="arithmatex">\(n/(n+5)\)</span>, the contingency table's own bar for an expected count; the
+empty cell naming that impossible case was reading +3.7 bits before it. And a term must be
+visible to two sessions, which is the interaction form of the <code>sessions == 0</code> refusal
+<a href="../completeness/"><code>completeness</code></a> already makes.</p>
+<div class="admonition note">
+<p class="admonition-title">Cross-session <em>agreement</em> does not work as a guard, and it was the obvious thing to try</p>
+<p>The hypothesis was that a spurious term would read differently in each session and a real
+one would not. On <code>fake_1000</code> the sessions agree to within 0.06 bits on corrections that
+have the wrong sign. The bias is systematic, so nothing that looks for noise can find it.</p>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Mathieu Fourment - MIT licensed
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

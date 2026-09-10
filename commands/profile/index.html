@@ -1,0 +1,2442 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A streaming Fellegi-Sunter record linker in C++ that never materializes a candidate-pair table.">
+      
+      
+      
+        <link rel="canonical" href="https://4ment.github.io/cpplink/commands/profile/">
+      
+      
+        <link rel="prev" href="../inspect/">
+      
+      
+        <link rel="next" href="../levels/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>profile - cpplink</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#profile" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="cpplink" class="md-header__button md-logo" aria-label="cpplink" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            cpplink
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              profile
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/4ment/cpplink" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    4ment/cpplink
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="cpplink" class="md-nav__button md-logo" aria-label="cpplink" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    cpplink
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/4ment/cpplink" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    4ment/cpplink
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparisons/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparisons
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../em/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation and EM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../blocking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blocking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../linking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Linking two files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Commands
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inspect/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    inspect
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    profile
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synopsis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three questions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The three questions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#one-can-these-columns-separate-the-classes-at-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One: can these columns separate the classes at all?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-what-will-a-matching-pair-actually-score" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two: what will a matching pair actually score?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#three-how-much-of-that-evidence-is-the-same-evidence-twice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three: how much of that evidence is the same evidence twice?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-the-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-it-against-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking it against the model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-refuses-and-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it refuses, and why
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What it refuses, and why">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-plug-in-collision-rate-reads-1n-on-singletons" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The plug-in collision rate reads 1/n on singletons
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mutual-information-is-not-estimable-at-this-cardinality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mutual information is not estimable at this cardinality
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-a-file-holding-duplicates-the-joint-measures-the-duplicates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On a file holding duplicates, the joint measures the duplicates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-m-side-from-anchor-pairs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The M side, from anchor pairs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The M side, from anchor pairs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-an-anchor-is-chosen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How an anchor is chosen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-held-out-and-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is held out, and why
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-is-worth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it is worth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scoring-it-against-known-pairs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scoring it against known pairs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-it-is-wrong-and-in-which-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it is wrong, and in which direction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-was-tried-and-does-not-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What was tried and does not work
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-refuses-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What refuses it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#link-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Link mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JSON
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-do-about-a-suspect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to do about a suspect
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../levels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    levels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../simplify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    simplify
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../explain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    explain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../explain-blocking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    explain-blocking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    recall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../completeness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    completeness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../estimate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    estimate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../predict/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    predict
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rescore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rescore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cluster/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cluster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gen-sample/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gen-sample
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema file
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/output-formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synopsis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three questions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The three questions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#one-can-these-columns-separate-the-classes-at-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One: can these columns separate the classes at all?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-what-will-a-matching-pair-actually-score" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two: what will a matching pair actually score?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#three-how-much-of-that-evidence-is-the-same-evidence-twice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three: how much of that evidence is the same evidence twice?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-the-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-it-against-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checking it against the model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-refuses-and-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it refuses, and why
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What it refuses, and why">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-plug-in-collision-rate-reads-1n-on-singletons" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The plug-in collision rate reads 1/n on singletons
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mutual-information-is-not-estimable-at-this-cardinality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mutual information is not estimable at this cardinality
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#on-a-file-holding-duplicates-the-joint-measures-the-duplicates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On a file holding duplicates, the joint measures the duplicates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-m-side-from-anchor-pairs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The M side, from anchor pairs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The M side, from anchor pairs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-an-anchor-is-chosen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How an anchor is chosen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-held-out-and-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is held out, and why
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-it-is-worth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it is worth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scoring-it-against-known-pairs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scoring it against known pairs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#where-it-is-wrong-and-in-which-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it is wrong, and in which direction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-was-tried-and-does-not-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What was tried and does not work
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-refuses-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What refuses it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#link-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Link mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JSON
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-do-about-a-suspect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to do about a suspect
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="profile"><code>profile</code><a class="headerlink" href="#profile" title="Permanent link">&para;</a></h1>
+<p><strong>Goal:</strong> find out what the columns can be worth, what a matching pair will actually score, and
+which pairs of columns are the same evidence twice, before any model exists to be wrong about it.</p>
+<p>Every other stage costs minutes or hours and each one assumes things about the columns that
+nobody has checked.
+This command checks three of them.
+It needs no model, no blocking plan and no known pairs, and it enumerates no candidate pair over
+the whole pair space, so it runs in seconds and is the first thing to point at a new file.</p>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cpplink<span class="w"> </span>profile<span class="w"> </span>--schema<span class="w"> </span>&lt;schema.json&gt;<span class="w"> </span><span class="o">[</span>--sample-rows<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--no-pairs<span class="o">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--expected-matches<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--threads<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--json<span class="o">]</span><span class="w"> </span><span class="o">[</span>--mode<span class="w"> </span>MODE<span class="o">]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--no-anchors<span class="o">]</span><span class="w"> </span><span class="o">[</span>--anchor-rows<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--anchor-margin<span class="w"> </span>BITS<span class="o">]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                </span><span class="o">[</span>--anchor-pairs<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--truth<span class="w"> </span>&lt;pairs.csv&gt;<span class="o">]</span><span class="w"> </span>&lt;file.parquet&gt;...
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--schema &lt;file&gt;</code></td>
+<td>required; only the <code>columns</code> section is read, so a schema with no comparisons and no blocking plan is enough</td>
+</tr>
+<tr>
+<td><code>--sample-rows N</code></td>
+<td>rows the pairwise pass reads, default 2,000,000; <code>0</code> reads every row</td>
+</tr>
+<tr>
+<td><code>--no-pairs</code></td>
+<td>skip the pairwise pass and report the ledger and the per-column table only; this also turns off the M side, which depends on it</td>
+</tr>
+<tr>
+<td><code>--no-anchors</code></td>
+<td>skip the M side and report the ceiling alone</td>
+</tr>
+<tr>
+<td><code>--anchor-rows N</code></td>
+<td>rows the anchor pass reads, default 4,000,000; <code>0</code> reads every row</td>
+</tr>
+<tr>
+<td><code>--anchor-margin BITS</code></td>
+<td>posterior bits an anchor must clear before its pairs are read as matches, default 6</td>
+</tr>
+<tr>
+<td><code>--anchor-pairs N</code></td>
+<td>anchor pairs one session walks before it stops, default 1,000,000</td>
+</tr>
+<tr>
+<td><code>--truth &lt;file&gt;</code></td>
+<td>an <code>id_a,id_b</code> CSV; every <code>m</code> is read a second time off the known pairs and scored beside the estimate, and nothing is fitted to it</td>
+</tr>
+<tr>
+<td><code>--expected-matches N</code></td>
+<td>matching pairs assumed present, which is what the prior odds are made of; default is one duplicate per record</td>
+</tr>
+<tr>
+<td><code>--threads N</code></td>
+<td>default is the hardware concurrency</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>the same numbers as JSON</td>
+</tr>
+<tr>
+<td><code>--mode</code></td>
+<td><code>dedup</code>, <code>link</code> or <code>link-and-dedup</code>; sets which pair space the prior odds are taken over</td>
+</tr>
+<tr>
+<td><em>(positional)</em></td>
+<td>required; one or more parquet files</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-three-questions">The three questions<a class="headerlink" href="#the-three-questions" title="Permanent link">&para;</a></h2>
+<h3 id="one-can-these-columns-separate-the-classes-at-all">One: can these columns separate the classes at all?<a class="headerlink" href="#one-can-these-columns-separate-the-classes-at-all" title="Permanent link">&para;</a></h3>
+<p>A comparison is worth <code>log2(m/u)</code> bits when it agrees.
+For an exact-match level <code>u</code> is the rate two random rows carry the same value, which is
+<code>sum_v p_v^2</code> over the term-frequency table the loader already built, and <code>m &lt;= 1</code> always.
+So the most a column can ever be worth is</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>bits(c) = -log2(sum_v p_v^2)
+</code></pre></div>
+<p>and its inverse <code>1 / sum_v p_v^2</code> is the <strong>effective cardinality</strong>: the number of equally likely
+values the column behaves as if it had.
+That is the number the distinct count in <a href="../inspect/"><code>inspect</code></a> is a bad proxy for.
+900,000 distinct surnames with one value on 40% of the rows behaves as about six.</p>
+<p>Weight each column's ceiling by the chance both rows carry a value, set the sum against the
+prior odds that the pair space imposes, and the result is a ledger that ends in a margin.
+A negative margin means no model and no blocking plan will ever separate these classes, which
+is worth knowing in the first minute rather than the second day.</p>
+<h3 id="two-what-will-a-matching-pair-actually-score">Two: what will a matching pair actually score?<a class="headerlink" href="#two-what-will-a-matching-pair-actually-score" title="Permanent link">&para;</a></h3>
+<p>The ceiling takes <code>m = 1</code>, which no real column reaches, and on the three benchmark datasets it
+overstates by a factor of two to three.
+Closing that gap needs matching pairs, and matching pairs are what nobody has yet.</p>
+<p>They come from <strong>anchor pairs</strong>: two rows agreeing exactly on a subset of columns whose combined
+exact-agreement bits put the posterior far enough above even odds that agreement alone makes the
+pair a match.
+Hold the anchor out, and every other column's agreement rate over those pairs is <code>m</code>.
+The anchors on the three benchmark datasets hold <strong>99.6% true pairs or better</strong>, so what is
+measured is matches rather than collisions.
+<a href="#the-m-side-from-anchor-pairs">Below</a> is what the estimate is worth and where it is wrong.</p>
+<h3 id="three-how-much-of-that-evidence-is-the-same-evidence-twice">Three: how much of that evidence is the same evidence twice?<a class="headerlink" href="#three-how-much-of-that-evidence-is-the-same-evidence-twice" title="Permanent link">&para;</a></h3>
+<p>Fellegi-Sunter assumes agreement is independent across comparisons conditional on match status.
+The U half of that assumption is a property of the value distributions alone, so it needs no
+matches and no sampling of pairs.
+The pairwise version of the same closed form is</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>u_cd = sum over (v,w) of p_vw^2        phi_cd = u_cd / (u_c * u_d)
+</code></pre></div>
+<p>over the joint value table of two interned columns, and <code>log2(phi_cd)</code> is the number of bits the
+score double-counts.
+It is reported in bits rather than as a correlation because bits are the correction term that
+would appear in the weight, which is what makes it actionable.</p>
+<p>Two structural checks ride the same pass.
+<strong>Determination</strong> is the share of rows kept by mapping each value of one column to its commonest
+partner in the other, which is 1 exactly when the first column determines the second.
+<strong>Containment</strong> is the share of rows on which one value occurs literally inside the other, which
+is the detector for a column built out of another.</p>
+<h2 id="reading-the-output">Reading the output<a class="headerlink" href="#reading-the-output" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Records      50,578
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>Mode         all pairs
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>Rows read    50,578  (all)
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>Time         0.0 s  (8 threads)
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>Evidence ledger
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>  Pair space       1.279e+09 pairs     30.25 bits
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>  Match rate       3.954e-05                   (50,578 matching pairs assumed)
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>  Prior odds                          -14.63 bits
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>  Available                           +47.30 bits
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>  Redundant                            -1.29 bits   (pairwise, u side only)
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>  Margin                              +31.38 bits
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>  Expected                            +33.05 bits   (m over 195,168 anchor pairs)
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>  Double counted                       -0.07 bits   (pairwise, both sides)
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>  Est. margin                         +18.35 bits
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>Column            Type            Distinct     Null  Top val    Eff vals     Bits  Cov bits
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>-------------------------------------------------------------------------------------------
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>first_name        string             4,413    0.13%    5.50%       77.91     6.28      6.27
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>surname           string             6,195    8.93%    1.34%        1447    10.50      8.71
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>first_and_surname string            20,479    0.13%    1.07%        4862    12.25     12.21
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>dob               string             8,985   22.55%    1.52%       495.3     8.95      5.37
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>postcode_fake     string            12,363   22.59%    0.09%        6833    12.74      7.63
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>birth_place       string             2,373   13.70%    5.32%       193.5     7.60      5.66
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>occupation        string               453   50.00%   12.10%       25.43     4.67      1.17
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>gender            string                 7   22.20%   83.60%       1.378     0.46      0.28
+</code></pre></div>
+<p><code>Bits</code> is the ceiling above, over the rows that carry a value.
+<code>Cov bits</code> is that ceiling weighted by the chance both rows of a pair carry one, and it is what
+the ledger adds up.
+<code>gender</code> is the whole point of the table: seven distinct values, but 83.6% of the rows share
+one, so it behaves as 1.378 values and can never contribute more than a quarter of a bit.
+A column with no term frequencies, and a list column whose exact agreement is not a
+single-value event, is listed and left unscored.</p>
+<p><code>Redundant</code> in the ledger is the sum of the <strong>positive</strong> overlaps found by the pairwise pass
+below.
+A pair whose joint collides less often than independence predicts reads a negative overlap, and
+those are not credited back: an anti-correlation between two columns is not extra evidence to
+spend.</p>
+<p>The ledger's second half replaces <code>m = 1</code> with <code>m</code> as measured.
+<code>Expected</code> is what an average matching pair scores, summing each column's agreement weight when
+it agrees and its disagreement penalty when it does not; <code>Double counted</code> is what the weight
+over-counts once the M-side overlap is set against the U-side one; and <code>Est. margin</code> is the
+prior plus both.
+On this file the ceiling says a match has 31.38 bits of headroom and the estimate says 18.35,
+which is closer to the truth of 6.51.</p>
+<p>Then <code>m</code> per column, and the anchors it came from:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Column             Sessions       Pairs     Cov       m       Spread   Weight  Exp bits
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>---------------------------------------------------------------------------------------
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>postcode_fake             1      30,387  78.75%   0.748            -    12.32      6.86
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>first_and_surname         1      42,994  99.91%   0.529            -    11.33      5.47
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>surname                   1      38,888  90.37%   0.821            -    10.21      7.17
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>dob                       2      84,543  74.45%   0.652  0.625-0.680     8.34      3.65
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>birth_place               4     166,523  85.32%   0.858  0.840-0.865     7.37      5.06
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>first_name                1      70,759 100.00%   0.595            -     5.53      2.77
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>occupation                4      95,591  48.98%   0.909  0.897-0.914     4.53      1.87
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>gender                    4     149,594  76.65%   0.951  0.942-0.957     0.39      0.19
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>Anchors, over 50,578 rows
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>  first_and_surname + dob                          21.20 bits    +6.57 post      38,586 pairs
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  dob + postcode_fake                              21.69 bits    +7.06 post      43,031 pairs
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>  first_and_surname + postcode_fake                24.99 bits   +10.36 post      42,792 pairs
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>  surname + postcode_fake                          23.24 bits    +8.61 post      70,759 pairs
+</code></pre></div>
+<p><code>Cov</code> here is the share of <em>anchor pairs</em> carrying the column on both rows, which is coverage
+among matches and not the row coverage in the table above.
+<code>Weight</code> is <code>log2(m/u)</code>, and it can never exceed <code>Bits</code>, because <code>m &lt;= 1</code>.
+<code>Spread</code> is the same <code>m</code> read off anchors of different strengths, and a wide one is the estimate
+saying it depends on which matches it was shown.
+<code>post</code> is how far above even odds a pair agreeing on that anchor sits, under <code>m &lt;= 1</code>.
+A column where every anchor pair agreed, or none did, has an <code>m</code> of exactly 1 or 0 and no finite
+weight; it is floored half a pair off the edge and named in a footer, rather than floored
+quietly.</p>
+<p>The pairwise table follows, worst first:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Column            Against                   Rows     L-&gt;R     R-&gt;L   Substr   Redund
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>------------------------------------------------------------------------------------
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>first_name        first_and_surname       50,511    0.234    1.000    1.000        -
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>surname           first_and_surname       46,063    0.514    1.000    1.000        -
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>postcode_fake     birth_place             34,706    0.921    0.298    0.000        -
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>...
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>first_name        occupation              25,270    0.336    0.149    0.001     0.53
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>Suspects
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>  first_and_surname determines first_name: drop first_name, or make the two one comparison
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>  first_and_surname determines surname: drop surname, or make the two one comparison
+</code></pre></div>
+<p><code>first_and_surname</code> is the concatenation of the other two name columns, and the profile names it
+from the rows alone in under a second: it determines both of them exactly (<code>R-&gt;L</code> of 1.000) and
+both occur inside it on every row (<code>Substr</code> of 1.000).
+That is the same dependence the <a href="../completeness/"><code>completeness</code></a> diagnostic finds from the
+model, reached here with no model at all.</p>
+<h2 id="checking-it-against-the-model">Checking it against the model<a class="headerlink" href="#checking-it-against-the-model" title="Permanent link">&para;</a></h2>
+<p><code>Bits</code> and the model's <code>u</code> are two readings of one quantity, and they agree exactly.
+The profile takes its collision rate over the rows that carry a value; the model's <code>u</code> for an
+exact level is over all pairs, including the ones a null makes disagree.
+The two therefore differ by the coverage alone, and on <code>historical_50k</code> they do, for every
+column:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th style="text-align: right;"><code>Bits</code></th>
+<th style="text-align: right;"><code>+ 2 log2(1/coverage)</code></th>
+<th style="text-align: right;">model <code>-log2(u)</code></th>
+<th style="text-align: right;">model weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>first_name</code></td>
+<td style="text-align: right;">6.28</td>
+<td style="text-align: right;">0.00</td>
+<td style="text-align: right;">6.29</td>
+<td style="text-align: right;">5.71</td>
+</tr>
+<tr>
+<td><code>surname</code></td>
+<td style="text-align: right;">10.50</td>
+<td style="text-align: right;">0.27</td>
+<td style="text-align: right;">10.77</td>
+<td style="text-align: right;">9.83</td>
+</tr>
+<tr>
+<td><code>first_and_surname</code></td>
+<td style="text-align: right;">12.25</td>
+<td style="text-align: right;">0.00</td>
+<td style="text-align: right;">12.25</td>
+<td style="text-align: right;">11.23</td>
+</tr>
+<tr>
+<td><code>dob</code></td>
+<td style="text-align: right;">8.95</td>
+<td style="text-align: right;">0.74</td>
+<td style="text-align: right;">9.69</td>
+<td style="text-align: right;">7.55</td>
+</tr>
+<tr>
+<td><code>postcode_fake</code></td>
+<td style="text-align: right;">12.74</td>
+<td style="text-align: right;">0.74</td>
+<td style="text-align: right;">13.48</td>
+<td style="text-align: right;">11.49</td>
+</tr>
+<tr>
+<td><code>birth_place</code></td>
+<td style="text-align: right;">7.60</td>
+<td style="text-align: right;">0.42</td>
+<td style="text-align: right;">8.02</td>
+<td style="text-align: right;">6.87</td>
+</tr>
+<tr>
+<td><code>occupation</code></td>
+<td style="text-align: right;">4.67</td>
+<td style="text-align: right;">2.00</td>
+<td style="text-align: right;">6.67</td>
+<td style="text-align: right;">4.77</td>
+</tr>
+<tr>
+<td><code>gender</code></td>
+<td style="text-align: right;">0.46</td>
+<td style="text-align: right;">0.72</td>
+<td style="text-align: right;">1.19</td>
+<td style="text-align: right;">0.53</td>
+</tr>
+</tbody>
+</table>
+<p>The last column is what the fitted model actually pays for exact agreement, and it sits below
+the ceiling by <code>-log2(m)</code>.
+<code>first_and_surname</code> gets 11.23 of its 12.25 available bits because <code>m</code> is 0.49: half the
+matching pairs do not agree exactly on it.
+<strong>A positive margin is necessary and not sufficient</strong>, and that gap is exactly what the
+<a href="#the-m-side-from-anchor-pairs">M side</a> below estimates from the rows alone.</p>
+<h2 id="what-it-refuses-and-why">What it refuses, and why<a class="headerlink" href="#what-it-refuses-and-why" title="Permanent link">&para;</a></h2>
+<p>Three things on the U side look estimable and are not; the M side's own refusals are
+<a href="#what-refuses-it">further down</a>.
+All three were found by measuring rather than by reasoning, and each one is now a guard.</p>
+<h3 id="the-plug-in-collision-rate-reads-1n-on-singletons">The plug-in collision rate reads <code>1/n</code> on singletons<a class="headerlink" href="#the-plug-in-collision-rate-reads-1n-on-singletons" title="Permanent link">&para;</a></h3>
+<p><code>sum_v p_hat_v^2</code> over a joint table where every cell holds one row reads <code>1/n</code> when the truth
+is near zero.
+On <code>historical_50k</code> that put <strong>9.4 spurious bits</strong> of redundancy on a pair of independent
+columns.
+Every <code>u</code> here is the without-replacement collision form</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>sum_v c_v (c_v - 1) / (n (n - 1))
+</code></pre></div>
+<p>which reads exactly zero on a table of singletons, and which is what <code>u</code> means anyway: the rate
+two <em>distinct</em> rows collide.</p>
+<p>One visible consequence: on a near-unique column <code>Eff vals</code> runs above the distinct count.
+That is correct rather than a bug.
+Two distinct rows agreeing is rarer there than one value in however many the column holds.</p>
+<h3 id="mutual-information-is-not-estimable-at-this-cardinality">Mutual information is not estimable at this cardinality<a class="headerlink" href="#mutual-information-is-not-estimable-at-this-cardinality" title="Permanent link">&para;</a></h3>
+<p>The uncertainty coefficient read <code>U(L|R) = 0.920</code> for two independent high-cardinality columns,
+because the two marginals and the joint all saturate at <code>log2(n)</code> together.
+Sample size cannot fix it and the Miller-Madow correction is orders of magnitude too small to
+repair it, so mutual information is not reported at all.
+The determination share degrades far more gracefully and replaces it.
+Its two failure modes are checked and refused rather than printed:</p>
+<ul>
+<li>a <strong>near-unique determinant</strong> determines everything and says nothing by doing so;</li>
+<li>a <strong>target with one dominant value</strong> is determined by everything, so a determination only
+  counts when it beats the target's own commonest value.</li>
+</ul>
+<p>A direction that fails either test is shown as <code>-</code>.</p>
+<h3 id="on-a-file-holding-duplicates-the-joint-measures-the-duplicates">On a file holding duplicates, the joint measures the duplicates<a class="headerlink" href="#on-a-file-holding-duplicates-the-joint-measures-the-duplicates" title="Permanent link">&para;</a></h3>
+<p><code>u</code> is the rate two <em>non-matching</em> rows collide, and what is actually observed on a
+deduplication file is <code>(1 - lambda) * u + lambda * m</code>.
+For one column that is a small inflation.
+For the joint of two high-cardinality columns the independent rate is far below <code>lambda</code> and the
+measurement is nothing but the duplicates.
+On <code>historical_50k</code> the joint of <code>first_and_surname</code> and <code>postcode_fake</code> holds <strong>85,584
+collisions where independence predicts 52</strong>, and every one of the extras is a duplicate row
+rather than a dependence between the columns.</p>
+<p>So <code>Redund</code> is reported only where the independent rate stands clear of the match rate, and the
+footer says how many pairs were refused on that ground.
+It is refused on 22 of 28 pairs of that file.
+Raising <code>--expected-matches</code> refuses more; lowering it refuses fewer.</p>
+<p>The rule generalises, and it is worth carrying: <strong>anything estimated per pair inherits the
+duplicates, anything estimated per row does not</strong>.
+The determination and containment columns are per-row measures and are immune.
+<code>Bits</code> is a per-pair measure, so a column whose collision rate is within reach of the match rate
+is flagged and its ceiling read as a floor, which is the safe direction for a margin.</p>
+<h2 id="sampling">Sampling<a class="headerlink" href="#sampling" title="Permanent link">&para;</a></h2>
+<p>The pairwise pass is the only part that reads rows, and it is <code>O(columns^2)</code> per row.
+<code>--sample-rows</code> bounds it.
+Rows are selected by a hash of the row index, so the choice is deterministic, independent of
+input order and spread evenly across the inputs.
+Every quantity printed is a ratio of counts, so a sample needs no reweighting.</p>
+<p>On the 1.8M-row synthetic sample, <code>--sample-rows 200000</code> takes <strong>1.2 s against 10.7 s</strong> for the
+full pass and names the same suspects.
+The per-column table is not affected by sampling at all: it comes from the term-frequency tables,
+which cover every row.</p>
+<p>The anchor pass has its own budget and a much larger one, because anchor pairs are rare by
+construction and a row sample keeps only the <em>square</em> of its own fraction of them: sampling a
+tenth of the rows would leave a hundredth of the pairs.
+<code>--anchor-rows</code> defaults to 4,000,000, so every file below that size is read whole, and
+<code>--anchor-pairs</code> stops a session once it has walked a million pairs, which is a hundred times
+what <code>m</code> to a hundredth needs.
+Both samples are unbiased for <code>m</code>, because a pair survives a row sample only when both its rows
+do, and that has nothing to do with whether the pair agrees.</p>
+<h2 id="the-m-side-from-anchor-pairs">The M side, from anchor pairs<a class="headerlink" href="#the-m-side-from-anchor-pairs" title="Permanent link">&para;</a></h2>
+<p><code>m</code> is the probability two <em>matching</em> rows agree, so estimating it needs matching pairs, and the
+whole point of this command is that nobody has any yet.
+An <strong>anchor</strong> manufactures them.</p>
+<h3 id="how-an-anchor-is-chosen">How an anchor is chosen<a class="headerlink" href="#how-an-anchor-is-chosen" title="Permanent link">&para;</a></h3>
+<p>Agreeing exactly on a column is worth at most <code>-log2(u)</code> bits, so agreeing on a set of columns is
+worth at most the sum, less the pairwise overlap between them that the U-side pass just measured.
+Set that against the prior odds and the result is a bound on the posterior that a pair agreeing
+on all of them is a match.
+An anchor is admissible when the bound clears even odds by <code>--anchor-margin</code>, six bits by
+default, which is odds of about 64 to 1.
+On <code>historical_50k</code> <code>first_and_surname + postcode_fake</code> is worth 24.99 bits against prior odds of
+-14.63, so a pair agreeing on both sits at +10.36 bits, and <strong>99.92% of the pairs it selects are
+in fact true matches</strong>.
+Across all the anchors the three benchmark datasets produce, the worst is 99.6%.</p>
+<p>Anchors are built one per column held out, strongest columns first, and identical ones collapse,
+so a file usually ends with three or four sessions of two or three columns each.</p>
+<h3 id="what-is-held-out-and-why">What is held out, and why<a class="headerlink" href="#what-is-held-out-and-why" title="Permanent link">&para;</a></h3>
+<p>A session may not be read for a column whose agreement its own anchor has already forced.
+Three things force it, and all three are checked:</p>
+<ol>
+<li><strong>The anchor's own columns.</strong> They agree on every pair by construction, so <code>m</code> would read 1.</li>
+<li><strong>Anything the anchor determines.</strong> If <code>first_and_surname</code> is in the anchor then <code>surname</code>
+   agrees whenever it does, and the determination and containment checks from the U-side pass are
+   what detect that. This is the same held-out-column discipline the per-column EM sessions in
+   <a href="../estimate/"><code>estimate</code></a> run.</li>
+<li><strong>Anything whose agreement moves with an anchor column's.</strong> This is determination's pairwise
+   twin and the rows cannot see it: two columns can be independent value by value and still be
+   corrupted by the same event, so that they agree together among matches far more often than
+   agreeing apart would predict. It is measured on the sessions that anchor on neither, and any
+   column coupled to an anchor column by more than a tenth of a bit is dropped from that session.</li>
+</ol>
+<p>The third check was not in the design and was added because a test caught it: a fixture column
+redrawn on exactly the duplicates another column was redrawn on read <code>m</code> of 0.897 against a
+planted 0.701, because two of its three sessions anchored on its twin.</p>
+<h3 id="what-it-is-worth">What it is worth<a class="headerlink" href="#what-it-is-worth" title="Permanent link">&para;</a></h3>
+<p>Measured against the ground truth the benchmark datasets ship and the tools never see:</p>
+<table>
+<thead>
+<tr>
+<th>dataset</th>
+<th style="text-align: right;">mean abs error in <code>m</code></th>
+<th style="text-align: right;">worst column</th>
+<th style="text-align: right;">ledger ceiling</th>
+<th style="text-align: right;"><code>Est. margin</code></th>
+<th style="text-align: right;">truth</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>febrl3</code></td>
+<td style="text-align: right;"><strong>0.003</strong></td>
+<td style="text-align: right;">0.008</td>
+<td style="text-align: right;">+57.12</td>
+<td style="text-align: right;"><strong>+31.42</strong></td>
+<td style="text-align: right;">+31.63</td>
+</tr>
+<tr>
+<td><code>fake_1000</code></td>
+<td style="text-align: right;"><strong>0.016</strong></td>
+<td style="text-align: right;">0.024</td>
+<td style="text-align: right;">+18.74</td>
+<td style="text-align: right;"><strong>-0.83</strong></td>
+<td style="text-align: right;">-1.16</td>
+</tr>
+<tr>
+<td><code>historical_50k</code></td>
+<td style="text-align: right;"><strong>0.117</strong></td>
+<td style="text-align: right;">0.228</td>
+<td style="text-align: right;">+31.38</td>
+<td style="text-align: right;"><strong>+18.35</strong></td>
+<td style="text-align: right;">+6.51</td>
+</tr>
+</tbody>
+</table>
+<p>The ceiling overstates a matching pair's score by a factor of two to three on all three.
+The estimate closes 99% of that gap on <code>febrl3</code>, 94% on <code>fake_1000</code> and 54% on <code>historical_50k</code>.</p>
+<p><code>fake_1000</code> is the case that shows why the M side is worth having: the ceiling reads <strong>+18.74
+bits</strong> of headroom, and the truth is that an average matching pair scores <strong>below even odds</strong>.
+The anchor estimate gets the sign right.
+That is the same file whose best F1 sits at the bottom of the threshold grid, and the ledger now
+says why before anything has been run.</p>
+<h3 id="scoring-it-against-known-pairs">Scoring it against known pairs<a class="headerlink" href="#scoring-it-against-known-pairs" title="Permanent link">&para;</a></h3>
+<p>Where a truth file exists, <code>--truth</code> reads every <code>m</code> a second time off the known pairs and
+prints it beside the estimate:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Column             Sessions       Pairs     Cov       m       Spread   Weight  Exp bits   True m     Err
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>--------------------------------------------------------------------------------------------------------
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>postcode_fake             1      30,387  78.75%   0.748            -    12.32      6.86    0.594  +0.154
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>first_and_surname         1      42,994  99.91%   0.529            -    11.33      5.47    0.301  +0.228
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>...
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>mean |error|                                                                                       0.117
+</code></pre></div>
+<p>and adds a <code>Truth margin</code> line to the ledger beside <code>Est. margin</code>, summed over exactly the
+columns the anchor estimate covers so the two are the same question about the same columns.</p>
+<p>Nothing above the truth reading depends on it.
+The anchors are chosen, walked and averaged identically whether the flag is given or not, which
+is what makes <code>Err</code> a measurement of the anchor's selection rather than of a fit.
+The benchmark harness passes it on every run, so the numbers below are re-measured rather than
+remembered.</p>
+<h3 id="where-it-is-wrong-and-in-which-direction">Where it is wrong, and in which direction<a class="headerlink" href="#where-it-is-wrong-and-in-which-direction" title="Permanent link">&para;</a></h3>
+<p>Every <code>m</code> on <code>historical_50k</code> reads high:</p>
+<table>
+<thead>
+<tr>
+<th>column</th>
+<th style="text-align: right;">truth <code>m</code></th>
+<th style="text-align: right;">anchor <code>m</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>first_and_surname</code></td>
+<td style="text-align: right;">0.301</td>
+<td style="text-align: right;">0.529</td>
+</tr>
+<tr>
+<td><code>first_name</code></td>
+<td style="text-align: right;">0.431</td>
+<td style="text-align: right;">0.595</td>
+</tr>
+<tr>
+<td><code>dob</code></td>
+<td style="text-align: right;">0.509</td>
+<td style="text-align: right;">0.652</td>
+</tr>
+<tr>
+<td><code>postcode_fake</code></td>
+<td style="text-align: right;">0.594</td>
+<td style="text-align: right;">0.748</td>
+</tr>
+<tr>
+<td><code>surname</code></td>
+<td style="text-align: right;">0.713</td>
+<td style="text-align: right;">0.821</td>
+</tr>
+<tr>
+<td><code>birth_place</code></td>
+<td style="text-align: right;">0.800</td>
+<td style="text-align: right;">0.858</td>
+</tr>
+<tr>
+<td><code>occupation</code></td>
+<td style="text-align: right;">0.859</td>
+<td style="text-align: right;">0.909</td>
+</tr>
+<tr>
+<td><code>gender</code></td>
+<td style="text-align: right;">0.916</td>
+<td style="text-align: right;">0.951</td>
+</tr>
+</tbody>
+</table>
+<p>The ranking is exact and every value is 0.03 to 0.23 too high, and neither of those is an
+accident.
+Anchors are the matches that happened to agree on a clean identifier, and on real data being
+clean is a property of the <em>record</em> rather than of the field, so a pair that agrees on two
+columns is more likely to agree on the rest.
+Conditioning on the anchor therefore selects the easy matches, and every rate read off them
+moves up.</p>
+<p>On <code>febrl3</code> the same estimator is accurate to 0.003, because its corruption is applied field by
+field on independent coins: agreement really is conditionally independent among matches there,
+and conditioning on an anchor selects nothing.</p>
+<p>So <strong>the error is itself the reading</strong>.
+Where the anchor <code>m</code> is close to the truth, the independence Fellegi-Sunter assumes holds among
+matches; where it is far, that assumption is failing, by about the amount it is far.
+The size of the gap cannot be measured without truth, but its direction can be relied on, so
+<code>Expected</code> is a second ceiling and a much tighter one, rather than an estimate to be trusted as
+a point.</p>
+<p><code>Spread</code> is the one visible symptom: it is the same <code>m</code> read off anchors of different strengths,
+and it widens exactly when the estimate depends on which matches it was shown.</p>
+<h3 id="what-was-tried-and-does-not-work">What was tried and does not work<a class="headerlink" href="#what-was-tried-and-does-not-work" title="Permanent link">&para;</a></h3>
+<p><code>m</code> rises smoothly with the anchor's strength, by about 0.02 to 0.03 per bit on
+<code>historical_50k</code>, which invites a regression back to no conditioning at all.
+Fitted over all 45 two- and three-column anchors it halves the error on the worst columns and
+<strong>doubles it on the best</strong>, overshooting <code>surname</code>, <code>birth_place</code> and <code>occupation</code> by 0.13 to
+0.18.
+The reason is structural: the low end of that fit is anchors whose pairs are mostly not matches,
+so the correction is bought by violating the premise the estimate rests on.
+It is not applied.</p>
+<p>Raising <code>--anchor-margin</code> is the same trade in the other direction and costs more than it buys.
+At 12 bits the mean error on <code>historical_50k</code> goes from 0.117 to 0.148 and on <code>fake_1000</code> the M
+side is refused entirely, while anchor precision at the default is already 99.6% or better.
+There is no precision left to buy.</p>
+<h3 id="what-refuses-it">What refuses it<a class="headerlink" href="#what-refuses-it" title="Permanent link">&para;</a></h3>
+<p>The report says <code>No m:</code> and gives the reason rather than guessing:</p>
+<ul>
+<li><code>--no-pairs</code>, because the pairwise pass is what tells an anchor from a column it determines;</li>
+<li>no admissible column set, and the message says what the strongest one is worth against what a
+  match needs;</li>
+<li>anchors that select fewer than 100 pairs;</li>
+<li>no column carrying 100 of those pairs on both rows, which is <code>fake_1000</code> at a high margin.</li>
+</ul>
+<p>A single column shows <code>-</code> when every anchor built either contains it or has already spoken for
+it, and the footer says how many, because those contribute nothing to <code>Expected</code> and the
+estimated margin is then a floor.</p>
+<p><a href="../completeness/"><code>completeness</code></a> reports the M-side dependence between blocked <em>comparisons</em>
+once a model exists, which is the same question one level up, over levels rather than columns.</p>
+<h2 id="link-mode">Link mode<a class="headerlink" href="#link-mode" title="Permanent link">&para;</a></h2>
+<p>With two input files and no <code>--mode</code>, the pair space is the cross product rather than the
+triangle, which changes the prior odds and the match rate the redundancy check is read against.
+The per-column table is unchanged: term frequencies pool the inputs, which is the same
+approximation the scorer makes.
+Anchor pairs are required to cross the inputs, so the M side estimates <code>m</code> for a linkage rather
+than for a deduplication.
+On a 200,000-row synthetic pair of files whose duplicates are planted with independent per-field
+corruption, <code>m</code> comes back within <strong>0.0011</strong> of the planted rate on every column.
+See <a href="../../linking/">linking two files</a>.</p>
+<h2 id="json">JSON<a class="headerlink" href="#json" title="Permanent link">&para;</a></h2>
+<p><code>--json</code> writes the whole report, including every column pair rather than the suspects alone:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">"records"</span><span class="p">:</span><span class="w"> </span><span class="mi">50578</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"all pairs"</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">"pair_space"</span><span class="p">:</span><span class="w"> </span><span class="mf">1279041753.0</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">"expected_matches"</span><span class="p">:</span><span class="w"> </span><span class="mi">50578</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">"match_rate"</span><span class="p">:</span><span class="w"> </span><span class="mf">3.954366609328351e-05</span><span class="p">,</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">"space_bits"</span><span class="p">:</span><span class="w"> </span><span class="mf">30.25241621426746</span><span class="p">,</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">  </span><span class="nt">"prior_bits"</span><span class="p">:</span><span class="w"> </span><span class="mf">-14.626193844911983</span><span class="p">,</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">  </span><span class="nt">"available_bits"</span><span class="p">:</span><span class="w"> </span><span class="mf">47.29891935612495</span><span class="p">,</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">  </span><span class="nt">"redundant_bits"</span><span class="p">:</span><span class="w"> </span><span class="mf">-1.2880838361517108</span><span class="p">,</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">  </span><span class="nt">"margin_bits"</span><span class="p">:</span><span class="w"> </span><span class="mf">31.384641675061257</span><span class="p">,</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">  </span><span class="nt">"anchored"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">  </span><span class="nt">"anchor_rows"</span><span class="p">:</span><span class="w"> </span><span class="mi">50578</span><span class="p">,</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="w">  </span><span class="nt">"anchor_pairs"</span><span class="p">:</span><span class="w"> </span><span class="mi">195168</span><span class="p">,</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="w">  </span><span class="nt">"expected_bits"</span><span class="p">:</span><span class="w"> </span><span class="mf">33.04627275908069</span><span class="p">,</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="w">  </span><span class="nt">"double_counted_bits"</span><span class="p">:</span><span class="w"> </span><span class="mf">-0.0723902075663121</span><span class="p">,</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="w">  </span><span class="nt">"estimated_margin_bits"</span><span class="p">:</span><span class="w"> </span><span class="mf">18.3476887066024</span><span class="p">,</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="w">  </span><span class="nt">"estimated_columns"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="w">  </span><span class="nt">"scored_columns"</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="w">  </span><span class="nt">"unresolved_pairs"</span><span class="p">:</span><span class="w"> </span><span class="mi">22</span><span class="p">,</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="w">  </span><span class="nt">"walked"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="w">  </span><span class="nt">"sampled"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="w">  </span><span class="nt">"sampled_rows"</span><span class="p">:</span><span class="w"> </span><span class="mi">50578</span><span class="p">,</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a><span class="w">  </span><span class="nt">"seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.057234084</span><span class="p">,</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a><span class="w">  </span><span class="nt">"columns"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="err">...</span><span class="w"> </span><span class="p">],</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a><span class="w">  </span><span class="nt">"sessions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="err">...</span><span class="w"> </span><span class="p">],</span>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a><span class="w">  </span><span class="nt">"matches"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="err">...</span><span class="w"> </span><span class="p">],</span>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="w">  </span><span class="nt">"pairs"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="err">...</span><span class="w"> </span><span class="p">]</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a><span class="p">}</span>
+</code></pre></div>
+<p>Each entry of <code>columns</code> carries <code>name</code>, <code>type</code>, <code>scored</code>, <code>distinct</code>, <code>nulls</code>, <code>coverage</code>,
+<code>top_share</code>, <code>collision</code>, <code>effective_values</code>, <code>bits</code>, <code>covered_bits</code> and <code>bits_floored</code>.
+Each entry of <code>pairs</code> carries the two names, <code>rows</code>, <code>determines_left</code> and <code>determines_right</code>
+with their <code>informative</code> flags and baselines, <code>containment</code>, the three <code>u</code> values,
+<code>redundant_bits</code>, <code>joint_collisions</code>, <code>expected_collisions</code>, <code>resolved</code>, <code>suspect</code> and the
+<code>verdict</code> string, plus the M side: <code>m_pairs</code>, <code>m_left</code>, <code>m_right</code>, <code>m_joint</code>,
+<code>m_redundant_bits</code>, <code>m_resolved</code> and <code>net_redundant_bits</code>.
+A pair with <code>resolved</code> false has a <code>redundant_bits</code> of zero that means <em>not readable</em> rather
+than <em>not redundant</em>, and the same holds for <code>m_resolved</code>.</p>
+<p>The M side adds <code>anchored</code>, <code>anchor_refusal</code>, <code>anchor_rows</code>, <code>anchor_pairs</code>, <code>expected_bits</code>,
+<code>double_counted_bits</code>, <code>estimated_margin_bits</code>, <code>estimated_columns</code> and <code>scored_columns</code> at the
+top level.
+Each entry of <code>matches</code> carries <code>name</code>, <code>estimated</code>, <code>sessions</code>, <code>pairs</code>, <code>coverage</code>, <code>m</code>,
+<code>m_low</code>, <code>m_high</code>, <code>weight</code>, <code>expected_bits</code> and <code>floored</code>.
+Each entry of <code>sessions</code> carries <code>anchor</code>, <code>learns</code>, <code>bits</code>, <code>posterior_bits</code>, <code>groups</code>,
+<code>pairs</code>, <code>oversized_groups</code>, <code>capped</code> and <code>used</code>.</p>
+<p>With <code>--truth</code> the top level gains <code>truthed</code>, <code>truth_pairs</code>, <code>truth_expected_bits</code>,
+<code>truth_margin_bits</code> and <code>truth_mean_error</code>, and each entry of <code>matches</code> gains <code>truthed</code> and,
+where it is true, <code>truth_pairs</code>, <code>truth_coverage</code>, <code>truth_m</code>, <code>truth_weight</code> and
+<code>truth_expected_bits</code>.</p>
+<h2 id="what-to-do-about-a-suspect">What to do about a suspect<a class="headerlink" href="#what-to-do-about-a-suspect" title="Permanent link">&para;</a></h2>
+<p>Cheapest first:</p>
+<ol>
+<li><strong>Drop one of the columns.</strong> If one determines the other, the second carries no information
+   the first does not, and dropping it costs nothing and removes the double count exactly.</li>
+<li><strong>Make the two one comparison.</strong> Levels are ordered and the first hit wins, so a single
+   comparison over both columns counts the evidence once by construction.
+   This is what the <code>list_contains</code> level does for a name against an alias list.</li>
+<li><strong>Subtract the bits.</strong> <code>Redund</code> is the correction term, so a comparison whose columns overlap
+   by 0.5 bits is worth 0.5 bits less than the model thinks.
+   This is the only option that keeps both columns as they are, and it is approximate, because
+   the correction is exact only on the U side.</li>
+</ol>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../inspect/"><code>inspect</code></a>: the same file, from the loader's side: cardinality and memory</li>
+<li><a href="../completeness/"><code>completeness</code></a>: the M-side dependence between comparisons, once a model exists</li>
+<li><a href="../estimate/"><code>estimate</code></a>: where the <code>u</code> this predicts actually comes from</li>
+<li><a href="../../model/">The model</a>: what a bit of match weight is</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Mathieu Fourment - MIT licensed
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

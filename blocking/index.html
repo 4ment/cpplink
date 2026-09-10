@@ -1,0 +1,1897 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A streaming Fellegi-Sunter record linker in C++ that never materializes a candidate-pair table.">
+      
+      
+      
+        <link rel="canonical" href="https://4ment.github.io/cpplink/blocking/">
+      
+      
+        <link rel="prev" href="../em/">
+      
+      
+        <link rel="next" href="../linking/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Blocking - cpplink</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#blocking" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="cpplink" class="md-header__button md-logo" aria-label="cpplink" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            cpplink
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Blocking
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/4ment/cpplink" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    4ment/cpplink
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="cpplink" class="md-nav__button md-logo" aria-label="cpplink" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    cpplink
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/4ment/cpplink" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    4ment/cpplink
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../comparisons/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparisons
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../em/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation and EM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blocking
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blocking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#a-blocking-source-is-an-iterator-not-a-join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A blocking source is an iterator, not a join
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="A blocking source is an iterator, not a join">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#union-without-a-global-distinct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Union without a global DISTINCT
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-four-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The four sources
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The four sources">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exact_value-every-pair-sharing-a-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        exact_value — every pair sharing a value
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rare_value-the-primary-automatic-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rare_value — the primary automatic source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minhash-minhash-lsh-over-character-n-grams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        minhash — MinHash LSH over character n-grams
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sorted_neighbourhood-the-cheap-complement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sorted_neighbourhood — the cheap complement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ann-deferred-and-prediction-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ann — deferred, and prediction-only
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#no-blocking-at-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No blocking at all
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost-before-enumeration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost before enumeration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recall-has-to-be-measured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recall has to be measured
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enumeration-is-not-the-bottleneck" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enumeration is not the bottleneck
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#honest-caveat-on-the-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Honest caveat on the measurements
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../linking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Linking two files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Commands
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/inspect/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    inspect
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/profile/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/levels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    levels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/simplify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    simplify
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/explain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    explain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/explain-blocking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    explain-blocking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/recall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    recall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/completeness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    completeness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/estimate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    estimate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/predict/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    predict
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/rescore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rescore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/cluster/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cluster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commands/gen-sample/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gen-sample
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema file
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/output-formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#a-blocking-source-is-an-iterator-not-a-join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A blocking source is an iterator, not a join
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="A blocking source is an iterator, not a join">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#union-without-a-global-distinct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Union without a global DISTINCT
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-four-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The four sources
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The four sources">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exact_value-every-pair-sharing-a-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        exact_value — every pair sharing a value
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rare_value-the-primary-automatic-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rare_value — the primary automatic source
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minhash-minhash-lsh-over-character-n-grams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        minhash — MinHash LSH over character n-grams
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sorted_neighbourhood-the-cheap-complement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sorted_neighbourhood — the cheap complement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ann-deferred-and-prediction-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ann — deferred, and prediction-only
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#no-blocking-at-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No blocking at all
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost-before-enumeration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost before enumeration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recall-has-to-be-measured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recall has to be measured
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enumeration-is-not-the-bottleneck" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enumeration is not the bottleneck
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#honest-caveat-on-the-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Honest caveat on the measurements
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="blocking">Blocking<a class="headerlink" href="#blocking" title="Permanent link">&para;</a></h1>
+<p>Scoring every pair of 1.8M records means 1.6 trillion comparisons; at 20M records it is
+2.0×10¹⁴. Blocking is what makes the problem finite: it generates a <em>candidate set</em> that
+contains nearly all the true matches and a vanishing fraction of everything else.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Records          1,800,000
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Pairs unblocked  1,619,999,100,000
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>...
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>Union, deduplicated                               116,939,057
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Blocking keeps 8.08e-05 of all possible pairs.
+</code></pre></div>
+<p>Unlike splink, cpplink's blocking is <strong>automatic</strong> rather than rule-written. At 20M records
+hand-tuning rules is the slowest part of the work, and the term-frequency tables the model
+already needs turn out to be enough to generate good candidates on their own.</p>
+<p>What is automatic is the <em>knob</em>, not the plan.
+A source is a column and a threshold rather than a join condition, the threshold re-selects
+its own values as the data changes, and every source prices itself exactly from the
+term-frequency tables before anything is enumerated.
+Which columns go in the plan, and at what cap or window, is still declared in the schema and
+still chosen by measurement: <a href="../commands/recall/"><code>recall</code></a> reports what each source
+contributes over and above the ones before it, and no command proposes a plan for you.</p>
+<h2 id="a-blocking-source-is-an-iterator-not-a-join">A blocking source is an iterator, not a join<a class="headerlink" href="#a-blocking-source-is-an-iterator-not-a-join" title="Permanent link">&para;</a></h2>
+<p>Blocking is not a rule language. A <strong>pair source</strong> is anything that yields <code>(row_a, row_b)</code> on
+demand, and the rest of the pipeline neither knows nor cares which source produced a pair.
+Several sources run in union, in the order they are declared.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">"blocking"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"exact_value"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"email"</span><span class="p">},</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"exact_value"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"phone"</span><span class="p">},</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"exact_value"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dob"</span><span class="p">},</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"rare_value"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"last_name"</span><span class="p">,</span><span class="w"> </span><span class="nt">"max_frequency"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">},</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sorted_neighbourhood"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"last_name"</span><span class="p">,</span><span class="w"> </span><span class="nt">"window"</span><span class="p">:</span><span class="w"> </span><span class="mi">20</span><span class="p">}</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="p">]</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">One plan, two unions</p>
+<p>The <code>"blocking"</code> array is declared once and read twice.
+<a href="../commands/predict/"><code>predict</code></a> walks every source in it;
+<a href="../commands/estimate/"><code>estimate</code></a> walks only the sources marked <strong>EM-safe</strong>, running one
+EM session per column those sources condition on, and refuses to estimate <code>m</code> at all when
+none qualify.
+Everything priced and measured on this page is the prediction union, which is the larger of
+the two.
+Why the estimation side has to be narrower, and what it costs when it is not, is the
+<a href="../em/#em-safety">EM-safety criterion</a>.</p>
+</div>
+<h3 id="union-without-a-global-distinct">Union without a global DISTINCT<a class="headerlink" href="#union-without-a-global-distinct" title="Permanent link">&para;</a></h3>
+<p>For source <em>k</em>, emit a pair only if no <strong>earlier</strong> source would have produced it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>emit(a,b) from source k  ⟺  produces_k(a,b)  ∧  ∀ j&lt;k : ¬produces_j(a,b)
+</code></pre></div>
+<p>The predicate is cheap for every source type, and there is <strong>no global deduplication state of
+any kind</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th><code>produces_j(a,b)</code> test</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Exact value / rare value</td>
+<td><code>key_j(a) == key_j(b)</code></td>
+<td>O(1)</td>
+</tr>
+<tr>
+<td>MinHash LSH band</td>
+<td>band hash equality</td>
+<td>O(1)</td>
+</tr>
+<tr>
+<td>Sorted neighbourhood</td>
+<td>ranks within the window in pass <em>j</em></td>
+<td>O(1)</td>
+</tr>
+</tbody>
+</table>
+<p>Order sources cheapest-predicate-first. On the plan above the union is 116.9M pairs against a
+summed 130.8M — the predicate removed 10.6% of the work without materializing anything.</p>
+<div class="admonition note">
+<p class="admonition-title">This much is shared with splink</p>
+<p>splink applies the same rule: <code>splink/internals/blocking.py</code> emits
+<code>AND NOT (previous_rules)</code> for every blocking rule after the first, during blocked-pair
+generation, so duplicates never reach its comparison-vector table either. The difference
+is what happens to the pairs that <em>survive</em> the predicate — splink materializes them as a
+relation, cpplink folds each one into a histogram and forgets it. The saving is the table,
+not the deduplication.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Nulls must never block together</p>
+<p><code>KeyOf</code> returns <code>kNoKey</code> for a missing value, and two rows carrying <code>kNoKey</code> never become
+a candidate pair. This is easy to get wrong when keys are interned ids and null has an id.</p>
+</div>
+<h2 id="the-four-sources">The four sources<a class="headerlink" href="#the-four-sources" title="Permanent link">&para;</a></h2>
+<p>And, below them, the option of <a href="#no-blocking-at-all">no source at all</a>.</p>
+<h3 id="exact_value-every-pair-sharing-a-value"><code>exact_value</code> — every pair sharing a value<a class="headerlink" href="#exact_value-every-pair-sharing-a-value" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"exact_value"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"email"</span><span class="p">}</span>
+</code></pre></div>
+<p>The plain equi-join. For each distinct value, emit all pairs sharing it. Cost is
+<span class="arithmatex">\(\sum_v n_v(n_v-1)/2\)</span> over the column's term-frequency table.</p>
+<p>Strongest on high-cardinality identifiers (email, phone), but <strong>also the best use of
+low-cardinality columns</strong>: <code>dob</code> at 20,821 distinct values over 1.8M rows is the single
+strongest contributor in this plan at 82.88% recall, for 78M candidates.</p>
+<h3 id="rare_value-the-primary-automatic-source"><code>rare_value</code> — the primary automatic source<a class="headerlink" href="#rare_value-the-primary-automatic-source" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"rare_value"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"last_name"</span><span class="p">,</span><span class="w"> </span><span class="nt">"max_frequency"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">}</span>
+</code></pre></div>
+<p>Block only on values seen at most <code>max_frequency</code> times:</p>
+<div class="arithmatex">\[
+\text{pairs}(j, \text{cap}) \;=\; \sum_{v\,:\,n_v \le \text{cap}} \frac{n_v(n_v-1)}{2}
+\]</div>
+<p>Three properties fall out, and the third is the interesting one:</p>
+<ul>
+<li><strong>The cost is exactly computable from the TF table alone</strong>, in O(distinct values) — no sort,
+  no enumeration, no sampling.</li>
+<li><strong>It is automatic.</strong> Nobody writes rules; you set a frequency cap and it adapts to the data.</li>
+<li><strong>It selects on the same quantity the model scores.</strong> Agreement on a rare value <em>is</em> the
+  high-match-weight event that <a href="../model/#term-frequency-adjustment">term-frequency adjustment</a>
+  encodes. The "Smith" problem dissolves, because common values are skipped exactly because
+  they blow up quadratically <em>and</em> carry little evidence. <strong>Cost and information content
+  coincide</strong> — no other source here has that alignment.</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">The cap cannot be one global constant</p>
+<p>At 20M rows with a cap of 100, <code>dob</code> yields 65 pairs and <code>postcode</code> yields zero, because
+20M records over 21k dates puts every value far above the cap. Rare-value blocking is
+useless on low-cardinality columns; those belong in <code>exact_value</code> instead. <code>inspect</code>
+prints a "Rare pairs" column so this is visible before a run.</p>
+</div>
+<h3 id="minhash-minhash-lsh-over-character-n-grams"><code>minhash</code> — MinHash LSH over character n-grams<a class="headerlink" href="#minhash-minhash-lsh-over-character-n-grams" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"minhash"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"last_name"</span><span class="p">,</span><span class="w"> </span><span class="nt">"bands"</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="nt">"rows_per_band"</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="nt">"ngram"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+</code></pre></div>
+<p>A band hash <em>is</em> a blocking key, so <code>b</code> bands are <code>b</code> more key-sorted sources and everything
+above applies untouched. Its distinctive advantage over ANN is an <em>analytic</em> recall curve:</p>
+<div class="arithmatex">\[
+P(\text{pair becomes a candidate}) \;=\; 1 - (1 - s^r)^b
+\]</div>
+<p>with <span class="arithmatex">\(s\)</span> the Jaccard similarity, <span class="arithmatex">\(r\)</span> rows per band and <span class="arithmatex">\(b\)</span> bands — so recall at a chosen
+similarity threshold is computed before the run rather than measured after.</p>
+<div class="admonition danger">
+<p class="admonition-title">Measured: MinHash over a single column is strictly dominated on this data</p>
+<p>Two EM-safe configurations at 20M rows, priced by <code>explain-blocking</code> and scored against
+1,600,095 planted duplicate pairs:</p>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th style="text-align: right;">Candidate pairs</th>
+<th style="text-align: right;">Recall</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>email + phone + rare(last_name) + SN + <strong>10 MinHash bands</strong></td>
+<td style="text-align: right;">74,943,118,464</td>
+<td style="text-align: right;">96.40%</td>
+</tr>
+<tr>
+<td>email + phone + <strong>dob exact</strong> + rare(last_name) + wider SN</td>
+<td style="text-align: right;">10,147,740,082</td>
+<td style="text-align: right;"><strong>98.58%</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>7.4× the cost for less recall.</strong> The ten bands account for 74.6 billion of the 74.9
+billion candidates and add 5.6 points of recall between them — roughly 840,000 candidate
+pairs per additional true pair found. Worse, nine of the ten are near-pure waste: band 0
+contributed 80,006 pairs no earlier source reached, bands 1–9 contributed 684 to 1,293
+each.</p>
+<p>The reason is that <strong>bands over the same column are strongly correlated in the population
+that matters</strong>, even though the S-curve treats them as independent given Jaccard
+similarity. A duplicate's surname is bimodal — either it survived corruption intact and
+every band agrees, or it was mangled and they all miss. There is little probability mass
+in between for extra bands to catch. Every band reads 60.8% to 61.1% pair completeness
+alone, and the ten together reach almost none of the pairs the others miss. The S-curve is
+not wrong; it is being averaged over the wrong distribution. A band also degenerated: one
+key covered 71,425 records and produced 2.55 billion pairs by itself.</p>
+</div>
+<h3 id="sorted_neighbourhood-the-cheap-complement"><code>sorted_neighbourhood</code> — the cheap complement<a class="headerlink" href="#sorted_neighbourhood-the-cheap-complement" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sorted_neighbourhood"</span><span class="p">,</span><span class="w"> </span><span class="nt">"column"</span><span class="p">:</span><span class="w"> </span><span class="s2">"last_name"</span><span class="p">,</span><span class="w"> </span><span class="nt">"window"</span><span class="p">:</span><span class="w"> </span><span class="mi">20</span><span class="p">}</span>
+</code></pre></div>
+<p>Sort by a normalized key, slide a window of <code>w</code>, emit within-window pairs. Exactly <span class="arithmatex">\(N \cdot w\)</span>
+pairs, <span class="arithmatex">\(O(N \log N)\)</span>, near-zero memory. Unglamorous, nearly free, and it fails in different
+directions than the others — it catches values that sort adjacent but share no rare token.</p>
+<h3 id="ann-deferred-and-prediction-only"><code>ann</code> — deferred, and prediction-only<a class="headerlink" href="#ann-deferred-and-prediction-only" title="Permanent link">&para;</a></h3>
+<p>Approximate nearest neighbours over record embeddings reach matches no lexical method can:
+nicknames, transliterations, reordered name parts. It is not built yet, and when it is it will
+be <strong>prediction-only</strong>, because a whole-record embedding does not satisfy the
+<a href="../em/#em-safety">EM-safety criterion</a>. Three further cautions apply:
+the embedding is the hard
+part rather than the index, distance and match weight are <em>different orderings</em> (linkage often
+turns on one rare field agreeing while everything else differs — far away in cosine space),
+and kNN is asymmetric, so emitting each pair exactly once needs all neighbour lists resident.</p>
+<h2 id="no-blocking-at-all">No blocking at all<a class="headerlink" href="#no-blocking-at-all" title="Permanent link">&para;</a></h2>
+<p>Blocking is a cost paid to avoid a larger one.
+On a small enough input the larger one is not there, and the right plan is the empty one:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cpplink<span class="w"> </span>predict<span class="w"> </span>--schema<span class="w"> </span>schema.json<span class="w"> </span>--all-pairs<span class="w"> </span>--model<span class="w"> </span>model.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">                </span>--threshold<span class="w"> </span><span class="m">12</span><span class="w"> </span>--out<span class="w"> </span>edges/<span class="w"> </span>a.parquet<span class="w"> </span>b.parquet
+</code></pre></div>
+<p><code>--all-pairs</code> is accepted by the five plan-building commands (<code>explain-blocking</code>, <code>recall</code>,
+<code>estimate</code>, <code>completeness</code>, <code>predict</code>) and replaces whatever the schema declares with a single
+source that produces every pair the mode admits: the whole triangle when deduplicating, the
+cross product when linking.
+The same thing can be written in the schema as <code>{"type": "all_pairs"}</code>, and with the flag the
+<code>blocking</code> section may be omitted entirely.
+Nothing downstream changes, because an unblocked source is a pair source like any other.</p>
+<p><strong>Linking is where it pays</strong>, because the admissible space is already <span class="arithmatex">\(N_0 \cdot N_1\)</span>
+rather than <span class="arithmatex">\(N(N-1)/2\)</span>: two files of 20k and 5k rows are 100M pairs, which is a couple of
+seconds.</p>
+<p><strong>The pair-global ceiling is what makes it affordable</strong>, and it works <em>better</em> here than on a
+blocked stream.
+A blocked candidate was selected for agreeing on something, so it is hard to reject cheaply; a
+random pair agrees on nothing and the ceiling rejects it before a single string metric runs.
+Measured on <code>fake_1000</code> at 0 bits: the blocked plan's 9,981 candidates ran at <strong>2.7M
+candidates/s</strong> with 63% skipped, and the unblocked 499,500 ran at <strong>22.6M candidates/s</strong> with
+<strong>89% skipped</strong>. So 50x the candidates cost about 6x the wall time.
+On <code>febrl3</code>, 12.5M pairs score in <strong>2.2 s single-threaded</strong>.</p>
+<p><strong>What it buys is bounded by what blocking was actually losing, which is less than pair
+completeness suggests.</strong> Best F1 over a threshold sweep, scoring the <em>same</em> model both ways:</p>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th>Blocked</th>
+<th>Unblocked</th>
+<th>Blocking PC</th>
+<th>Candidates</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fake_1000</code></td>
+<td>0.9228</td>
+<td><strong>0.9432</strong></td>
+<td>88.3%</td>
+<td>9,981 → 499,500</td>
+</tr>
+<tr>
+<td><code>febrl3</code></td>
+<td>0.9972</td>
+<td>0.9972</td>
+<td>99.8%</td>
+<td>110,570 → 12,497,500</td>
+</tr>
+<tr>
+<td><code>historical_50k</code></td>
+<td>0.8676</td>
+<td>0.8689</td>
+<td>85.0%</td>
+<td>18.4M → 1.28×10⁹</td>
+</tr>
+</tbody>
+</table>
+<p><code>fake_1000</code> gains 0.020 F1, all of it recall (0.857 to 0.908), which is exactly the pairs the
+plan was not reaching.
+<code>febrl3</code> is unchanged at every threshold, and pays 100x the candidates for it.
+<code>historical_50k</code> gains <strong>0.0013</strong> for 70x the candidates and 2.9 s against 68 s, even though
+blocking was missing 15% of its pairs: those pairs disagree on everything blocked and do not
+clear the threshold once scored.
+Reaching more pairs is not reaching better ones, which is the same thing a derived phonetic
+key showed on this dataset from the other direction.</p>
+<div class="admonition danger">
+<p class="admonition-title">Estimating from an unblocked plan removes the hold-out that protects <code>m</code></p>
+<p>A session that conditions on a column is protected from that column's dependence by
+holding it out, and from a <em>tied</em> column's by holding that out too.
+An unblocked session conditions on nothing, so it holds nothing out, and a dependence
+between two comparisons goes straight into <code>m</code>.
+On <code>historical_50k</code>, whose <code>first_and_surname</code> column contains both name columns,
+<code>estimate --all-pairs</code> reads <span class="arithmatex">\(\lambda\)</span> as <strong>1.59x10⁻²</strong> against a truth of
+2.38x10⁻⁴ (67x), and end-to-end F1 falls from 0.8676 to <strong>0.5332</strong>.
+Dropping <code>first_and_surname</code> from the schema takes <span class="arithmatex">\(\lambda\)</span> to 3.51x10⁻⁴ on the same
+unblocked run, which is what identifies the tie as the cause.
+<code>estimate</code> names every tied pair it finds in that situation, from the rows alone.</p>
+<p>Where there is no such structure the opposite holds and the unblocked session is the
+<em>better</em> estimator, because <span class="arithmatex">\(\lambda\)</span> from a blocked session is a lower bound over
+exactly the matches blocking missed and this one misses none: on <code>fake_1000</code> it reads
+3.38x10⁻³ against a truth of 4.07x10⁻³, where the blocked sessions read 1.77x10⁻³.</p>
+<p><strong>So estimate with a plan and predict without one.</strong> They are separate commands taking
+separate flags for exactly this reason, and the model is a file in between.</p>
+</div>
+<h2 id="cost-before-enumeration">Cost before enumeration<a class="headerlink" href="#cost-before-enumeration" title="Permanent link">&para;</a></h2>
+<p>At scale a careless source is catastrophic — blocking on surname alone puts every "Smith" in
+one group, and a single 100k group emits 5×10⁹ pairs by itself. Every source above can price
+itself <strong>without enumerating anything</strong>, which is what
+<a href="../commands/explain-blocking/"><code>explain-blocking</code></a> reports:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Source                        EM-safe         Candidate pairs   Largest group
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>-----------------------------------------------------------------------------
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>email exact_value             yes                     104,702               9
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>phone exact_value             yes                     138,575              11
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>dob exact_value               yes                  77,957,842             129
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>last_name rare_value          yes                  16,659,085             100
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>last_name sorted_neighbourho. yes                  35,999,790              21
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>-----------------------------------------------------------------------------
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>Sum over sources                                  130,859,994
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>Union, deduplicated                               116,939,057
+</code></pre></div>
+<p><code>CountPairs</code> is exact and reads only term frequencies. If it ever disagreed with enumeration
+the report would be lying, so <strong>that equivalence is a test</strong>. <code>Largest group</code> is the number to
+watch: one huge group is quadratic and is the usual reason a run never finishes.</p>
+<div class="admonition note">
+<p class="admonition-title">Also largely shared with splink</p>
+<p>splink's <code>count_comparisons_from_blocking_rule</code> and <code>n_largest_blocks</code> answer the same
+question the same way — by aggregating block sizes rather than enumerating pairs. What is
+particular here is that the counts cost nothing extra, because they read the
+term-frequency tables the model already holds; that the report carries the <code>EM-safe</code>
+column deciding where a source may be used; and that the
+<a href="#recall-has-to-be-measured">recall harness</a> sits beside it.</p>
+</div>
+<h2 id="recall-has-to-be-measured">Recall has to be measured<a class="headerlink" href="#recall-has-to-be-measured" title="Permanent link">&para;</a></h2>
+<p>With hand-written rules you can reason about what they miss. <strong>With automatic sources you
+cannot, so recall has to be measured or the whole approach is unfalsifiable.</strong>
+<a href="../commands/recall/"><code>cpplink recall</code></a> takes known-match pairs and reports what each source
+retrieves, individually and unioned:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Source                           Found      PC      Candidates        PQ    First to   Marg PQ
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>----------------------------------------------------------------------------------------------
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>email exact_value               90,681  63.09%         104,702     86.6%      90,681     86.6%
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>phone exact_value              105,715  73.55%         138,575     76.3%      38,719     27.9%
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>dob exact_value                119,118  82.88%      77,957,842    0.153%      11,643   0.0149%
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>last_name rare_value            81,589  56.77%      16,659,085     0.49%       1,414  0.00849%
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>last_name sorted_neighbo.       88,361  61.48%      35,999,790    0.245%         200 0.000556%
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>----------------------------------------------------------------------------------------------
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>Union                          142,657  99.25%     130,859,994    0.109%
+</code></pre></div>
+<p>The <strong><code>First to</code></strong> column is the one that decides whether a source stays, and <code>Marg PQ</code>
+prices it. <code>last_name sorted_neighbourhood</code> finds 61% of known pairs on its own, but only 200
+of them that no earlier source reached — for 36M candidate pairs. <strong>Do not add a blocking
+source without running <code>recall</code> to see its marginal contribution.</strong></p>
+<p>The 0.75% of known pairs that no source reaches is a hard ceiling on the edges: no amount of
+scoring recovers them, because they are never generated as candidates. Measured end to end,
+<code>cluster --truth</code> reports 0.9949 recall at a 20-bit threshold against this blocking recall of
+0.9925 — <strong>recall is a blocking problem, not a model problem</strong>. (The partition can sit
+slightly above the ceiling because it is transitive; see
+<a href="../commands/recall/#the-union-line-and-the-ceiling"><code>recall</code></a>.)</p>
+<h2 id="enumeration-is-not-the-bottleneck">Enumeration is not the bottleneck<a class="headerlink" href="#enumeration-is-not-the-bottleneck" title="Permanent link">&para;</a></h2>
+<p>Walking the deduplicated union of 1.01×10¹⁰ pairs at 20M records, including the
+earlier-source predicate, took <strong>132 seconds single-threaded</strong> and 41 s of that was the load —
+about <strong>9 ns per pair</strong>. Against the ~4,090 ns it takes to <em>evaluate</em> a pair, candidate
+generation is <strong>450× cheaper than the comparison it feeds</strong>, and still 23× cheaper than the
+207 ns a candidate the same run's scoring pass costs with the pair-global ceiling on.</p>
+<p>Effort spent making blocking faster is effort wasted. The place to spend it is either the
+comparison (see <a href="../comparisons/#what-a-level-costs">comparisons</a>) or the plan itself: a
+frequency cap or band count yielding 10¹¹ candidates instead of 5×10⁹ turns a two-minute run
+into a day, and no amount of engineering below it helps. <code>explain-blocking</code> exists to make
+that visible in seconds rather than hours.</p>
+<h2 id="honest-caveat-on-the-measurements">Honest caveat on the measurements<a class="headerlink" href="#honest-caveat-on-the-measurements" title="Permanent link">&para;</a></h2>
+<p>These findings come from synthetic data whose corruption model drops email 35% of the time and
+phone 25%, independently. Real data with weaker identifiers would shift the balance back
+toward fuzzy sources. <strong>What generalizes is the method</strong> — price every source, measure its
+<em>marginal</em> recall, and delete the ones that do not earn their candidates.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Mathieu Fourment - MIT licensed
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "content.code.copy", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
