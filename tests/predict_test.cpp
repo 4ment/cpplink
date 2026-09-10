@@ -354,4 +354,58 @@ TEST_F(PredictFixture, ReportNamesTheZonesAndTheShards) {
     EXPECT_NE(text.find("shard-000.bin"), std::string::npos);
 }
 
+// The threads still write a shard each; what changes is that the run ends with
+// one file and no staging directory left behind.
+TEST_F(PredictFixture, MergingIntoOneFileLeavesNoShardsAndLosesNoEdge) {
+    cpplink::PredictReport shards_report;
+    const std::vector<Edge> shards = Run("kept", 0.0, true, 4, &shards_report);
+
+    cpplink::ScoreOptions score;
+    score.threshold = 0.0;
+    cpplink::Scorer scorer;
+    std::string error;
+    ASSERT_TRUE(scorer.Bind(model_, comparisons_, *store_, score, &error)) << error;
+
+    for (const char* name : {"merged.csv", "merged.parquet"}) {
+        cpplink::PredictOptions options;
+        options.merge_path = (dir_ / name).string();
+        options.out_dir = options.merge_path + ".shards";
+        options.threads = 4;
+        cpplink::PredictReport report;
+        ASSERT_TRUE(cpplink::Predict(*store_, comparisons_, plan_, scorer, options,
+                                     &report, &error))
+            << error;
+
+        EXPECT_EQ(report.edges, shards_report.edges) << name;
+        EXPECT_EQ(report.merged_path, options.merge_path);
+        EXPECT_TRUE(report.shards.empty()) << "the staged shards are gone";
+        EXPECT_TRUE(std::filesystem::exists(options.merge_path)) << name;
+        EXPECT_FALSE(std::filesystem::exists(options.out_dir))
+            << "the staging directory is removed";
+    }
+
+    // And the csv it wrote holds one row per edge, behind the header.
+    std::ifstream file((dir_ / "merged.csv").string());
+    std::string line;
+    uint64_t rows = 0;
+    while (std::getline(file, line)) ++rows;
+    EXPECT_EQ(rows, shards.size() + 1);
+}
+
+TEST_F(PredictFixture, AMergeTargetWithNoKnownExtensionIsRefused) {
+    cpplink::ScoreOptions score;
+    score.threshold = 0.0;
+    cpplink::Scorer scorer;
+    std::string error;
+    ASSERT_TRUE(scorer.Bind(model_, comparisons_, *store_, score, &error)) << error;
+
+    cpplink::PredictOptions options;
+    options.merge_path = (dir_ / "edges.txt").string();
+    options.out_dir = options.merge_path + ".shards";
+    cpplink::PredictReport report;
+    EXPECT_FALSE(
+        cpplink::Predict(*store_, comparisons_, plan_, scorer, options, &report, &error));
+    EXPECT_NE(error.find("neither a .csv nor a .parquet"), std::string::npos) << error;
+}
+
 }  // namespace

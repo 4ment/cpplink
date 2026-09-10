@@ -197,7 +197,7 @@ On a small enough input the larger one is not there, and the right plan is the e
 
 ```bash
 cpplink predict --schema schema.json --all-pairs --model model.json \
-                --threshold 12 --out edges/ a.parquet b.parquet
+                --threshold 12 --out predictions/ a.parquet b.parquet
 ```
 
 `--all-pairs` is accepted by the five plan-building commands (`explain-blocking`, `recall`,
@@ -315,7 +315,8 @@ prices it. `last_name sorted_neighbourhood` finds 61% of known pairs on its own,
 of them that no earlier source reached — for 36M candidate pairs. **Do not add a blocking
 source without running `recall` to see its marginal contribution.**
 
-The 0.75% of known pairs that no source reaches is a hard ceiling on the edges: no amount of
+The 0.75% of known pairs that no source reaches is a hard ceiling on the predictions: no amount
+of
 scoring recovers them, because they are never generated as candidates. Measured end to end,
 `cluster --truth` reports 0.9949 recall at a 20-bit threshold against this blocking recall of
 0.9925 — **recall is a blocking problem, not a model problem**. (The partition can sit

@@ -52,7 +52,10 @@ struct ClusterAssignment {
 };
 
 struct ClusterOptions {
-    std::string edge_dir;
+    // Either the directory of `shard-*.bin` a run wrote, or the single `.csv` or
+    // `.parquet` file it was merged into. A merged file names records by
+    // `unique_id` rather than by row, so clustering one costs an id index.
+    std::string edge_path;
     std::string out_path;  // empty writes no file
     // Edges carry their weight, so clustering at a threshold above the one
     // predict wrote at costs a re-read and no re-scoring.
@@ -79,8 +82,13 @@ struct ClusterReport {
     uint64_t largest = 0;
     uint64_t implied_pairs = 0;
     uint64_t written = 0;
+    // Edges naming an id no loaded record has. Wrong data file, wrong schema, or
+    // a merged file from another run; either way they are counted, not fatal.
+    uint64_t unresolved = 0;
     std::vector<SizeBucket> buckets;
-    std::vector<std::string> shards;
+    std::vector<std::string> shards;  // empty when a single file was read
+    std::string edge_file;            // empty when the shards were read
+    double index_seconds = 0.0;       // building the id index, for a merged file
     double seconds = 0.0;
 };
 
@@ -105,9 +113,13 @@ struct ClusterQuality {
     double f1 = 0.0;
 };
 
-// Streams every `shard-*.bin` under `edge_dir` into a union-find and closes it
-// into a partition. Nothing holds an edge: a record is read, unioned, forgotten.
-bool Cluster(uint64_t records, const ClusterOptions& options,
+// Streams every edge under `edge_path` into a union-find and closes it into a
+// partition. Nothing holds an edge: a record is read, unioned, forgotten.
+//
+// A shard directory names rows and needs nothing from the store but its size; a
+// merged csv or parquet file names `unique_id`s, and those are resolved through
+// an index over the store's id column.
+bool Cluster(const RecordStore& store, const ClusterOptions& options,
              ClusterAssignment* assignment, ClusterReport* report, std::string* error);
 
 // Writes `unique_id,cluster_id,cluster_size` for every record in a cluster of at
