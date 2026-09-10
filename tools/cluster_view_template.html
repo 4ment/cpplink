@@ -151,6 +151,30 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
 .matrix td.none { color: var(--muted); opacity: 0.45; }
 .matrix td.weak { background: var(--warn-soft); color: var(--warn); }
 .matrix th.rowhead { text-align: left; font-family: var(--mono); text-transform: none; letter-spacing: 0; }
+.note { color: var(--muted); font-size: 12px; }
+.net {
+  width: 100%; height: auto; max-height: 55vh; display: block;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+}
+.net line { stroke: var(--muted); stroke-linecap: round; }
+.net line.weak { stroke: var(--warn); }
+.net line.hit { stroke: transparent; stroke-width: 9; }
+.net g.link { cursor: pointer; }
+.net g.link:hover line.wire { stroke: var(--ink); opacity: 1; }
+.net g.link.on line.wire { stroke: var(--accent); stroke-width: 3; opacity: 1; }
+.net circle { stroke: var(--panel); stroke-width: 1.5; cursor: pointer; }
+.net text { font-family: var(--mono); text-anchor: middle; pointer-events: none; }
+.net text.tag { font-size: 5.5px; fill: var(--muted); }
+.net text.num { font-size: 5px; fill: var(--panel); font-weight: 600; }
+.net g.node:hover circle { stroke: var(--ink); stroke-width: 2; }
+tr.lit td, tr.pin td { background: var(--accent-soft); }
+tr.lit td.odd, tr.pin td.odd { background: var(--warn-soft); }
+tr.pin td { box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
+.toggle {
+  font-size: 12px; color: var(--muted); display: flex; gap: 5px;
+  align-items: center; cursor: pointer; user-select: none;
+}
+.toggle input { margin: 0; accent-color: var(--accent); }
 .empty-state { color: var(--muted); padding: 40px 0; text-align: center; }
 kbd {
   font: inherit; font-size: 11px; font-family: var(--mono); border: 1px solid var(--line);
@@ -164,6 +188,9 @@ kbd {
   <span class="meta" id="hmeta"></span>
   <span class="spacer"></span>
   <span class="meta"><kbd>j</kbd> <kbd>k</kbd> move &middot; <kbd>/</kbd> search</span>
+  <label class="toggle" title="draw the predictions of the selected cluster as a graph">
+    <input type="checkbox" id="net"> network
+  </label>
   <button class="ghost" id="theme">theme</button>
 </header>
 <main>
@@ -245,6 +272,141 @@ function statsOf(rows, distinct) {
         for (const [v, n] of seen) if (n > best) { best = n; top = v; }
         return { distinct: distinct ? distinct[i] : seen.size, missing, top };
     });
+}
+
+// The network of one cluster. A force-directed layout is the expensive part of
+// this page -- it is O(n^2) an iteration, over rows the table already holds --
+// so it runs only when the checkbox asks for it, only up to NET_MAX members,
+// and its result is cached on the cluster the way the rest of the detail is.
+const NET_MAX = 250;          // members above which the layout is not worth it
+const NET_W = 640, NET_H = 360;
+
+// Fruchterman-Reingold in a unit square, seeded on a phyllotaxis spiral so the
+// same cluster always draws the same picture and no two nodes start on top of
+// one another. Gravity is what keeps a cluster held together only transitively
+// from flying apart into components the pane cannot fit.
+function layout(n, links) {
+    const x = new Float64Array(n), y = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+        const a = i * 2.39996323, r = 0.45 * Math.sqrt((i + 0.5) / n);
+        x[i] = 0.5 + r * Math.cos(a);
+        y[i] = 0.5 + r * Math.sin(a);
+    }
+    const k = Math.sqrt(1 / n);          // the edge length the layout aims at
+    const dx = new Float64Array(n), dy = new Float64Array(n);
+    const steps = n > 120 ? 160 : 300;
+    for (let step = 0; step < steps; step++) {
+        dx.fill(0); dy.fill(0);
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                const ex = x[i] - x[j], ey = y[i] - y[j];
+                const d2 = ex * ex + ey * ey || 1e-9;
+                const f = k * k / d2;    // k^2/d, over d again for the direction
+                dx[i] += ex * f; dy[i] += ey * f;
+                dx[j] -= ex * f; dy[j] -= ey * f;
+            }
+        }
+        for (const l of links) {
+            const ex = x[l.i] - x[l.j], ey = y[l.i] - y[l.j];
+            const d = Math.hypot(ex, ey) || 1e-9;
+            const f = d / k;             // d^2/k, over d for the direction
+            dx[l.i] -= ex * f; dy[l.i] -= ey * f;
+            dx[l.j] += ex * f; dy[l.j] += ey * f;
+        }
+        const t = 0.1 * (1 - step / steps) + 0.0005;
+        for (let i = 0; i < n; i++) {
+            dx[i] += (0.5 - x[i]) * 0.08 * k;
+            dy[i] += (0.5 - y[i]) * 0.08 * k;
+            const d = Math.hypot(dx[i], dy[i]) || 1e-9;
+            const move = Math.min(d, t) / d;
+            x[i] += dx[i] * move; y[i] += dy[i] * move;
+        }
+    }
+    // Fit whatever it settled on to the viewBox, keeping the aspect ratio.
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < n; i++) {
+        x0 = Math.min(x0, x[i]); x1 = Math.max(x1, x[i]);
+        y0 = Math.min(y0, y[i]); y1 = Math.max(y1, y[i]);
+    }
+    const pad = 22;
+    const scale = Math.min((NET_W - 2 * pad) / (x1 - x0 || 1),
+                           (NET_H - 2 * pad) / (y1 - y0 || 1));
+    const out = [];
+    for (let i = 0; i < n; i++) {
+        out.push([NET_W / 2 + (x[i] - (x0 + x1) / 2) * scale,
+                  NET_H / 2 + (y[i] - (y0 + y1) / 2) * scale]);
+    }
+    return out;
+}
+
+function network(c) {
+    if (c.net !== undefined) return c.net;
+    const rows = c.rows, n = rows.length;
+    let body;
+    if (n < 2 || !c.edges) {
+        body = '';
+    } else if (n > NET_MAX) {
+        body = `<div class="note">${n.toLocaleString()} members is more than the ` +
+            `${NET_MAX} this draws; the weights are below.</div>`;
+    } else {
+        const at = new Map(rows.map((r, i) => [r.id, i]));
+        const links = [];
+        let lo = Infinity, hi = -Infinity;
+        for (const [a, b, w] of c.edges) {
+            const i = at.get(a), j = at.get(b);
+            if (i === undefined || j === undefined || i === j) continue;
+            links.push({ i, j, w });
+            lo = Math.min(lo, w); hi = Math.max(hi, w);
+        }
+        const pos = layout(n, links);
+        const span = hi - lo || 1;
+        const lines = links.map(l => {
+            const [xa, ya] = pos[l.i], [xb, yb] = pos[l.j];
+            const width = (1 + 2.2 * (l.w - lo) / span).toFixed(2);
+            const dim = (0.3 + 0.5 * (l.w - lo) / span).toFixed(2);
+            // The visible line is a hairline at the weakest weight, which is
+            // nothing to aim a mouse at, so an invisible fat one carries the
+            // clicking and the thin one carries the reading.
+            const ends = `x1="${xa.toFixed(1)}" y1="${ya.toFixed(1)}" ` +
+                `x2="${xb.toFixed(1)}" y2="${yb.toFixed(1)}"`;
+            return `<g class="link" data-i="${l.i}" data-j="${l.j}">` +
+                `<title>${esc(rows[l.i].id)} &#8212; ${esc(rows[l.j].id)}: ` +
+                `${l.w.toFixed(1)} bits</title>` +
+                `<line class="hit" ${ends}/>` +
+                `<line class="wire${l.w === lo ? ' weak' : ''}" ${ends} ` +
+                `stroke-width="${width}" opacity="${dim}"/></g>`;
+        }).join('');
+        const truthy = rows[0].t !== undefined;
+        const nodes = rows.map((r, i) => {
+            const [px, py] = pos[i];
+            const colour = truthy ? truthColors[(r.t || 0) % truthColors.length]
+                                  : 'var(--accent)';
+            const tag = n <= 14
+                ? `<text class="tag" x="${px.toFixed(1)}" y="${(py + 14).toFixed(1)}">` +
+                  `${esc(r.id.length > 16 ? r.id.slice(0, 15) + '…' : r.id)}</text>`
+                : '';
+            const num = n <= 100
+                ? `<text class="num" x="${px.toFixed(1)}" y="${(py + 1.8).toFixed(1)}">` +
+                  `${i + 1}</text>`
+                : '';
+            return `<g class="node" data-i="${i}"><circle cx="${px.toFixed(1)}" ` +
+                `cy="${py.toFixed(1)}" r="${n <= 100 ? 6 : 4}" fill="${colour}">` +
+                `<title>${i + 1}. ${esc(r.id)}</title></circle>${num}${tag}</g>`;
+        }).join('');
+        const pairs = n * (n - 1) / 2;
+        body = `<svg class="net" viewBox="0 0 ${NET_W} ${NET_H}" ` +
+            `preserveAspectRatio="xMidYMid meet">${lines}${nodes}</svg>` +
+            `<div class="note" style="margin-top:6px">` +
+            `${links.length.toLocaleString()} of ${pairs.toLocaleString()} pairs were ` +
+            `scored above the threshold; a pair with no line is in this cluster ` +
+            `through the others. Line weight is the match weight, the thinnest ` +
+            `${links.length ? `(${lo.toFixed(1)} bits) ` : ''}marked. ` +
+            `Click a line to hold its two records lit in the table above.</div>`;
+    }
+    c.net = body
+        ? `<div class="section"><h3>Network</h3>${body}</div>`
+        : '';
+    return c.net;
 }
 
 function summarise(cluster) {
@@ -403,7 +565,7 @@ async function select(id) {
             return `<th>${esc(name)}${d}</th>`;
         })).join('');
 
-    const body = c.rows.map(r => {
+    const body = c.rows.map((r, i) => {
         const cells = COLS.map((_, i) => {
             const s = view.stats[i], v = r.v[i];
             if (v === null || v === '') return '<td class="val miss">&mdash;</td>';
@@ -413,7 +575,7 @@ async function select(id) {
         const colour = truthColors[(r.t || 0) % truthColors.length];
         const t = truthy ? `<td><span class="truth" style="background:${colour}22;` +
             `color:${colour}">${r.t + 1}</span></td>` : '';
-        return `<tr><td class="id">${esc(r.id)}</td>${t}${cells}</tr>`;
+        return `<tr data-i="${i}"><td class="id">${esc(r.id)}</td>${t}${cells}</tr>`;
     }).join('');
 
     let matrix = '';
@@ -449,7 +611,35 @@ async function select(id) {
     <div class="section"><h3>What they have in common</h3><div class="chips">${chips}</div></div>
     <div class="section"><h3>Records</h3><div class="tablewrap"><table>
       <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></div>
+    ${showNet ? network(c) : ''}
     ${matrix}`;
+    // A node is a record and a line is a pair of them, so hovering either lights
+    // the rows it names; a line is also clickable, and that one holds.
+    const table = d.querySelector('tbody');
+    const lit = (rows, on) => rows.forEach(r => r.classList.toggle('lit', on));
+    for (const node of d.querySelectorAll('.net g.node')) {
+        const row = table.children[+node.dataset.i];
+        node.onmouseenter = () => lit([row], true);
+        node.onmouseleave = () => lit([row], false);
+        node.onclick = () => row.scrollIntoView({ block: 'nearest' });
+    }
+    let held = null;
+    for (const link of d.querySelectorAll('.net g.link')) {
+        const ends = [table.children[+link.dataset.i], table.children[+link.dataset.j]];
+        link.onmouseenter = () => lit(ends, true);
+        link.onmouseleave = () => lit(ends, false);
+        link.onclick = () => {
+            if (held) {
+                held.link.classList.remove('on');
+                held.ends.forEach(r => r.classList.remove('pin'));
+            }
+            if (held && held.link === link) { held = null; return; }
+            link.classList.add('on');
+            ends.forEach(r => r.classList.add('pin'));
+            held = { link, ends };
+            ends[0].scrollIntoView({ block: 'nearest' });
+        };
+    }
     d.scrollTop = 0;
 }
 
@@ -484,6 +674,14 @@ $('#list').addEventListener('scroll', async e => {
     if (exhausted || el.scrollTop + el.clientHeight < el.scrollHeight - 200) return;
     await loadPage(false);
     renderList();
+});
+let showNet = false;
+try { showNet = localStorage.getItem('cpplink.net') === '1'; } catch (e) {}
+$('#net').checked = showNet;
+$('#net').addEventListener('change', () => {
+    showNet = $('#net').checked;
+    try { localStorage.setItem('cpplink.net', showNet ? '1' : '0'); } catch (e) {}
+    if (current) select(current.id);
 });
 $('#theme').onclick = () => {
     const now = document.documentElement.getAttribute('data-theme');

@@ -15,6 +15,11 @@ browser: the left pane lists clusters, the right one shows the members side by
 side with every disagreeing cell highlighted, so what a cluster has in common is
 the part that is not highlighted.
 
+The `network` checkbox in the header draws the selected cluster's predictions as
+a graph, which is where a chain shows itself as a chain. It is off by default and
+the choice is remembered, because the layout is the one quadratic thing the page
+does and most clusters are read without it.
+
 A run ends with single files, so `--clusters` and `--predictions` each name one
 file and its extension picks csv or parquet. `--predictions` still takes the
 shard directory too, which names records by row rather than by `unique_id` and so
