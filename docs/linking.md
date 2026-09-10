@@ -55,6 +55,12 @@ Union, deduplicated                               15,969,937
 sorted by row and the two files occupy contiguous row ranges, so within a group the partners of
 a row are a single contiguous range and a cursor walks straight to it.
 
+!!! tip "On a small input, do not block at all"
+    Linking already reduces the pair space to \(N_0 \cdot N_1\). Two files of 20k and 5k rows
+    are 100M pairs, which is a couple of seconds with the pair-global ceiling on, so a plan
+    that trades recall for a reduction has nothing left to buy. Pass `--all-pairs`; see
+    [no blocking at all](blocking.md#no-blocking-at-all).
+
 !!! note "Sorted neighbourhood is the exception"
 
     A sorted-neighbourhood window is ordered by *value*, so the two files interleave inside it

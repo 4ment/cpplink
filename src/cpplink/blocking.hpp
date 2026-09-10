@@ -215,7 +215,12 @@ class BlockingPlan {
                       std::string* error);
     bool BuildSortedNeighbourhood(const BlockingSpec& spec, const RecordStore& store,
                                   std::string* error);
+    void BuildAllPairs(const BlockingSpec& spec);
     const std::vector<uint32_t>* Frequencies(const BoundSource& source) const;
+
+    // The unblocked source's count: the triangle, or the cross product in link
+    // mode. Closed form, with no groups to walk.
+    uint64_t CountAllPairs() const;
 
     // Cross-dataset counting cannot come from the term frequencies, which pool the
     // inputs: it needs the rows grouped, so this one sorts.

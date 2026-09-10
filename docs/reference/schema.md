@@ -377,8 +377,8 @@ produces it. Order them cheapest-predicate-first.
 
 | Field | Default | Applies to | Meaning |
 | --- | --- | --- | --- |
-| `type` | — | all | `exact_value`, `rare_value`, `minhash`, `sorted_neighbourhood` |
-| `column` | — | all | required; must not be a `double` column |
+| `type` | — | all | `exact_value`, `rare_value`, `minhash`, `sorted_neighbourhood`, `all_pairs` |
+| `column` | — | all but `all_pairs` | required; must not be a `double` column; rejected on `all_pairs`, which names none |
 | `name` | `"<column> <type>"` | all | label used in reports |
 | `max_frequency` | 100 | `rare_value` | block only on values seen at most this many times |
 | `window` | 8 | `sorted_neighbourhood` | window width; emits exactly \(N \cdot w\) pairs |
@@ -389,6 +389,15 @@ produces it. Order them cheapest-predicate-first.
 
 `minhash` additionally requires a `string` column, and non-zero `bands`, `rows_per_band` and
 `ngram`. `sorted_neighbourhood` requires a non-zero `window`.
+
+`all_pairs` is the degenerate source: it produces every pair the mode admits, which is the
+whole triangle when deduplicating and the cross product when linking.
+It takes no options, and a plan holding one has no use for any other source, since every pair
+a second source could produce was produced already.
+The whole `blocking` section can be left out and replaced at the command line with
+`--all-pairs`, which the five plan-building commands accept.
+See [Blocking](../blocking.md#no-blocking-at-all) for when that is the right thing to do and
+for what it costs.
 
 See [Blocking](../blocking.md) for what each source is good at, and for the measured finding
 that single-column MinHash was strictly dominated on this data.

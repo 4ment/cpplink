@@ -119,6 +119,7 @@ enum class SourceKind {
     kRareValue,            // pairs sharing a value seen at most max_frequency times
     kMinHash,              // MinHash LSH bands over character n-grams
     kSortedNeighbourhood,  // pairs within a window of a sorted order
+    kAllPairs,             // every pair the mode admits: no blocking at all
 };
 
 const char* SourceKindName(SourceKind kind);
@@ -128,6 +129,13 @@ bool ParseSourceKind(const std::string& name, SourceKind* kind);
 // makes it usable for estimating m: the selection event factors as a condition on
 // that column, so the column is held fixed for the session and every other
 // comparison stays identifiable. A source selecting on a whole record would not.
+//
+// `all_pairs` is the degenerate member and names no column: it selects on nothing,
+// which factors on the empty column subset, so it holds nothing out and is the one
+// source whose session estimates every m at once. It exists because on a small
+// input blocking is a cost with no benefit -- in link mode especially, where the
+// admissible space is the cross product rather than a triangle -- and because it
+// is the reference a plan's pair completeness is measured against.
 struct BlockingSpec {
     SourceKind kind = SourceKind::kExactValue;
     std::string name;

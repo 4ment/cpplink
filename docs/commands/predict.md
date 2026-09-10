@@ -37,6 +37,7 @@ cpplink predict --schema <schema.json> --model <model.json> --out <dir>
 | `--spill-sample R` | 0 | additionally spill a uniform fraction R of *every* candidate, not just those above the threshold |
 | *(positional)* | — | required; the parquet file |
 | `--mode dedup\|link\|link-and-dedup` | link with more than one file, else dedup | which pairs to enumerate; see [linking](../linking.md) |
+| `--all-pairs` | off | score every pair the mode admits instead of the schema's candidates. On a small input this is cheaper than it looks and reaches the pairs blocking was losing; see [no blocking at all](../blocking.md#no-blocking-at-all) |
 
 Exactly one of `--threshold` or `--probability` is required. Prefer bits — see
 [choosing a threshold](../model.md#choosing-a-threshold).

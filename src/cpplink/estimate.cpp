@@ -659,6 +659,9 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
 
     // Which columns are tied to which, from the profile's pairwise pass over the
     // rows. No model, no plan and no candidate pair enters this.
+    // An unblocked session holds nothing out, so a tie cannot widen a hold-out
+    // there -- but it is exactly what makes such a session unreliable, and the
+    // report has to be able to name the pairs. The rows are walked for either.
     ProfileReport profile;
     if (options.exclude_tied) {
         ProfileOptions profile_options;
@@ -687,9 +690,16 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
     std::vector<SessionJoint> session_joints;
     double best_matches = 0.0;
     std::string best_column;
+    // Whether the session behind lambda enumerated every admissible pair. Lambda
+    // is a lower bound only because blocking misses matches; a session that does
+    // no blocking misses none, and the warning would be false there.
+    bool best_unblocked = false;
     for (size_t i = 0; i < columns.size(); ++i) {
         SessionReport session;
-        session.column = columns[i];
+        // The unblocked source names no column, and holds none out: it conditions
+        // on nothing, so every comparison is free in its session at once.
+        const bool unblocked = columns[i].empty();
+        session.column = unblocked ? "(all pairs)" : columns[i];
         std::vector<bool> excluded(count, false);
         size_t usable = 0;
         for (size_t c = 0; c < count; ++c) {
@@ -713,6 +723,36 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         for (const size_t s : by_column[i]) {
             session.sources.push_back(plan.at(s).name);
             session.candidates += plan.CountPairs(s);
+        }
+        // A session that conditions on a column is protected from that column's
+        // dependence by holding it out. An unblocked one holds nothing out, so a
+        // dependence between two comparisons has nothing to repair it and goes
+        // straight into m: measured on a file where one column contains two
+        // others, this session's lambda reads 67x the truth and end-to-end F1
+        // halves. Naming the pairs is the least the report can do.
+        if (unblocked && options.exclude_tied) {
+            for (size_t c = 0; c < count; ++c) {
+                for (size_t d = c + 1; d < count; ++d) {
+                    bool pair_tied = false;
+                    for (const std::string& left : comparisons.at(c).spec->columns) {
+                        for (const std::string& right : comparisons.at(d).spec->columns) {
+                            pair_tied = pair_tied || tied_to(left, right);
+                        }
+                    }
+                    if (!pair_tied) continue;
+                    // A report-level warning rather than a session one: the tie
+                    // test is deliberately loose (it is a hold-out widener, where
+                    // a false positive costs only a session), and refusing the
+                    // only session there is would leave the model at its defaults.
+                    report->warnings.push_back(
+                        "\"" + comparisons.at(c).spec->name + "\" and \"" +
+                        comparisons.at(d).spec->name +
+                        "\" read tied columns and no session holds either out, "
+                        "because this plan does no blocking: their shared evidence "
+                        "is counted twice and m is biased upwards. Block on a "
+                        "column to get a hold-out, or drop one of the two.");
+                }
+            }
         }
         if (usable == 0) {
             session.warnings.push_back(
@@ -785,7 +825,8 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
             }
             if (session.implied_matches > best_matches) {
                 best_matches = session.implied_matches;
-                best_column = columns[i];
+                best_column = session.column;
+                best_unblocked = unblocked;
             }
         } else {
             session.warnings.push_back(
@@ -867,14 +908,17 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
     } else if (best_matches > 0.0) {
         model->lambda = best_matches / all_pairs;
         std::ostringstream basis;
-        basis << "lower bound: session " << best_column << " implies "
-              << WithThousands(static_cast<uint64_t>(best_matches)) << " matches over "
-              << WithThousands(static_cast<uint64_t>(all_pairs)) << " pairs";
+        basis << (best_unblocked ? "session " : "lower bound: session ") << best_column
+              << " implies " << WithThousands(static_cast<uint64_t>(best_matches))
+              << " matches over " << WithThousands(static_cast<uint64_t>(all_pairs))
+              << " pairs";
         model->lambda_basis = basis.str();
-        report->warnings.push_back(
-            "lambda is a lower bound: it counts only the matches a session's "
-            "blocking reached, and blocking recall is below one. Pass --lambda to "
-            "set it from a count you trust.");
+        if (!best_unblocked) {
+            report->warnings.push_back(
+                "lambda is a lower bound: it counts only the matches a session's "
+                "blocking reached, and blocking recall is below one. Pass --lambda to "
+                "set it from a count you trust.");
+        }
     } else {
         model->lambda = 1.0 / all_pairs;
         model->lambda_basis = "no session produced an estimate; one match assumed";

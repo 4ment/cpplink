@@ -35,6 +35,10 @@ const std::vector<uint32_t>* BlockingPlan::Frequencies(const BoundSource& source
 uint64_t BlockingPlan::KeyOf(size_t source_index, uint64_t row) const {
     const BoundSource& source = sources_[source_index];
     if (source.kind == SourceKind::kSortedNeighbourhood) return kNoKey;
+    // One key for the whole store, so every row lands in one group and the group
+    // enumerator walks the triangle -- or, in link mode, the cross range its
+    // cursor already knows how to find.
+    if (source.kind == SourceKind::kAllPairs) return 0;
 
     if (source.strings != nullptr) {
         const uint32_t id = source.strings->ids[row];
@@ -70,6 +74,7 @@ bool BlockingPlan::Produces(size_t source_index, uint64_t a, uint64_t b) const {
     // makes the recall harness and the earlier-source predicate agree with what the
     // stream actually emits.
     if (mode_ == PairMode::kCrossDataset && !CrossDataset(a, b)) return false;
+    if (source.kind == SourceKind::kAllPairs) return true;
     if (source.kind == SourceKind::kSortedNeighbourhood) {
         const uint32_t rank_a = source.rank[a];
         const uint32_t rank_b = source.rank[b];
@@ -97,6 +102,7 @@ bool BlockingPlan::ProducedByAny(uint64_t a, uint64_t b) const {
 
 uint64_t BlockingPlan::CountPairs(size_t source_index) const {
     const BoundSource& source = sources_[source_index];
+    if (source.kind == SourceKind::kAllPairs) return CountAllPairs();
     if (mode_ == PairMode::kCrossDataset) return CountCrossPairs(source_index);
 
     if (source.kind == SourceKind::kSortedNeighbourhood) {
@@ -132,6 +138,19 @@ uint64_t BlockingPlan::CountPairs(size_t source_index) const {
         pairs += PairsIn(frequency);
     }
     return pairs;
+}
+
+// What the mode admits, which is the whole triangle when deduplicating and the
+// cross product when linking. Closed form in both cases: an unblocked source has
+// no groups to walk.
+uint64_t BlockingPlan::CountAllPairs() const {
+    const uint64_t all = PairsIn(rows_);
+    if (mode_ != PairMode::kCrossDataset) return all;
+    uint64_t within = 0;
+    for (size_t d = 0; d < NumDatasets(); ++d) {
+        within += PairsIn(dataset_starts_[d + 1] - dataset_starts_[d]);
+    }
+    return all - within;
 }
 
 // The exact cross-dataset candidate count.
@@ -192,6 +211,7 @@ uint64_t BlockingPlan::CountCrossPairs(size_t source_index) const {
 
 uint64_t BlockingPlan::LargestGroup(size_t source_index) const {
     const BoundSource& source = sources_[source_index];
+    if (source.kind == SourceKind::kAllPairs) return rows_;
     if (source.kind == SourceKind::kSortedNeighbourhood) {
         return std::min<uint64_t>(source.window + 1, source.order.size());
     }
@@ -243,7 +263,12 @@ void BlockingPlan::BuildGroups(size_t source_index, SourceGroups* groups) const 
             groups->keyed.emplace_back(key, static_cast<uint32_t>(row));
         }
     }
-    std::sort(groups->keyed.begin(), groups->keyed.end());
+    // Rows are appended in row order under one constant key, so an unblocked
+    // source is sorted already and the sort would be a pass over every row for
+    // nothing.
+    if (sources_[source_index].kind != SourceKind::kAllPairs) {
+        std::sort(groups->keyed.begin(), groups->keyed.end());
+    }
 
     // Singletons are compacted out rather than recorded and skipped: a group of
     // one produces no pair, and dropping them keeps the groups contiguous, so a
@@ -422,6 +447,18 @@ bool BlockingPlan::BuildSortedNeighbourhood(const BlockingSpec& spec,
     return true;
 }
 
+// Nothing to bind: the source reads no column, holds no key table and needs no
+// pass over the rows. It is EM-safe for the reason the others are, at the limit --
+// its selection event conditions on the empty column subset, so its session holds
+// nothing out and every m is free in it at once.
+void BlockingPlan::BuildAllPairs(const BlockingSpec& spec) {
+    BoundSource source;
+    source.kind = SourceKind::kAllPairs;
+    source.name = spec.name;
+    source.em_safe = true;
+    sources_.push_back(std::move(source));
+}
+
 bool BlockingPlan::Build(const Schema& schema, const RecordStore& store,
                          std::string* error) {
     return Build(schema, store, PairMode::kAll, error);
@@ -449,6 +486,10 @@ bool BlockingPlan::Build(const Schema& schema, const RecordStore& store, PairMod
                 break;
             case SourceKind::kSortedNeighbourhood:
                 ok = BuildSortedNeighbourhood(spec, store, error);
+                break;
+            case SourceKind::kAllPairs:
+                BuildAllPairs(spec);
+                ok = true;
                 break;
         }
         if (!ok) return false;

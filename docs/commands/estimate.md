@@ -39,6 +39,7 @@ cpplink estimate --schema <schema.json> [--out <model.json>]
 | `--interaction-clamp F` | 6.0 | the most any single cell of a term may move the weight, in bits |
 | *(positional)* | — | required; the parquet file |
 | `--mode dedup\|link\|link-and-dedup` | link with more than one file, else dedup | which pairs to enumerate; see [linking](../linking.md) |
+| `--all-pairs` | off | estimate from every pair the mode admits, in one session that holds nothing out. **Read the warning in [no blocking at all](../blocking.md#no-blocking-at-all) first**: without a hold-out, dependence between comparisons goes straight into `m` |
 
 The two knobs that matter are `--u-sample` and `--session-pairs`. Raising `--u-sample` buys
 precision on fuzzy-level `u` values only — exact and null levels are closed form and unaffected

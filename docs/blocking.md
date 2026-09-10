@@ -85,6 +85,8 @@ summed 130.8M — the predicate removed 10.6% of the work without materializing 
 
 ## The four sources
 
+And, below them, the option of [no source at all](#no-blocking-at-all).
+
 ### `exact_value` — every pair sharing a value
 
 ```json
@@ -187,6 +189,75 @@ the embedding is the hard
 part rather than the index, distance and match weight are *different orderings* (linkage often
 turns on one rare field agreeing while everything else differs — far away in cosine space),
 and kNN is asymmetric, so emitting each pair exactly once needs all neighbour lists resident.
+
+## No blocking at all
+
+Blocking is a cost paid to avoid a larger one.
+On a small enough input the larger one is not there, and the right plan is the empty one:
+
+```bash
+cpplink predict --schema schema.json --all-pairs --model model.json \
+                --threshold 12 --out edges/ a.parquet b.parquet
+```
+
+`--all-pairs` is accepted by the five plan-building commands (`explain-blocking`, `recall`,
+`estimate`, `completeness`, `predict`) and replaces whatever the schema declares with a single
+source that produces every pair the mode admits: the whole triangle when deduplicating, the
+cross product when linking.
+The same thing can be written in the schema as `{"type": "all_pairs"}`, and with the flag the
+`blocking` section may be omitted entirely.
+Nothing downstream changes, because an unblocked source is a pair source like any other.
+
+**Linking is where it pays**, because the admissible space is already \(N_0 \cdot N_1\)
+rather than \(N(N-1)/2\): two files of 20k and 5k rows are 100M pairs, which is a couple of
+seconds.
+
+**The pair-global ceiling is what makes it affordable**, and it works *better* here than on a
+blocked stream.
+A blocked candidate was selected for agreeing on something, so it is hard to reject cheaply; a
+random pair agrees on nothing and the ceiling rejects it before a single string metric runs.
+Measured on `fake_1000` at 0 bits: the blocked plan's 9,981 candidates ran at **2.7M
+candidates/s** with 63% skipped, and the unblocked 499,500 ran at **22.6M candidates/s** with
+**89% skipped**. So 50x the candidates cost about 6x the wall time.
+On `febrl3`, 12.5M pairs score in **2.2 s single-threaded**.
+
+**What it buys is bounded by what blocking was actually losing, which is less than pair
+completeness suggests.** Best F1 over a threshold sweep, scoring the *same* model both ways:
+
+| Dataset | Blocked | Unblocked | Blocking PC | Candidates |
+| --- | --- | --- | --- | --- |
+| `fake_1000` | 0.9228 | **0.9432** | 88.3% | 9,981 → 499,500 |
+| `febrl3` | 0.9972 | 0.9972 | 99.8% | 110,570 → 12,497,500 |
+| `historical_50k` | 0.8676 | 0.8689 | 85.0% | 18.4M → 1.28×10⁹ |
+
+`fake_1000` gains 0.020 F1, all of it recall (0.857 to 0.908), which is exactly the pairs the
+plan was not reaching.
+`febrl3` is unchanged at every threshold, and pays 100x the candidates for it.
+`historical_50k` gains **0.0013** for 70x the candidates and 2.9 s against 68 s, even though
+blocking was missing 15% of its pairs: those pairs disagree on everything blocked and do not
+clear the threshold once scored.
+Reaching more pairs is not reaching better ones, which is the same thing a derived phonetic
+key showed on this dataset from the other direction.
+
+!!! danger "Estimating from an unblocked plan removes the hold-out that protects `m`"
+    A session that conditions on a column is protected from that column's dependence by
+    holding it out, and from a *tied* column's by holding that out too.
+    An unblocked session conditions on nothing, so it holds nothing out, and a dependence
+    between two comparisons goes straight into `m`.
+    On `historical_50k`, whose `first_and_surname` column contains both name columns,
+    `estimate --all-pairs` reads \(\lambda\) as **1.59x10⁻²** against a truth of
+    2.38x10⁻⁴ (67x), and end-to-end F1 falls from 0.8676 to **0.5332**.
+    Dropping `first_and_surname` from the schema takes \(\lambda\) to 3.51x10⁻⁴ on the same
+    unblocked run, which is what identifies the tie as the cause.
+    `estimate` names every tied pair it finds in that situation, from the rows alone.
+
+    Where there is no such structure the opposite holds and the unblocked session is the
+    *better* estimator, because \(\lambda\) from a blocked session is a lower bound over
+    exactly the matches blocking missed and this one misses none: on `fake_1000` it reads
+    3.38x10⁻³ against a truth of 4.07x10⁻³, where the blocked sessions read 1.77x10⁻³.
+
+    **So estimate with a plan and predict without one.** They are separate commands taking
+    separate flags for exactly this reason, and the model is a file in between.
 
 ## Cost before enumeration
 

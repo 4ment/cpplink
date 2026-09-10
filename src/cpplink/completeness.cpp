@@ -313,6 +313,22 @@ bool EstimateCompleteness(const RecordStore& store, const ComparisonSet& compari
         *error = "the plan has no blocking sources, so there is nothing to score";
         return false;
     }
+    // An unblocked source produces every pair the mode admits, so there is no
+    // dark cell to fit and no firing probability to model: pair completeness is
+    // one exactly, and saying so is more honest than estimating it.
+    for (size_t s = 0; s < plan.Size(); ++s) {
+        if (plan.at(s).kind != SourceKind::kAllPairs) continue;
+        report->unblocked = true;
+        report->pc_bound = 1.0;
+        report->pc_analytic = 1.0;
+        report->pc_product = 1.0;
+        report->pc_estimate = 1.0;
+        report->pc_basis = "unblocked";
+        report->seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started)
+                .count();
+        return true;
+    }
 
     // Every source's firing probability, and which class supplies it.
     std::vector<size_t> analytic_sources;
@@ -336,6 +352,7 @@ bool EstimateCompleteness(const RecordStore& store, const ComparisonSet& compari
                         MassUnderCap(*tf, source.max_frequency, options.pair_weighting);
                 }
                 break;
+            case SourceKind::kAllPairs:  // handled above; the plan reaches every pair
             case SourceKind::kSortedNeighbourhood:
             case SourceKind::kMinHash:
                 capture.capture = CaptureClass::kObserved;
@@ -786,6 +803,17 @@ bool EstimateCompleteness(const RecordStore& store, const ComparisonSet& compari
 
 void PrintCompletenessReport(const CompletenessReport& report, std::ostream& out) {
     out << "Blocking recall, estimated without ground truth\n\n";
+    if (report.unblocked) {
+        out << "This plan does no blocking: it enumerates every pair the mode "
+               "admits, so\npair completeness is 100% by construction and nothing "
+               "here was estimated.\n";
+        if (report.measured) {
+            out << "\nMeasured against the truth file  "
+                << Fixed(100.0 * report.pc_measured, 3) << "%  over "
+                << WithThousands(report.truth_pairs) << " pairs\n";
+        }
+        return;
+    }
     out << std::left << std::setw(22) << "Source" << std::setw(14) << "Column"
         << std::setw(22) << "Kind" << std::setw(12) << "Class" << std::right
         << std::setw(12) << "P(fire|=)" << "\n";
@@ -951,6 +979,7 @@ void WriteCompletenessJson(const CompletenessReport& report, std::ostream& out) 
     out << "  \"dark_mass\": " << Fixed(report.dark_mass, 6) << ",\n";
     out << "  \"records\": " << report.records << ",\n";
     out << "  \"trusted\": " << (report.trusted ? "true" : "false") << ",\n";
+    out << "  \"unblocked\": " << (report.unblocked ? "true" : "false") << ",\n";
     out << "  \"correction_available\": "
         << (report.correction_available ? "true" : "false") << ",\n";
     out << "  \"patterns\": " << report.patterns << ",\n";

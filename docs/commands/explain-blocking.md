@@ -20,6 +20,7 @@ cpplink explain-blocking --schema <schema.json> [--count] [--mode MODE]
 | `--count` | also compute the exact deduplicated **union** size, not just the per-source sum |
 | *(positional)* | required; the parquet file |
 | `--mode dedup\|link\|link-and-dedup` | which pairs to enumerate: link when more than one file is given, otherwise dedup; see [linking](../linking.md) |
+| `--all-pairs` | ignore the schema's sources and price the plan that does no blocking: every pair the mode admits. See [no blocking at all](../blocking.md#no-blocking-at-all) |
 
 Without `--count` the report stops at the per-source table and the sum. `--count` costs an
 extra pass over the plan's keys but still enumerates nothing.

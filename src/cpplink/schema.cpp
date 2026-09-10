@@ -63,6 +63,7 @@ constexpr KindName kKindNames[] = {
     {"rare_value", SourceKind::kRareValue},
     {"minhash", SourceKind::kMinHash},
     {"sorted_neighbourhood", SourceKind::kSortedNeighbourhood},
+    {"all_pairs", SourceKind::kAllPairs},
 };
 
 struct TransformName_ {
@@ -247,6 +248,8 @@ std::string BlockingSpec::Describe() const {
                    "-grams";
         case SourceKind::kSortedNeighbourhood:
             return "window " + std::to_string(window);
+        case SourceKind::kAllPairs:
+            return "every pair";
     }
     return "unknown";
 }
@@ -669,9 +672,22 @@ bool ParseBlocking(const nlohmann::json& root, Schema* schema, std::string* erro
         const std::string kind_name = item["type"].get<std::string>();
         if (!ParseSourceKind(kind_name, &spec.kind)) {
             *error = "unknown blocking type \"" + kind_name +
-                     "\" (expected exact_value, rare_value, minhash or "
-                     "sorted_neighbourhood)";
+                     "\" (expected exact_value, rare_value, minhash, "
+                     "sorted_neighbourhood or all_pairs)";
             return false;
+        }
+        // Every other source names a column; this one selects on nothing, so a
+        // column would be a value it has nowhere to use.
+        if (spec.kind == SourceKind::kAllPairs) {
+            if (item.contains("column")) {
+                *error = "blocking source \"all_pairs\" takes no \"column\"";
+                return false;
+            }
+            spec.name = item.contains("name") && item["name"].is_string()
+                            ? item["name"].get<std::string>()
+                            : "all pairs";
+            schema->blocking.push_back(spec);
+            continue;
         }
         if (!item.contains("column") || !item["column"].is_string()) {
             *error = "blocking source \"" + kind_name + "\" needs a \"column\"";
