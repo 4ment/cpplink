@@ -67,6 +67,21 @@ void PrintBlockingReport(const BlockingPlan& plan, const RecordStore& store,
 
     const double reduction =
         all_pairs > 0 ? static_cast<double>(sum) / static_cast<double>(all_pairs) : 0.0;
+    // An unblocked source has reduced nothing, so the footer says that rather than
+    // leaving a ratio of one to be read as a bug -- and its count comes from the
+    // record counts, not from any term frequency.
+    size_t unblocked = 0;
+    for (size_t s = 0; s < plan.Size(); ++s) {
+        if (plan.at(s).kind == SourceKind::kAllPairs) ++unblocked;
+    }
+    if (unblocked > 0) {
+        out << "\nThis plan does no blocking: it produces every pair the mode "
+               "admits, and\nthat count is closed form in the record counts. Any "
+               "other source in it is\nredundant, since every pair it produces was "
+               "produced already.\n";
+        return;
+    }
+
     out << "\nCounts are exact";
     if (plan.mode() == PairMode::kCrossDataset) {
         out << " and come from the grouped rows -- the term frequencies\n"

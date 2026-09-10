@@ -28,6 +28,7 @@ cpplink completeness --schema <schema.json> --model <model.json>
 | `--value-weighting` | how a matching pair's shared value is drawn: like a record's (default) or like a random agreeing pair's |
 | `--min-observed N` | pairs a pattern needs before its own observed capture rate is used instead of the pooled one |
 | `--bound-only` | skip the pair walk entirely and report the product model alone |
+| `--all-pairs` | replace the schema's sources with the one that does no blocking, which reports 100% and says so rather than estimating; see [no blocking at all](../blocking.md#no-blocking-at-all) |
 | `--json` | the same numbers as JSON |
 | *(positional)* | required; the parquet file |
 

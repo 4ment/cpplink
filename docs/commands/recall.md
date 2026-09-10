@@ -26,6 +26,7 @@ cpplink recall --schema <schema.json> --truth <truth.csv> [--why]
 | `--json` | write the same numbers as JSON, for a harness that sweeps a knob |
 | *(positional)* | required; the parquet file |
 | `--mode dedup\|link\|link-and-dedup` | which pairs to enumerate: link when more than one file is given, otherwise dedup; see [linking](../linking.md) |
+| `--all-pairs` | measure the plan that does no blocking instead of the schema's, which reaches every known pair by construction. See [no blocking at all](../blocking.md#no-blocking-at-all) |
 
 ### The truth file
 

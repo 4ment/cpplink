@@ -74,6 +74,11 @@ void PrintUsage(std::ostream& out) {
         << "--mode dedup (or link-and-dedup) scores every pair of the whole store.\n"
         << "One file is a deduplication and needs no --mode.\n"
         << "\n"
+        << "--all-pairs runs the five plan-building commands with no blocking at\n"
+        << "all: every pair the mode admits becomes a candidate. On an input small\n"
+        << "enough to enumerate that is cheap, and it leaves blocking nothing to\n"
+        << "miss. Estimating from it holds no column out; see the documentation.\n"
+        << "\n"
         << "cpplink inspect --schema <schema.json> <file.parquet>...\n"
         << "cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]\n"
         << "                [--expected-matches N] [--threads N] [--json] "
@@ -98,10 +103,10 @@ void PrintUsage(std::ostream& out) {
         << "                [--tf-damping F] <file.parquet>...\n"
         << "cpplink explain-blocking --schema <schema.json> [--count] "
            "[--mode MODE]\n"
-        << "                <file.parquet>...\n"
+        << "                [--all-pairs] <file.parquet>...\n"
         << "cpplink recall --schema <schema.json> --truth <truth.csv> [--why]\n"
         << "               [--show-misses N] [--count] [--json] [--mode MODE]\n"
-        << "               <file.parquet>...\n"
+        << "               [--all-pairs] <file.parquet>...\n"
         << "cpplink estimate --schema <schema.json> [--out <model.json>]\n"
         << "                 [--u-sample N] [--session-pairs N] [--threads N]\n"
         << "                 [--iterations N] [--lambda F] [--seed N] "
@@ -109,17 +114,20 @@ void PrintUsage(std::ostream& out) {
         << "                 [--fuzzy-u] [--ball-budget N] [--no-tie-holdout]\n"
         << "                 [--tied-bits F] [--tie-sample-rows N]\n"
         << "                 [--interactions] [--max-interactions N]\n"
-        << "                 [--interaction-bits F] <file.parquet>...\n"
+        << "                 [--interaction-bits F] [--all-pairs] "
+           "<file.parquet>...\n"
         << "cpplink predict --schema <schema.json> --model <model.json> --out <dir>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--no-ceiling]\n"
         << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
         << "                [--spill-sample R] [--fuzzy-tf] [--ball-budget N]\n"
-        << "                [--no-interactions] [--mode MODE] <file.parquet>...\n"
+        << "                [--no-interactions] [--mode MODE] [--all-pairs]\n"
+        << "                <file.parquet>...\n"
         << "cpplink completeness --schema <schema.json> --model <model.json>\n"
         << "                [--truth <pairs.csv>] [--sample R] [--threads N]\n"
         << "                [--value-weighting records|pairs] [--min-observed N]\n"
-        << "                [--bound-only] [--json] [--mode MODE] <file.parquet>...\n"
+        << "                [--bound-only] [--json] [--mode MODE] [--all-pairs]\n"
+        << "                <file.parquet>...\n"
         << "cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>\n"
         << "                --out <dir> [--threshold BITS | --probability P]\n"
         << "                [--format bin|csv] [--threads N] [--limit N] "
@@ -719,17 +727,27 @@ void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
 }
 
 // Loads a schema and a parquet file, the opening move of every blocking command.
+// `--all-pairs` replaces whatever the schema declares with the one source that
+// blocks on nothing, so the same schema can be run blocked and unblocked without
+// being edited. It is what makes the schema's "blocking" section optional: on an
+// input small enough to enumerate, there is nothing for it to say.
 bool LoadForBlocking(const std::string& schema_path,
                      const std::vector<std::string>& data_paths, PairMode mode,
                      Schema* schema, std::unique_ptr<RecordStore>* store,
-                     BlockingPlan* plan, std::ostream& err) {
+                     BlockingPlan* plan, std::ostream& err, bool all_pairs = false) {
     std::string error;
     if (!LoadSchema(schema_path, schema, &error)) {
         err << "cpplink: " << error << "\n";
         return false;
     }
-    if (schema->blocking.empty()) {
-        err << "cpplink: the schema declares no \"blocking\" sources\n";
+    if (all_pairs) {
+        BlockingSpec spec;
+        spec.kind = SourceKind::kAllPairs;
+        spec.name = "all pairs";
+        schema->blocking.assign(1, spec);
+    } else if (schema->blocking.empty()) {
+        err << "cpplink: the schema declares no \"blocking\" sources; pass "
+               "--all-pairs to\n         enumerate every pair instead\n";
         return false;
     }
     *store = std::make_unique<RecordStore>(*schema);
@@ -752,6 +770,7 @@ int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
     bool count_union = false;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
+    bool all_pairs = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
@@ -759,6 +778,8 @@ int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
             if (!TakeValue(args, &i, &value, err)) return 1;
             if (!ParseMode(value, &mode, err)) return 1;
             mode_given = true;
+        } else if (args[i] == "--all-pairs") {
+            all_pairs = true;
         } else if (args[i] == "--count") {
             count_union = true;
         } else if (!args[i].empty() && args[i][0] == '-') {
@@ -779,7 +800,7 @@ int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
     BlockingPlan plan;
     if (!LoadForBlocking(schema_path, data_paths,
                          DefaultMode(mode_given, mode, data_paths.size()), &schema,
-                         &store, &plan, err)) {
+                         &store, &plan, err, all_pairs)) {
         return 1;
     }
     PrintBlockingReport(plan, *store, count_union, out);
@@ -798,6 +819,7 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
     bool as_json = false;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
+    bool all_pairs = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
@@ -805,6 +827,8 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
             if (!TakeValue(args, &i, &value, err)) return 1;
             if (!ParseMode(value, &mode, err)) return 1;
             mode_given = true;
+        } else if (args[i] == "--all-pairs") {
+            all_pairs = true;
         } else if (args[i] == "--truth") {
             if (!TakeValue(args, &i, &truth_path, err)) return 1;
         } else if (args[i] == "--why") {
@@ -835,7 +859,7 @@ int RunRecall(const std::vector<std::string>& args, std::ostream& out,
     BlockingPlan plan;
     if (!LoadForBlocking(schema_path, data_paths,
                          DefaultMode(mode_given, mode, data_paths.size()), &schema,
-                         &store, &plan, err)) {
+                         &store, &plan, err, all_pairs)) {
         return 1;
     }
 
@@ -882,6 +906,7 @@ int RunCompleteness(const std::vector<std::string>& args, std::ostream& out,
     bool as_json = false;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
+    bool all_pairs = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
@@ -893,6 +918,8 @@ int RunCompleteness(const std::vector<std::string>& args, std::ostream& out,
             if (!TakeValue(args, &i, &value, err)) return 1;
             if (!ParseMode(value, &mode, err)) return 1;
             mode_given = true;
+        } else if (args[i] == "--all-pairs") {
+            all_pairs = true;
         } else if (args[i] == "--threads") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.threads = static_cast<unsigned>(std::stoul(value));
@@ -946,7 +973,7 @@ int RunCompleteness(const std::vector<std::string>& args, std::ostream& out,
     BlockingPlan plan;
     if (!LoadForBlocking(schema_path, data_paths,
                          DefaultMode(mode_given, mode, data_paths.size()), &schema,
-                         &store, &plan, err)) {
+                         &store, &plan, err, all_pairs)) {
         return 1;
     }
     if (schema.comparisons.empty()) {
@@ -1000,6 +1027,7 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
     EstimateOptions options;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
+    bool all_pairs = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
@@ -1007,6 +1035,8 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
             if (!TakeValue(args, &i, &value, err)) return 1;
             if (!ParseMode(value, &mode, err)) return 1;
             mode_given = true;
+        } else if (args[i] == "--all-pairs") {
+            all_pairs = true;
         } else if (args[i] == "--out") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
         } else if (args[i] == "--u-sample") {
@@ -1077,7 +1107,7 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
     BlockingPlan plan;
     if (!LoadForBlocking(schema_path, data_paths,
                          DefaultMode(mode_given, mode, data_paths.size()), &schema,
-                         &store, &plan, err)) {
+                         &store, &plan, err, all_pairs)) {
         return 1;
     }
     if (schema.comparisons.empty()) {
@@ -1125,6 +1155,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     bool use_signatures = true;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
+    bool all_pairs = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
@@ -1132,6 +1163,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             if (!TakeValue(args, &i, &value, err)) return 1;
             if (!ParseMode(value, &mode, err)) return 1;
             mode_given = true;
+        } else if (args[i] == "--all-pairs") {
+            all_pairs = true;
         } else if (args[i] == "--model") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
         } else if (args[i] == "--out") {
@@ -1220,7 +1253,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     BlockingPlan plan;
     if (!LoadForBlocking(schema_path, data_paths,
                          DefaultMode(mode_given, mode, data_paths.size()), &schema,
-                         &store, &plan, err)) {
+                         &store, &plan, err, all_pairs)) {
         return 1;
     }
     if (schema.comparisons.empty()) {

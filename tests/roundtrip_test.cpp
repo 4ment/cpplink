@@ -13,9 +13,11 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include "cpplink/app.hpp"
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
 #include "cpplink/inspect.hpp"
+#include "cpplink/model.hpp"
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
@@ -613,6 +615,99 @@ TEST_F(RoundTrip, LinkModeReachesThePlantedPairsAcrossTheTwoFiles) {
 
     // And it is cheaper, because the two inputs' own triangles are never walked.
     EXPECT_LT(plan.CountUnion(), both.CountUnion());
+}
+
+// The unblocked path, end to end and through the command line, on an input small
+// enough that enumerating every pair costs less than the plan that would avoid
+// them. The schema carries no "blocking" section at all: --all-pairs is what makes
+// that section optional, and a link run is where it pays, because the admissible
+// space is the cross product rather than a triangle.
+TEST_F(RoundTrip, UnblockedLinkRunGoesEndToEndWithNoBlockingSection) {
+    cpplink::SampleOptions options;
+    options.rows = 2000;
+    options.duplicate_rate = 0.25;
+    options.truth_path = truth_;
+    options.link_path = link_;
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    const std::string schema_path = (dir_ / "unblocked.json").string();
+    {
+        std::string json(kSampleSchema);
+        const size_t blocking = json.find(",\n  \"blocking\"");
+        ASSERT_NE(blocking, std::string::npos);
+        json = json.substr(0, blocking) + "\n}";
+        std::ofstream file(schema_path);
+        file << json;
+    }
+
+    // Without the flag there is nothing to run and the message says what to pass.
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        EXPECT_EQ(
+            cpplink::Run({"explain-blocking", "--schema", schema_path, data_}, out, err),
+            1);
+        EXPECT_NE(err.str().find("--all-pairs"), std::string::npos) << err.str();
+    }
+
+    const std::string model_path = (dir_ / "model.json").string();
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        ASSERT_EQ(cpplink::Run({"estimate", "--schema", schema_path, "--all-pairs",
+                                "--out", model_path, data_, link_},
+                               out, err),
+                  0)
+            << err.str();
+    }
+    cpplink::Model model;
+    ASSERT_TRUE(cpplink::LoadModel(model_path, &model, &error)) << error;
+    // Lambda is a lower bound only because blocking misses matches. This session
+    // enumerated every admissible pair, so it missed none and the report must not
+    // claim otherwise.
+    EXPECT_EQ(model.lambda_basis.find("lower bound"), std::string::npos)
+        << model.lambda_basis;
+    EXPECT_GT(model.lambda, 0.0);
+
+    const std::string edges = (dir_ / "edges").string();
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        ASSERT_EQ(cpplink::Run(
+                      {"predict", "--schema", schema_path, "--model", model_path,
+                       "--all-pairs", "--threshold", "10", "--out", edges, data_, link_},
+                      out, err),
+                  0)
+            << err.str();
+        EXPECT_NE(out.str().find("link"), std::string::npos) << out.str();
+    }
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kSampleSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(
+        cpplink::LoadParquetFiles({data_, link_}, schema, &store, nullptr, &error))
+        << error;
+    cpplink::TruthPairs truth;
+    ASSERT_TRUE(cpplink::LoadTruthPairs(truth_, store, &truth, &error)) << error;
+
+    cpplink::Schema unblocked = schema;
+    unblocked.blocking.clear();
+    cpplink::BlockingSpec spec;
+    spec.kind = cpplink::SourceKind::kAllPairs;
+    spec.name = "all pairs";
+    unblocked.blocking.push_back(spec);
+    cpplink::BlockingPlan plan;
+    ASSERT_TRUE(plan.Build(unblocked, store, cpplink::PairMode::kCrossDataset, &error))
+        << error;
+    // Blocking recall is one by construction: there is no pair it can lose.
+    for (const auto& pair : truth.rows) {
+        EXPECT_TRUE(plan.ProducedByAny(pair.first, pair.second))
+            << store.ids().Get(pair.first) << "," << store.ids().Get(pair.second);
+    }
+    const uint64_t first = store.DatasetEnd(0) - store.DatasetStart(0);
+    EXPECT_EQ(plan.CountPairs(0), first * (store.NumRecords() - first));
 }
 
 }  // namespace

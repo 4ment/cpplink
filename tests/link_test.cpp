@@ -120,6 +120,7 @@ const std::vector<std::string>& Configurations() {
         R"([{"type":"exact_value","column":"surname"},
              {"type":"exact_value","column":"dob"},
              {"type":"sorted_neighbourhood","column":"surname","window":4}])",
+        R"([{"type":"all_pairs"}])",
     };
     return configs;
 }
@@ -193,6 +194,26 @@ TEST_F(LinkFixture, AGroupSplitIntoRowRangesEmitsTheSamePairs) {
             EXPECT_EQ(split, whole) << "group " << g << " cut at " << cut;
         }
     }
+}
+
+// Linking a small input without blocking is what the unblocked source is for, and
+// the whole store is one group there -- so the partner cursor is walked over every
+// row of the store rather than over a handful, and the count has to be the cross
+// product exactly.
+TEST_F(LinkFixture, AllPairsInLinkModeIsTheCrossProduct) {
+    cpplink::BlockingPlan plan;
+    Plan(R"([{"type":"all_pairs"}])", cpplink::PairMode::kCrossDataset, &plan);
+    const uint64_t expected = kSplit * (kRows - kSplit);
+    EXPECT_EQ(plan.CountPairs(0), expected);
+    const PairSet pairs = Emitted(plan);
+    EXPECT_EQ(pairs.size(), expected);
+    for (const Pair& pair : pairs) {
+        EXPECT_TRUE(Crosses(pair.first, pair.second)) << pair.first << "," << pair.second;
+    }
+
+    cpplink::BlockingPlan dedup;
+    Plan(R"([{"type":"all_pairs"}])", cpplink::PairMode::kAll, &dedup);
+    EXPECT_EQ(dedup.CountPairs(0), kRows * (kRows - 1) / 2);
 }
 
 TEST_F(LinkFixture, ThreadedWalkEmitsTheSamePairsAsTheSerialOne) {

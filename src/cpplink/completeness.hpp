@@ -118,6 +118,10 @@ struct CompletenessOptions {
 
 struct CompletenessReport {
     uint64_t records = 0;
+    // The plan enumerates every pair the mode admits, so completeness is 1 by
+    // construction and nothing below it was estimated. Blocking is what this
+    // command measures the loss of; a plan that does no blocking loses nothing.
+    bool unblocked = false;
     std::vector<SourceCapture> sources;
     // pi_fire reads only the blocked comparisons, and every other comparison's m
     // sums to one over its levels, so those marginalise out: the estimate depends

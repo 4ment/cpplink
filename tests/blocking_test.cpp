@@ -106,6 +106,7 @@ TEST_F(BlockingFixture, CountMatchesEnumerationForEverySourceAlone) {
         R"([{"type":"sorted_neighbourhood","column":"surname","window":3}])",
         R"([{"type":"minhash","column":"surname","bands":6,"rows_per_band":2,
              "ngram":2}])",
+        R"([{"type":"all_pairs"}])",
     };
     for (const std::string& config : configs) {
         Build(config);
@@ -120,6 +121,36 @@ TEST_F(BlockingFixture, CountMatchesEnumerationForEverySourceAlone) {
                 << config << " source " << plan_.at(s).name;
         }
     }
+}
+
+// The source that does no blocking. Every pair of the store is a candidate,
+// including the ones every other source refuses: the null row pairs here, because
+// there is no key for it to be missing from.
+TEST_F(BlockingFixture, AllPairsEmitsEveryPairOfTheStore) {
+    Build(R"([{"type":"all_pairs"}])");
+    EXPECT_EQ(plan_.CountPairs(0), 28u);  // 8 * 7 / 2
+    EXPECT_EQ(Emitted().size(), 28u);
+    EXPECT_EQ(plan_.LargestGroup(0), 8u);
+    EXPECT_TRUE(plan_.Produces(0, 0, 3));
+    EXPECT_TRUE(plan_.Produces(0, 6, 0));   // the null row
+    EXPECT_FALSE(plan_.Produces(0, 4, 4));  // a row is not a pair with itself
+    // It conditions on nothing, which is the empty column subset: EM can hold
+    // nothing out because there is nothing to hold out.
+    EXPECT_TRUE(plan_.at(0).em_safe);
+    EXPECT_TRUE(plan_.at(0).column.empty());
+}
+
+// An unblocked source produces everything, so the union is what it produces and
+// every later source is redundant -- emitting nothing rather than emitting twice.
+TEST_F(BlockingFixture, AllPairsSubsumesEveryOtherSource) {
+    Build(R"([{"type":"all_pairs"},
+              {"type":"exact_value","column":"surname"},
+              {"type":"sorted_neighbourhood","column":"surname","window":3}])");
+    const auto pairs = Emitted();
+    const std::set<std::pair<uint32_t, uint32_t>> unique(pairs.begin(), pairs.end());
+    EXPECT_EQ(pairs.size(), 28u);
+    EXPECT_EQ(unique.size(), 28u);
+    EXPECT_EQ(plan_.CountUnion(), 28u);
 }
 
 TEST_F(BlockingFixture, SortedNeighbourhoodEmitsWithinTheWindowOnly) {
@@ -182,6 +213,17 @@ TEST_F(BlockingFixture, EveryPerColumnSourceIsSafeForEstimatingM) {
     for (size_t s = 0; s < plan_.Size(); ++s) {
         EXPECT_TRUE(plan_.at(s).em_safe) << plan_.at(s).name;
     }
+}
+
+// The one source that names no column, so naming one is a mistake rather than a
+// value it quietly ignores.
+TEST(BlockingConfigTest, RejectsAColumnOnAllPairs) {
+    cpplink::Schema schema;
+    std::string error;
+    const std::string json = "{" + std::string(kColumns) +
+                             R"(,"blocking":[{"type":"all_pairs","column":"surname"}]})";
+    EXPECT_FALSE(cpplink::ParseSchema(json, &schema, &error));
+    EXPECT_NE(error.find("all_pairs"), std::string::npos) << error;
 }
 
 TEST(BlockingConfigTest, RejectsBlockingOnADoubleColumn) {
