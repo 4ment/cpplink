@@ -147,7 +147,7 @@ is here, not in the model.
     the truth file as listed, while `cluster` scores it closed transitively; a pair blocking
     never produced is still asserted if the partition connects its two rows through a third
     record. So union–find recovers a little of what blocking missed, and the ceiling is a
-    ceiling on the **edges**, not on the partition built from them.
+    ceiling on the **predictions**, not on the partition built from them.
 
 ## How it is computed
 

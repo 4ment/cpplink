@@ -55,6 +55,7 @@ nav:
       - predict: commands/predict.md
       - rescore: commands/rescore.md
       - cluster: commands/cluster.md
+      - merge-predictions: commands/merge-predictions.md
       - gen-sample: commands/gen-sample.md
   - Reference:
       - Schema file: reference/schema.md

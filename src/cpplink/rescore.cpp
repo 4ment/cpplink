@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "cpplink/merge_edges.hpp"
 #include "cpplink/pair_stream.hpp"
 
 namespace cpplink {
@@ -187,6 +188,15 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
     report->truncated = limit > 0 && emitted.load() > limit;
     report->below_spill_threshold = report->manifest.sample_rate <= 0.0 &&
                                     scorer.threshold() < report->manifest.threshold;
+    if (!options.merge_path.empty()) {
+        if (!MergeStagedShards(store, options.out_dir, options.merge_path,
+                               options.format == EdgeFormat::kBinary,
+                               &report->merge_seconds, error)) {
+            return false;
+        }
+        report->shards.clear();
+        report->merged_path = options.merge_path;
+    }
     report->seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return true;
@@ -205,17 +215,24 @@ void PrintRescoreReport(const RescoreReport& report, const Scorer& scorer,
     out << "Threshold      " << std::setprecision(3) << scorer.threshold() << " bits\n"
         << "Threads        " << report.threads << "\n"
         << "Pairs read     " << WithThousands(report.pairs) << "\n"
-        << "Edges          " << WithThousands(report.edges) << "\n"
+        << "Predictions    " << WithThousands(report.edges) << "\n"
         << "Elapsed        " << std::setprecision(2) << report.seconds << " s";
     if (report.seconds > 0.0) {
         out << "  (" << std::setprecision(0)
             << static_cast<double>(report.pairs) / report.seconds << " pairs/s)";
     }
     out << "\n";
-    for (const std::string& shard : report.shards) out << "  " << shard << "\n";
+    if (report.merged_path.empty()) {
+        for (const std::string& shard : report.shards) out << "  " << shard << "\n";
+    } else {
+        out << "  " << report.merged_path << "  (" << report.threads << " shard"
+            << (report.threads == 1 ? "" : "s") << " merged and removed in "
+            << std::setprecision(2) << report.merge_seconds << " s)\n";
+    }
 
     if (report.truncated) {
-        out << "\nThe edge limit was reached, so this is a sample of the edges and not "
+        out << "\nThe prediction limit was reached, so this is a sample of the "
+               "predictions and not "
                "all of them.\n";
     }
     // The honest limitation, printed rather than buried: a spill holds what one

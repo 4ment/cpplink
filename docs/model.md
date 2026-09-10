@@ -180,10 +180,10 @@ can produce:
 | **Check** | the bracket straddles \(\tau\) | compute the exact TF-adjusted score |
 | **Emit** | \(W(\gamma) + \sum \Delta_{\min} \ge \tau\) | emit directly, no TF lookup |
 
-Both bounds are **admissible**, so dropping a pattern on its bound emits *exactly* the edges
-scoring every pair would have. That is not an assertion:
+Both bounds are **admissible**, so dropping a pattern on its bound emits *exactly* the
+predictions scoring every pair would have. That is not an assertion:
 [`tests/predict_test.cpp`](https://github.com/4ment/cpplink/blob/main/tests/predict_test.cpp)
-runs both ways at five thresholds and compares the edge sets, and `predict --no-bounds`
+runs both ways at five thresholds and compares what came out, and `predict --no-bounds`
 reproduces it at scale. Measured on the 1.8M-row sample at 20 bits:
 
 ```text
@@ -213,12 +213,12 @@ judge. Only what survives the ceiling reaches `drop`, `check` and `emit`.
 `predict` and `cluster` both take `--threshold` in bits or `--probability` in (0, 1). Use
 bits. Conditional independence over eight comparisons puts matching pairs at 100+ bits, where
 the posterior is 1 to more decimal places than a double carries, so probability is a nearly
-useless knob — a posterior of 0.5 and one of 0.999999 select the same edges.
+useless knob — a posterior of 0.5 and one of 0.999999 select the same pairs.
 
-Swept on a 1M-row sample over a fixed edge set (edge-level quality, scored against the
-transitive closure of the known pairs):
+Swept on a 1M-row sample over a fixed set of predictions (pair-level quality, scored against
+the transitive closure of the known pairs):
 
-| Threshold (bits) | Edges | Precision | Recall | F1 |
+| Threshold (bits) | Predictions | Precision | Recall | F1 |
 | ---: | ---: | ---: | ---: | ---: |
 | 0 | 93,816 | 1.0000 | 0.9900 | 0.9950 |
 | 20 | 93,816 | 1.0000 | 0.9900 | **0.9950** |
@@ -233,10 +233,10 @@ blocking problem, not a model problem.**
 
 !!! warning "The truth side has to be closed before anything is scored against it"
     The planted pairs are a **list**, not a partition: if a–b and b–c were both planted, a–c
-    is a genuine duplicate that the list never names. Scoring an edge set against the raw
+    is a genuine duplicate that the list never names. Scoring a set of predictions against the raw
     list counts those recovered duplicates as false positives, and on this sample it reads
     precision **0.8442** where the truth is 1.0000. The same mistake, made against the
-    partition rather than the edges, is one of the two measurement bugs that had this table
+    partition rather than the predictions, is one of the two measurement bugs that had this table
     reading around 0.92 across the board. See
     [`cluster`](commands/cluster.md#the-quality-section).
 

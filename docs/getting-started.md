@@ -118,12 +118,12 @@ printed table is the whole model: `m`, `u` and the weight in bits for every leve
 
 ```sh
 ./build/cpplink predict --schema examples/sample_schema.json --model model.json \
-                        --out edges/ --threshold 20 examples/sample.parquet
+                        --out predictions/ --threshold 20 examples/sample.parquet
 ```
 
 ```text
 Candidates     116,939,057
-Edges          169,026  (0.14% of candidates)
+Predictions    169,026  (0.14% of candidates)
 Elapsed        5.6 s  (20920301 candidates/s)
 
 Zone           Candidate pairs       Share        Patterns
@@ -135,15 +135,16 @@ emit                   169,026       0.14%          19,280
 ----------------------------------------------------------
 ```
 
-One shard file per thread, nothing held in memory. **99.85% of candidates never had a string
-metric run on them**: the pair-global ceiling grants every comparison the best level its cheap
+One shard file per thread, nothing held in memory. Name a `.parquet` or `.csv` file in `--out`
+instead of a directory and the run ends with a single file, merged from those shards; `cluster`
+takes either. **99.85% of candidates never had a string metric run on them**: the pair-global ceiling grants every comparison the best level its cheap
 bounds still admit and drops the pair if even that sum cannot clear the threshold. See
 [`predict`](commands/predict.md).
 
-### 7. Join the edges into clusters
+### 7. Join the predictions into clusters
 
 ```sh
-./build/cpplink cluster --schema examples/sample_schema.json --edges edges/ \
+./build/cpplink cluster --schema examples/sample_schema.json --predictions predictions/ \
                         --out clusters.csv --truth examples/sample.truth.csv \
                         examples/sample.parquet
 ```
@@ -168,7 +169,7 @@ On this run, at 1.8M rows:
 | `explain-blocking`, exact costing | < 1 s |
 | `estimate`, four sessions plus `u` | ~7 s |
 | `predict`, 117M candidates on 8 threads | 5.6 s |
-| `cluster`, 169k edges past a union–find | 0.02 s |
+| `cluster`, 169k predictions past a union–find | 0.02 s |
 
 Comparison throughput in `predict` is still the binding constraint of the whole pipeline, and
 blocking is about 240× cheaper than the comparison it feeds. Making blocking faster would

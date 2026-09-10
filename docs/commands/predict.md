@@ -1,7 +1,7 @@
 # `predict`
 
 **Goal:** score every candidate pair the blocking plan produces and write the ones above a
-threshold, as one shard file per thread.
+threshold, as one file or as one shard per thread.
 
 This is where the pipeline spends its time. Nothing holds a row per candidate pair: a pair is
 enumerated, compared, scored, then written or dropped, and forgotten.
@@ -9,7 +9,8 @@ enumerated, compared, scored, then written or dropped, and forgotten.
 ## Synopsis
 
 ```sh
-cpplink predict --schema <schema.json> --model <model.json> --out <dir>
+cpplink predict --schema <schema.json> --model <model.json>
+                --out <dir|file.csv|file.parquet>
                 [--threshold BITS | --probability P] [--format bin|csv]
                 [--threads N] [--limit N] [--no-bounds] [--tf-damping F]
                 [--no-signatures] [--no-interactions] [--spill <dir>] [--spill-sample R]
@@ -20,12 +21,12 @@ cpplink predict --schema <schema.json> --model <model.json> --out <dir>
 | --- | --- | --- |
 | `--schema <file>` | — | required; must declare `comparisons` and `blocking` |
 | `--model <file>` | — | required; the `model.json` from [`estimate`](estimate.md) |
-| `--out <dir>` | — | required; directory for the edge shards |
-| `--threshold BITS` | — | keep edges with match weight ≥ this many bits |
+| `--out <path>` | — | required. A name ending `.csv`, `.parquet` or `.pq` is **one merged file**; anything else is a directory of per-thread shards |
+| `--threshold BITS` | — | keep predictions with match weight ≥ this many bits |
 | `--probability P` | — | same, expressed as a posterior in (0, 1). Converted to bits internally |
-| `--format bin\|csv` | `bin` | `bin` is what [`cluster`](cluster.md) reads back; `csv` is for reading with your eyes |
+| `--format bin\|csv` | `bin` | the **shard** format: `bin` is what [`cluster`](cluster.md) reads back, `csv` is for reading with your eyes. Refused with a single-file `--out`, where the extension decides |
 | `--threads N` | hardware | worker threads; one output shard each |
-| `--limit N` | unlimited | stop after N edges. For sampling the output, not for production |
+| `--limit N` | unlimited | stop after N predictions. For sampling the output, not for production |
 | `--tf-damping F` | 1.0 | scale the term-frequency adjustment. 0 disables it |
 | `--no-bounds` | off | score every pair exactly instead of using the admissible bracket. **Verification only** |
 | `--no-signatures` | off | disable the per-value character-mask filter. **Verification only** |
@@ -46,14 +47,14 @@ Exactly one of `--threshold` or `--probability` is required. Prefer bits — see
 
 ```sh
 cpplink predict --schema examples/sample_schema.json --model model.json \
-                --out edges/ --threshold 20 examples/sample.parquet
+                --out predictions/ --threshold 20 examples/sample.parquet
 ```
 
 ```text
 Threshold      20.000 bits  (posterior 0.999999)
 Threads        8
 Candidates     116,939,057
-Edges          169,026  (0.14% of candidates)
+Predictions    169,026  (0.14% of candidates)
 Elapsed        5.6 s  (20920301 candidates/s)
 
 Zone           Candidate pairs       Share        Patterns
@@ -66,14 +67,58 @@ emit                   169,026       0.14%          19,280
 Comparisons avoided    116,762,308 (99.85% of candidates)
 Term-frequency lookups 169,026, avoided 7,723 (0.01%).
 The ceiling and the bracket are both admissible, so skipping and
-dropping on them emit exactly the edges scoring every pair would have.
+dropping on them emit exactly the predictions scoring every pair would
+have.
 
 Shards
-  edges/shard-000.bin
-  edges/shard-001.bin
+  predictions/shard-000.bin
+  predictions/shard-001.bin
   ...
-  edges/shard-007.bin
+  predictions/shard-007.bin
 ```
+
+## One file, or one shard per thread
+
+Threads write a shard each because a single writer would have eight of them contending on it,
+and that is an implementation detail of how the predictions get onto disk rather than
+something
+anything downstream wants. Give `--out` a file name and the run ends with one file:
+
+```sh
+cpplink predict --schema examples/sample_schema.json --model model.json \
+                --out predictions.parquet --threshold 20 --threads 4 examples/sample.parquet
+```
+
+```text
+Edges
+  predictions.parquet
+  4 shards merged and removed in 0.09 s
+```
+
+The shards are staged in `predictions.parquet.shards/` while the run works, merged when it finishes,
+and the staging directory is removed. Nothing else changes: the same threads write the same
+shards, and the merge is one sequential pass over predictions that have already been paid
+for. On
+the 1M sample that pass is **0.09 s against 11.7 s for the run**, and the file it writes is
+[the merged prediction file](../reference/output-formats.md#the-merged-prediction-file)
+that
+[`cluster --predictions`](cluster.md) reads directly.
+
+| `--out` | What you get | What `cluster --predictions` gets |
+| --- | --- | --- |
+| `predictions/` | `shard-000.bin` upward | the directory |
+| `predictions.parquet` | one typed file, ids and weights | the file |
+| `predictions.csv` | one csv file with a header | the file |
+
+Two consequences worth knowing. The staging directory sits **beside the output**, so a run
+that dies mid-merge leaves its shards somewhere obvious. And `--format`, which names the shard
+format, is refused with a single-file `--out`: the extension is what picks csv or parquet
+there, and the staged shards are an implementation detail.
+
+!!! note "Peak disk is the shards plus the file"
+    They exist together for the length of the merge. Binary shards are 20 bytes a prediction
+    and
+    the parquet is about 25, so budget roughly twice the output.
 
 ## Reading the output
 
@@ -111,9 +156,9 @@ Two columns, and they mean different things:
   many of them in principle.
 
 !!! note "The bracket is exact, not a heuristic"
-    Both bounds are admissible, so the emitted edge set is **identical** to scoring every pair
+    Both bounds are admissible, so what is emitted is **identical** to scoring every pair
     exactly. `--no-bounds` runs it the slow way, and `tests/predict_test.cpp` compares the two
-    edge sets at five thresholds so the property cannot rot silently.
+    the two outputs at five thresholds so the property cannot rot silently.
 
 !!! info "Only `drop` actually saves anything"
     The three-way split is really two: `check` and `emit` both compute the exact weight,
@@ -128,7 +173,7 @@ One file per thread, `shard-000.bin` upward. Binary shards are 20 bytes a row �
 `a`, `b`, `gamma` as `u32`, then the weight as `f64` — behind an 8-byte magic. The format
 lives in `predict.hpp` as `kEdgeMagic`/`kEdgeBytes` so the writer and the reader in
 `cluster.cpp` cannot drift apart. See
-[Output formats](../reference/output-formats.md#edge-shards).
+[Output formats](../reference/output-formats.md#prediction-shards).
 
 With `--format csv` you get `shard-NNN.csv` instead:
 
@@ -140,6 +185,11 @@ r1,r119514,174665,108.510385,1.000000000
 
 Note the saturated probability: 106 bits of evidence is a posterior of 1 to more decimal places
 than a double carries. `cluster` reads only the binary form.
+
+One file per thread is what keeps the threads from contending on a writer, and it is not what
+anything outside cpplink wants to open. A single-file `--out` merges them at the end of the
+run; [`merge-predictions`](merge-predictions.md) does the same to a shard directory that already exists,
+from either shard format.
 
 ## Performance notes
 
@@ -159,7 +209,8 @@ than a double carries. `cluster` reads only the binary form.
 
 ## Choosing the threshold
 
-Because edges carry their weight, **the threshold can be raised later without re-scoring** —
+Because a prediction carries its weight, **the threshold can be raised later without
+re-scoring** —
 `cluster --threshold` re-reads the shards in seconds. So write at a low threshold and sweep in
 `cluster` rather than re-running `predict`. Sweeping on this data shows nothing above 40 bits
 is worth having, and everything from 0 to 40 bits is the same answer.
@@ -175,13 +226,14 @@ filter does not catch.
 best level the cheap bounds still admit, plus that column's largest term-frequency move where
 the exact level survives; if the sum is under the threshold, no string metric can change the
 answer and the pattern is never produced.
-The bound is admissible, so the edge set cannot move — `tests/predict_test.cpp` runs both ways
+The bound is admissible, so what is emitted cannot move — `tests/predict_test.cpp` runs both
+ways
 at five thresholds and compares them.
 
 Measured on the 1.8M sample at 20 bits: 116,939,057 candidates in **5.6 s against 37.9 s**,
-a 6.8× wall saving, 99.85% of candidates never compared, and the same 169,026 edges.
+a 6.8× wall saving, 99.85% of candidates never compared, and the same 169,026 predictions.
 The saving tracks the threshold, so a run at 0 bits pays much closer to full price — which
-lands where it is wanted, because 0 to 40 bits select nearly the same edges anyway.
+lands where it is wanted, because 0 to 40 bits select nearly the same pairs anyway.
 
 !!! warning "A model carrying two-way corrections loosens the ceiling"
     A correction is not separable across comparisons, so the cell a pair lands on is unknown
@@ -217,6 +269,6 @@ Precision is unchanged to three decimal places at 20 and 30 bits; the gain is re
 The cost is a one-off 11.1 s for the masses and a scoring pass of 2.4 s against 1.5 s, because
 the bracket a fuzzy level admits is much wider than an exact one's — the check zone goes from
 7.5% of candidates to 52.4%, and those are the pairs that pay for a lookup.
-On the 1M synthetic sample the adjustment moves 47% of edge weights, by a median of 0.6 bits
+On the 1M synthetic sample the adjustment moves 47% of the weights, by a median of 0.6 bits
 and by more than 5 bits on 1,128 of them, and changes no decision at all: the posterior there
 saturates so hard that nothing near the threshold exists to move.

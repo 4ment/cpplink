@@ -183,19 +183,26 @@ cpplink estimate --schema examples/sample_schema.json --out model.json data.parq
 cpplink simplify --schema examples/sample_schema.json --model model.json \
                  --min-gap 1.0 --out simpler.json data.parquet
 
-# Score every candidate pair and write the edges above a threshold
+# Score every candidate pair and write the predictions above a threshold. --out
+# names a directory to get one shard per thread, or a .csv/.parquet file to get
+# one file: threads still write a shard each and the run merges them at the end
 cpplink predict --schema examples/sample_schema.json --model model.json \
-                --out edges/ --threshold 20 data.parquet
+                --out predictions.parquet --threshold 20 data.parquet
 
 # Re-score a spilled run under a new model, without comparing anything again
 cpplink predict --schema examples/sample_schema.json --model model.json \
-                --out edges/ --spill spill/ --threshold 20 data.parquet
+                --out predictions/ --spill spill/ --threshold 20 data.parquet
 cpplink rescore --schema examples/sample_schema.json --model tuned.json \
-                --spill spill/ --out edges2/ --threshold 20 data.parquet
+                --spill spill/ --out predictions2/ --threshold 20 data.parquet
 
-# Join those edges into duplicate clusters, and score the result against known pairs
-cpplink cluster --schema examples/sample_schema.json --edges edges/ \
+# Join those predictions into duplicate clusters, and score the result against
+# known pairs; --predictions takes the merged file or the shard directory
+cpplink cluster --schema examples/sample_schema.json --predictions predictions.parquet \
                 --out clusters.csv --truth truth.csv data.parquet
+
+# Combine the shards of an existing run into one file something else can open
+cpplink merge-predictions --schema examples/sample_schema.json --shards predictions/ \
+                          --out predictions.parquet data.parquet
 
 # Write a sample file with realistic cardinalities and planted duplicates
 cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
@@ -218,7 +225,7 @@ It plants corrupted copies of earlier rows and records them, so the file also se
 - ~~Optional ANN blocking for prediction~~ — **retired by measurement, not built.** `recall
   --why` shows no missed pair that fails to agree, exactly or fuzzily, on a column already in the schema, so an ANN index would have nothing to find; the remaining misses are columns that are simply not blocked on
 - Multicore, shared-memory parallelism *(estimation and scoring done)*
-- Connected-component clustering of the scored edges *(done)*
+- Connected-component clustering of the predictions *(done)*
 - Spill of (a, b, γ) and re-scoring under a new model without a second comparison pass *(done)*
 - Deduplication and record linkage across datasets through the same interfaces *(done)*
 - A pair-global score ceiling that refuses a candidate before any string metric runs *(done)*
@@ -281,7 +288,7 @@ What this project claims is narrower, and none of it is a blocking method:
 
 1. **The EM-safety criterion** — a pair source may feed estimation only if its selection
    event factors as a condition on an excludable column subset. A whole-record source biases *every* `m_c` with no column left to repair it, so estimation and prediction run over different unions of sources.
-2. **Admissible per-pattern term-frequency brackets** that let most patterns be emitted or dropped without touching the TF tables, emitting exactly the edges a full scoring pass would.
+2. **Admissible per-pattern term-frequency brackets** that let most patterns be emitted or dropped without touching the TF tables, emitting exactly the predictions a full scoring pass would.
 3. **Exact closed-form candidate pricing** from the term-frequency tables, which prices 8.25 billion pairs without enumerating one.
 4. **The streaming implementation.** γ's sufficiency is Fellegi & Sunter 1969; that a full Fellegi–Sunter pipeline with TF adjustment fits in memory at 20M records, because nothing in it holds a row per pair, is an engineering result rather than a statistical one.
 

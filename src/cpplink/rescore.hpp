@@ -19,6 +19,9 @@ namespace cpplink {
 struct RescoreOptions {
     std::string spill_dir;
     std::string out_dir;
+    // As in `PredictOptions`: when set, `out_dir` is a staging directory and the
+    // shards are merged into this one file at the end of the run.
+    std::string merge_path;
     EdgeFormat format = EdgeFormat::kBinary;
     unsigned threads = 0;
     uint64_t max_edges = 0;
@@ -37,6 +40,8 @@ struct RescoreReport {
     bool below_spill_threshold = false;
     SpillManifest manifest;
     std::vector<std::string> shards;
+    std::string merged_path;  // empty when the shards were kept
+    double merge_seconds = 0.0;
 };
 
 // Re-scores a spilled run under a new model. Every string metric was already paid
