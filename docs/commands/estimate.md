@@ -359,8 +359,9 @@ The two terms admitted here are exactly the two pairs
 columns — reached from the histograms with no notion of containment at all.
 
 !!! warning "`G^2` cannot choose the number of terms, for the same reason it could not in `levels` or `simplify`"
-    Its power is the size of the run. All 28 candidate pairs here read `p = 0` at 18M
-    candidates. The effect size decides: `--interaction-bits` sets the bar and
+    Its power is the size of the run. All 28 candidate pairs here read `p = 0` over
+    `historical_50k`'s 18.4M candidate pairs. The effect size decides: `--interaction-bits`
+    sets the bar and
     `--max-interactions` caps the count.
 
 ### What it is worth

@@ -189,7 +189,7 @@ written; singletons are excluded by default.
 
 ## Cost
 
-The union–find is `uint32` parent plus `uint8` rank — **5 bytes a record**, 90 MB at 18M rows —
+The union–find is `uint32` parent plus `uint8` rank — **5 bytes a record**, 100 MB at 20M rows —
 and the shards are streamed past it with **no edge retained**. The pass over 142k edges and
 1.8M records took 0.016 s against 36 s to produce those edges, which is why the lock-free
 CAS version the design mentions stays unbuilt.

@@ -62,7 +62,8 @@ fuzzy sources.
 
 !!! note "Records are generated from their row index"
     Deterministically, so a duplicate can reproduce its original exactly without either being
-    held in memory. Generating 18M rows is a streaming operation, not a 4 GB one.
+    held in memory. Generating 20M rows is a streaming operation, not a 4 GB one: peak
+    resident memory while writing them is 237 MB.
 
 ## The truth file
 
@@ -81,5 +82,5 @@ appears as the pairs that were actually copied, not the full closure of the grou
 
 ## Scale
 
-At 18M rows the file is about 1.3 GB of parquet and takes ~134 s to write. The 1.8M-row sample
+At 20M rows the file is about 1.6 GB of parquet and takes ~43 s to write. The 1.8M-row sample
 used throughout this documentation is 142 MB and takes a few seconds.

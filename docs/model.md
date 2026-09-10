@@ -15,12 +15,17 @@ Each declared **comparison** — surname, date of birth, a coordinate pair — r
 to a small integer: the index of the first comparison **level** that fires.
 
 ```json
-{"name": "last_name", "term_frequency": true, "levels": [
-  {"type": "null"},
-  {"type": "exact"},
-  {"type": "jaro_winkler", "threshold": 0.92},
-  {"type": "jaro_winkler", "threshold": 0.85},
-  {"type": "else"}]}
+{
+  "name": "last_name",
+  "term_frequency": true,
+  "levels": [
+    {"type": "null"},
+    {"type": "exact"},
+    {"type": "jaro_winkler", "threshold": 0.92},
+    {"type": "jaro_winkler", "threshold": 0.85},
+    {"type": "else"}
+  ]
+}
 ```
 
 Levels are evaluated top-down and the first hit wins, so **level order in the config *is* the
@@ -200,7 +205,7 @@ judge. Only what survives the ceiling reaches `drop`, `check` and `emit`.
     bounded and exhaustive runs differ by about 0.5% of wall time at 1M rows: the bracket
     removes the TF lookup, and the TF lookup was never the expensive part — **the comparison
     is**, at roughly 3.5 µs of CPU per pair. The bracket stays because it is free, it is
-    exact, and its value grows with the TF tables, which reach 124 MB at 18M rows where every
+    exact, and its value grows with the TF tables, which reach 137 MB at 20M rows where every
     lookup is a cache miss.
 
 ## Choosing a threshold
@@ -235,51 +240,23 @@ blocking problem, not a model problem.**
     reading around 0.92 across the board. See
     [`cluster`](commands/cluster.md#the-quality-section).
 
-## Comparison levels available
+## Comparisons in more detail
 
-| Level type | Fires when | Reads |
-| --- | --- | --- |
-| `null` | any of the comparison's columns is missing on either side | any |
-| `exact` | interned id or value equality | any |
-| `levenshtein` | edit distance ≤ `threshold` | string |
-| `jaro_winkler` | similarity ≥ `threshold` | string |
-| `date_within` | \|difference\| ≤ `threshold` days | date |
-| `numeric_within` | \|difference\| ≤ `threshold` | double |
-| `geo_within` | great-circle distance ≤ `threshold` km | two doubles |
-| `list_overlap` | intersection size ≥ `threshold` | string_list |
-| `list_jaccard` | Jaccard similarity ≥ `threshold` | string_list |
-| `list_contains` | either row's value is an element of the other row's list | string + string_list |
-| `contains_levenshtein` | either row's value is within `threshold` edits of an element of the other's list | string + string_list |
-| `contains_jaro_winkler` | either row's value is `threshold` similar to an element of the other's list | string + string_list |
-| `list_levenshtein` | some element pair is within `threshold` edits | string_list |
-| `list_jaro_winkler` | some element pair is at least `threshold` similar | string_list |
-| `else` | always; must be last | — |
+The levels themselves, what each one reads, what it costs, which of them term frequency
+reaches, and how to order a ladder so that no level is unreachable, are
+[their own page](comparisons.md).
+Two things from it are worth carrying into this one.
 
-A configuration that applies a level to a column type it cannot read is rejected at parse
-time. The three membership levels are the ones that read two columns of *different* types, a
-scalar against a list of aliases; see [the schema reference](reference/schema.md#a-value-against-a-list-list_contains-and-its-fuzzy-half)
-for what that shape means and what it costs. The two pairwise levels are the other shape
-worth reading about before using: they score a list column on the closest pair of elements
-rather than on the elements two rows share, and they are the only levels whose cost grows
-with the data rather than being fixed per pair. The rest of the file format is there too.
+**The comparison is the expensive part of the pipeline.**
+Enumerating a candidate pair costs about 17 ns and evaluating one cost 4,090 ns when it was
+first measured, nearly all of it string metrics running on pairs that end at `else`.
+Three exact filters bring that down: per-value character signatures, Myers' bit-vector edit
+distance, and the pair-global ceiling, which drops 90% of candidates at 20 bits without
+running a single metric.
+None of them may change a γ, and each is checked by running the same data both ways.
 
-## Why the comparison is fast
-
-Values are interned to dense `uint32` ids per column at load, so an `exact` level is an
-integer equality — one or two nanoseconds, no string touched. Fuzzy levels are the expensive
-path, and they run on **every non-matching pair**, which is nearly all of them.
-
-Two mitigations ship, both exact:
-
-- **Per-value signatures.** Beside each interned id sits the value's length and a 64-bit
-  character-presence mask. A character present in `a` but absent from `b` cannot match, so
-  \(\text{matches} \le |a| - \text{popcount}(\text{mask}_a \wedge \neg\text{mask}_b)\), which
-  bounds Jaro from above and Levenshtein distance from below. Two loads and two popcounts
-  reject a pair before a character is read. Measured on the blocked distribution: **−24% of
-  comparison CPU**.
-- **Myers' bit-vector Levenshtein**, dispatched when the shorter value fits a machine word.
-  3–8× faster than the banded DP in isolation.
-
-Both bounds are admissible, so neither may change a single γ — `predict --no-signatures` and
-`ComparisonSet::Bind(..., use_signatures=false)` exist so the same data can be run both ways
-and compared pair for pair.
+**The ladder is a modelling decision, not a formatting one.**
+Levels are evaluated top-down and the first hit wins, so the order in the file decides which
+of two true statements about a pair the model is told.
+[`levels`](commands/levels.md) places fuzzy thresholds from the data and
+[`simplify`](commands/simplify.md) merges the ones a run cannot tell apart.

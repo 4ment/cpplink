@@ -17,7 +17,7 @@ struct PatternCount {
 };
 
 // Counts of distinct agreement patterns. This is the only thing estimation reads,
-// and it is why estimation costs the same at 18M records as at 18k: a pair enters
+// and it is why estimation costs the same at 20M records as at 20k: a pair enters
 // the likelihood only through its pattern, so the pair itself is discarded the
 // moment its gamma is folded in here.
 //

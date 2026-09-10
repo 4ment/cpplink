@@ -328,7 +328,7 @@ bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
     // regenerate a record the file never contained -- the two rows would share
     // nothing, and the truth file would still claim they were a pair. Following
     // the chain to its base keeps every recorded pair genuinely similar and lets
-    // clusters larger than two arise honestly. Four bytes a row: 72 MB at 18M.
+    // clusters larger than two arise honestly. Four bytes a row: 80 MB at 20M.
     std::vector<uint32_t> base_of(options.rows);
 
     for (uint64_t index = 0; index < options.rows; ++index) {

@@ -47,7 +47,7 @@ ColumnType TransformOutput(Transform transform);
 //
 // Interning is what makes this the cheap end of feature engineering: the
 // transform runs once per distinct value of the source dictionary rather than
-// once per row, so a phonetic key over 18M records costs one pass over 149k
+// once per row, so a phonetic key over 20M records costs one pass over 658k
 // surnames and a gather. What it buys is an exact level -- an integer equality --
 // sitting between the exact and the fuzzy level of the column it came from, and a
 // blocking source that is EM-safe by the same single-column argument every other

@@ -434,9 +434,10 @@ void FitInteractions(const ComparisonSet& comparisons,
     // Ranked by effect size, and admitted on effect size. This is the third place
     // in this project where a significance test could have chosen the model size
     // and the third where it must not: G-squared scales with the size of the run,
-    // so at 18M candidates every pair of comparisons is significant and at 10k
-    // none is. The p-value is printed because it is the diagnostic; the bits are
-    // printed because they are the decision.
+    // so on a run of tens of millions of candidates every pair of comparisons is
+    // significant and on one of ten thousand none is. The p-value is printed
+    // because it is the diagnostic; the bits are printed because they are the
+    // decision.
     std::vector<size_t> order(report->candidates.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) {

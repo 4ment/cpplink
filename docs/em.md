@@ -1,7 +1,7 @@
 # Estimation and EM
 
 The parameters \(m\), \(u\) and \(\lambda\) defined in [the model](model.md) have to come
-from the data itself — nobody labels 18 million records. This page is what
+from the data itself — nobody labels 20 million records. This page is what
 [`cpplink estimate`](commands/estimate.md) does, and why each of the three parameters comes
 from a different place.
 
@@ -22,7 +22,8 @@ count[γ]        the only thing EM reads
 
 Because γ is a sufficient statistic for the Fellegi–Sunter likelihood, this loses nothing.
 The histogram is bounded by the number of *distinct patterns*, which is tiny: the design
-allowed for ~10⁵ and the measurement is **242 to 553** per session. Eight comparisons with
+allowed for ~10⁵ and the measurement is **a few hundred** per session — 223 to 534 at the 20M
+target, 242 to 553 on the 1.8M sample the example below comes from. Eight comparisons with
 three to five levels can only reach ~10⁵ in principle, and real data occupies a vanishing
 corner of that space.
 
@@ -39,7 +40,7 @@ Implementation, in `histogram.*`:
   (enumeration).
 
 Once the histogram exists, re-fitting the model is instantaneous — which makes parameter work
-interactive in a way it cannot be when every iteration re-reads a 130 GB table.
+interactive in a way it cannot be when every iteration re-reads a 121 GB table.
 
 ## `u` in closed form
 
@@ -59,15 +60,17 @@ where \(c_v\) is the number of records holding value \(v\) and \(N\) the number 
     plug-in form \(\sum_v p_v^2\) counts all \(N\) of those self-agreements, which inflates
     \(u\) by \(1/N\). That is negligible while \(u\) is large and *dominant* once \(u\)
     approaches \(1/N\) — which is exactly where the strongest columns live. On the 1M sample
-    the 919k-value `email` column read **3.5 bits low** under the plug-in form, and at 18M
-    records it reads 1.5 bits low. The random-pair sampler had always skipped `a == b`, so
-    the two halves of one estimator disagreed about what a pair is until this was corrected.
+    the 919k-value `email` column read **3.5 bits low** under the plug-in form, and at 20M
+    records it reads **3.3 bits low**: a near-unique column's \(u\) falls with \(N\) as fast
+    as the self-pair term does, so the error does not shrink with scale. The random-pair
+    sampler had always skipped `a == b`, so the two halves of one estimator disagreed about
+    what a pair is until this was corrected.
 
 A **null level placed first** fires exactly when either side is missing, which is also a count
 over the data, so it is exact for *any* comparison — including multi-column ones.
 
-This matters enormously at high cardinality. On the sample, `email exact` comes out at
-\(u = 5.96\times10^{-8}\), exactly. Sampling 20M random pairs would have expected **1.2 hits**
+This matters enormously at high cardinality. At the 20M target, `email exact` comes out at
+\(u = 5.84\times10^{-9}\), exactly. A million random pairs would have expected **0.006 hits**
 for that level, which is not an estimate.
 
 What is left — geo radii, list-set equality, Jaccard, fuzzy string levels — is sampled from
@@ -225,6 +228,14 @@ match). Pass `--lambda` to set it from a count you trust.
     `cpplink completeness` estimates the pair completeness this bound is missing, without a
     truth file.
 
+!!! tip "An unblocked session is not a bound at all"
+    λ is a lower bound because a session counts only the matches its blocking reached. A
+    session over [every pair](blocking.md#no-blocking-at-all) reaches all of them, so the
+    report drops the "lower bound" wording and the warning with it: on `fake_1000` it reads
+    3.38x10⁻³ against a truth of 4.07x10⁻³, where the blocked sessions read 1.77x10⁻³. That is
+    only safe where no two comparisons are tied, because an unblocked session holds nothing
+    out; read the warning in [no blocking at all](blocking.md#no-blocking-at-all) first.
+
 ## The three floors, which are three different things
 
 They look alike in the output and they are not the same:
@@ -247,22 +258,23 @@ A level with no support is a modelling bug, not a number to clamp.
 
 ## Measured cost
 
-At 18M rows, four sessions, eight comparisons, 20M random pairs for `u`:
+At 20M rows, four sessions, eight comparisons, the default 10⁶ random pairs for `u`, on one
+thread:
 
 | Stage | Enumerated | Compared | Patterns | EM iterations | Seconds |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `u` sampling | — | 20,000,000 | — | — | 15.1 |
-| session `email` | 909,997 | 909,997 | 386 | 3 | 0.8 |
-| session `phone` | 2,613,571 | 2,613,571 | 450 | 3 | 4.3 |
-| session `dob` | **7,782,017,109** | 10,001,483 | 233 | 4 | **17.5** |
-| session `last_name` | 467,529,352 | 8,616,883 | 497 | 10 | 6.4 |
+| `u` sampling | — | 1,000,000 | — | — | 2.1 |
+| session `email` | 1,168,723 | 1,168,723 | 453 | 2 | 0.9 |
+| session `phone` | 3,293,234 | 3,293,234 | 498 | 2 | 3.5 |
+| session `dob` | **9,607,671,432** | 10,009,380 | 223 | 4 | **75.3** |
+| session `last_name` | 481,577,878 | 8,995,124 | 534 | 3 | 16.5 |
 
-**81 s wall, 289 s CPU, 4.19 GB peak RSS**, load included. Two things worth keeping:
+**144 s wall, 4.49 GB peak RSS**, load included. Two things worth keeping:
 
-- **Enumeration parallelises cleanly.** The `dob` session walked 7.78 billion candidate pairs
-  in 17.5 s — about 2.2 ns per pair wall against 17 ns single-threaded, so the atomic counter
-  over groups delivers roughly the core count with no visible contention.
+- **Enumeration costs about 8 ns a pair.** The `dob` session walked 9.61 billion candidate
+  pairs in 75.3 s on a single thread, the sampling decision and 10M comparisons included, so
+  generating candidates is not what estimation spends its time on.
 - **Bernoulli sampling is what makes a broad session affordable.** `dob` compared 10M of its
-  7.78 billion pairs — 0.13% — and still produced 233 distinct patterns and a converged fit in
-  4 iterations. The remaining 7.77 billion comparisons would have bought nothing and cost
-  about nine hours.
+  9.61 billion pairs — 0.10% — and still produced 223 distinct patterns and a converged fit in
+  4 iterations. The remaining 9.6 billion comparisons would have bought nothing and cost
+  about four hours.

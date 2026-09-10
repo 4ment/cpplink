@@ -15,7 +15,7 @@
 namespace cpplink {
 
 // Union-find with union by rank and path halving. Parent is a row index and rank
-// fits a byte, so the whole structure is 5 bytes a record: 90 MB at 18M rows,
+// fits a byte, so the whole structure is 5 bytes a record: 100 MB at 20M rows,
 // which is why the edges can be streamed past it and thrown away.
 class UnionFind {
    public:

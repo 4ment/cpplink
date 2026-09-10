@@ -34,7 +34,7 @@ void ApplyDateTransforms(const std::vector<Transform>& transforms, int32_t days,
 // and no caller has to remember it exists.
 //
 // The work is one pass over the source *dictionary* rather than over the rows,
-// which is the whole economy of the thing: a phonetic key over 18M records is one
+// which is the whole economy of the thing: a phonetic key over 20M records is one
 // Soundex per distinct surname and a gather. Nothing here can fail -- that a
 // source exists and that its type feeds the chain are both settled at parse time,
 // before a file is opened.

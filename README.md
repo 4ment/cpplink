@@ -5,7 +5,7 @@
 
 **cpplink** is a fast, streaming probabilistic record linker in C++. It implements the Fellegi–Sunter model — EM parameter estimation, term-frequency adjustments, and prediction — without ever materializing a table of candidate pairs.
 
-This project is heavily inspired by Splink, and reuses many of the ideas and design choices that make Splink such a useful record linkage tool.
+This project is heavily inspired by [splink], and reuses many of the ideas and design choices that make Splink such a useful record linkage tool.
 Splink was also an important part of how I learned and explored the record linkage problem while developing cpplink, so this project is in large part a didactic exercise as well as a practical tool. Kudos to the Splink developers for building such a great resource.
 
 The main motivation for cpplink was practical: I wanted to run probabilistic record linkage on datasets that did not fit comfortably in memory on a laptop.
@@ -16,13 +16,13 @@ The result is essentially a memory-friendly, C++ implementation of a Splink-styl
 
 ## Approach
 
-A pair enters the Fellegi–Sunter likelihood only through its agreement pattern γ, the vector of comparison-level indices. Two pairs with the same γ are indistinguishable to the model, so estimation needs only `count[γ]`, a histogram bounded by the number of *distinct* patterns rather than the number of pairs. On a 18M-record deduplication:
+A pair enters the Fellegi–Sunter likelihood only through its agreement pattern γ, the vector of comparison-level indices. Two pairs with the same γ are indistinguishable to the model, so estimation needs only `count[γ]`, a histogram bounded by the number of *distinct* patterns rather than the number of pairs. On the 20M-record deduplication below:
 
 |  | pair table | pattern histogram |
 |---|---:|---:|
-| Candidate pairs | 5×10⁹ | 5×10⁹ |
-| Stored rows | 5×10⁹ | ~10⁵ |
-| Resident memory | ~130 GB | 3.1 GB *(measured)* |
+| Candidate pairs | 1.01×10¹⁰ | 1.01×10¹⁰ |
+| Stored rows | 1.01×10¹⁰ | ~10⁵ |
+| Resident memory | 121 GB *(at 12 bytes a pair)* | 4.49 GB *(measured)* |
 | Cost of one EM re-fit | re-read everything | < 0.1 s |
 
 Blocking is a lazy iterator rather than a join, candidate pairs are deduplicated across sources by a cheap predicate instead of a global `DISTINCT`, and term-frequency adjustment is made affordable by admissible score bounds that let most patterns skip the TF tables entirely.
@@ -36,6 +36,19 @@ Sources that select on a whole record rather than a column (an ANN index, for in
 
 None of those sources is a new idea (see [prior art](#prior-art)) so the useful question is not which to believe in but which earns its candidates, and that is measured rather than argued.
 `recall` reports pair completeness, pair quality and the reduction ratio per source and for the plan; [`bench/sweep_blocking.py`](bench/) sweeps each method over its own knob and reports the frontier, because every method can buy recall with candidates and a single operating point per method compares nothing.
+
+## Performance
+
+The following benchmark was run on a MacBook Air (Apple M1, 16 GB RAM).
+The design target is **20M records**, and the whole pipeline has been run there: `estimate` → `predict` → `cluster` over 20,000,000 synthetic records and **10,090,976,646 candidate pairs** in **38.1 minutes on a single thread**, at **4.49 GB peak resident memory**, with no scratch file and F1 0.9946 against the planted duplicates.
+The two figures below are single-threaded sweeps from 250k to 20M records on one machine, drawn against candidate pairs rather than records because that is the axis on which two blocking plans are comparable: time is linear in pairs, while memory tracks records, since nothing in the pipeline holds a row per pair.
+Splink is drawn beside it on a shared schema, the intersection of the levels and blocking rules both tools express identically, which is the only way to give two tools the same model; cpplink is run twice, once on each schema, so that line has a like-for-like partner.
+
+![Wall time against candidate pairs, one thread](docs/img/scale-time.svg)
+
+![Peak memory against candidate pairs, one thread](docs/img/scale-memory.svg)
+
+Further information about the benchmark, including precision, recall, and F1 score, can be found in [`bench/scale/`](bench/scale/README.md).
 
 ## Usage
 
@@ -59,9 +72,14 @@ Only the first three carry term frequencies: exact agreement between two doubles
 A column can also be derived from another rather than read from the file, which is cheap here because interning makes an exact level on a derived key an integer equality and the transform runs once per distinct value rather than once per row:
 
 ```json
-{"name": "surname_key", "derive": {"from": "surname", "transform": "soundex"}},
-{"name": "name_key",    "derive": {"from": "full_name",
-                                   "transform": ["normalize", "sorted_tokens"]}}
+{
+  "name": "surname_key",
+  "derive": {"from": "surname", "transform": "soundex"}
+},
+{
+  "name": "name_key",
+  "derive": {"from": "full_name", "transform": ["normalize", "sorted_tokens"]}
+}
 ```
 
 The transforms are `normalize`, `sorted_tokens`, `soundex`, and the date parts `year`, `month`, `day` and `year_month`; a list applies them in order and is type-checked against the source column when the schema is parsed.
@@ -85,7 +103,8 @@ A configuration that applies a level to a column type it cannot read, omits a tr
 It is how a `first_name` is checked against a `nicknames` column, and it sits in the same comparison as the name's own levels, ordered between them:
 
 ```json
-{"name": "forename",
+{
+  "name": "forename",
   "columns": ["first_name", "nicknames"],
   "levels": [
     {"type": "null"},
@@ -101,12 +120,17 @@ It is how a `first_name` is checked against a `nicknames` column, and it sits in
 The set-valued levels above them read the intersection, which is the special case where the closest pair is a shared element, so they belong higher in the same comparison:
 
 ```json
-{"name": "emails", "columns": ["emails"], "levels": [
-  {"type": "null"},
-  {"type": "list_overlap", "threshold": 1},
-  {"type": "list_levenshtein", "threshold": 1},
-  {"type": "list_jaro_winkler", "threshold": 0.9},
-  {"type": "else"}]}
+{
+  "name": "emails",
+  "columns": ["emails"],
+  "levels": [
+    {"type": "null"},
+    {"type": "list_overlap", "threshold": 1},
+    {"type": "list_levenshtein", "threshold": 1},
+    {"type": "list_jaro_winkler", "threshold": 0.9},
+    {"type": "else"}
+  ]
+}
 ```
 
 The cost is the cross product: |a| x |b| metric evaluations where a scalar fuzzy level runs one.
@@ -206,7 +230,8 @@ It plants corrupted copies of earlier rows and records them, so the file also se
 - Columns derived from other columns at load, once per distinct value *(done)*
 - Merging the comparison levels a run cannot tell apart *(done)*
 - Two-way corrections for the columns that are not conditionally independent *(done)*
-- Validation at the 18M-record target *(not yet run; 4M is measured in [`bench/scale/`](bench/scale/))*
+- Validation at the 20M-record target *(done; see [Scaling](#scaling) and [`bench/scale/`](bench/scale/))*
+- The same validation on real data rather than generated data, and a splink comparison above 1M records *(not yet run)*
 
 ## Getting Started
 
@@ -258,7 +283,7 @@ What this project claims is narrower, and none of it is a blocking method:
    event factors as a condition on an excludable column subset. A whole-record source biases *every* `m_c` with no column left to repair it, so estimation and prediction run over different unions of sources.
 2. **Admissible per-pattern term-frequency brackets** that let most patterns be emitted or dropped without touching the TF tables, emitting exactly the edges a full scoring pass would.
 3. **Exact closed-form candidate pricing** from the term-frequency tables, which prices 8.25 billion pairs without enumerating one.
-4. **The streaming implementation.** γ's sufficiency is Fellegi & Sunter 1969; that a full Fellegi–Sunter pipeline with TF adjustment fits in memory at 18M records, because nothing in it holds a row per pair, is an engineering result rather than a statistical one.
+4. **The streaming implementation.** γ's sufficiency is Fellegi & Sunter 1969; that a full Fellegi–Sunter pipeline with TF adjustment fits in memory at 20M records, because nothing in it holds a row per pair, is an engineering result rather than a statistical one.
 
 ## Documentation
 
@@ -283,3 +308,6 @@ Tools used:
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+
+[splink]: https://moj-analytical-services.github.io/splink/

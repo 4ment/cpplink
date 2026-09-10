@@ -4,7 +4,7 @@ A like-for-like comparison of [splink](https://moj-analytical-services.github.io
 and cpplink on public deduplication datasets, at a scale small enough that both tools
 finish in seconds and the whole thing is reproducible on a laptop.
 
-The point is *not* to show cpplink winning. cpplink's design claim is about **18M records**,
+The point is *not* to show cpplink winning. cpplink's design claim is about **20M records**,
 where splink's pair table does not fit; at 50k records splink's pair table fits easily and
 the claim is untestable. What a benchmark at this scale can establish is the thing that
 must be true before the scale claim is worth making:
@@ -156,7 +156,8 @@ Four honest caveats:
    section](#the-scale-claim-and-where-it-is-still-unmeasured) worth writing down, and it is
    still a line through two points.
 2. **Neither does time.** duckdb has a fixed startup cost that dominates at 1,000 records
-   and is invisible at 18M. Per-stage timings are reported so the fixed and variable parts
+   and is invisible at 20M.
+   Per-stage timings are reported so the fixed and variable parts
    can be told apart, but a single speedup ratio from this benchmark would be meaningless.
 3. **The threshold grid sets the predict cost.** Both tools score everything above the
    grid's lowest threshold, so a wider grid is a more expensive run for both.
@@ -407,10 +408,9 @@ and high, and it is not a free improvement.
 Read this table with the four caveats above, and two more that these numbers make concrete.
 
 At 1,000 records splink's 2.21 s is almost entirely duckdb and interpreter startup, a fixed
-cost that would be invisible at 18M rows. The `historical_50k` row is the only one where the
-variable cost dominates, and even there 18.3M candidate pairs is 0.4% of the 5x10^9 the design
-targets. **Do not quote a speedup ratio from this benchmark.** What it shows is that the shapes
-are as designed, cpplink's memory flat in the number of pairs and splink's not, and not by how
+cost that would be invisible at 20M rows. The `historical_50k` row is the only one where the variable cost dominates, and even there 18.3M candidate pairs is 0.18% of the 1.0x10^10 the design targets.
+**Do not quote a speedup ratio from this benchmark.** What it shows is that
+the shapes are as designed, cpplink's memory flat in the number of pairs and splink's not, and not by how
 much that will matter at scale.
 
 **The `fuzzy_tf` track is eight times the pipeline cost of `native`, and 89% of that is one
@@ -664,7 +664,7 @@ assertion:
 |---:|---:|
 | 100M | 19 GB |
 | 1×10⁹ | 189 GB |
-| 5×10⁹ *(the 18M-record design target)* | ~0.95 TB |
+| 1.0×10¹⁰ *(the design target)* | ~1.9 TB |
 
 On this schema `historical_50k`'s 50,578 records yield 18.3M candidates, so 16 GB is
 exhausted at roughly 85M candidates — **somewhere near 110k records**. That is a falsifiable
@@ -676,8 +676,5 @@ watching it break, and the second is what this section will hold when the disk e
 Two limits stay honest about what even that would establish. The extrapolation is linear in
 candidates from two points and assumes duckdb's per-row width does not change with scale or
 spill strategy — splink spilling to disk does not fail, it slows, and "fails" would need
-defining as a wall-clock budget rather than an OOM. And the 18M-record claim is only
-partly measured: DESIGN.md's phase 2 priced and enumerated blocking at 18M synthetic rows
-(63.5×10⁹ candidates, 8.25×10⁹ enumerated in 142 s single-threaded), but **nothing from
-phase 6 has been validated at that size** — the signature filter, the spill path and link
-mode were all measured at 1–1.8M — and no end-to-end run at 18M has been done at all.
+defining as a wall-clock budget rather than an OOM. And the row it predicts is the one row here that has no splink measurement beside it: **cpplink has now been run end to end at the 20M-record target**, at 1.01×10¹⁰ candidate pairs, 38.1 minutes on one thread, 4.49 GB resident, no scratch file and F1 0.9946, in [`scale/`](scale/README.md#the-scaling-sweep-one-thread), while splink has not been run above 1M on this machine, because it did not finish at 2M.
+The comparison at the target size is therefore still an arithmetic prediction on splink's side, and what cpplink contributes to it is a measurement rather than an extrapolation.

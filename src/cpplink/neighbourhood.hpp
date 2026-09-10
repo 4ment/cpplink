@@ -27,8 +27,8 @@ namespace cpplink {
 // which is exactly p_v when the level is exact and B(v) = {v}. Nobody computes it
 // because it is a similarity self-join over every distinct value, which a
 // row-oriented or SQL-backed pipeline cannot afford. This one can, for a
-// structural reason: values are interned, so the join is over the 609k distinct
-// surnames rather than the 18M rows, it is one pass per column, and it is
+// structural reason: values are interned, so the join is over the 658k distinct
+// surnames rather than the 20M rows, it is one pass per column, and it is
 // amortised over every pair the run scores. The signature table -- length plus a
 // 64-bit character-presence mask -- prunes it with two loads and two popcounts,
 // the same primitive the pair path already uses.

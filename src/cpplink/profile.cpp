@@ -88,7 +88,7 @@ const std::vector<uint32_t>* TermFrequencies(const Column& column) {
 }
 
 // One scalar column, read by row without materialising a key array per column:
-// ten columns of 18M keys is 720 MB to answer a question that is one pass wide.
+// ten columns of 20M keys is 800 MB to answer a question that is one pass wide.
 struct ScalarView {
     const std::vector<uint32_t>* ids = nullptr;
     const std::vector<int32_t>* dates = nullptr;
@@ -812,7 +812,7 @@ std::vector<uint64_t> AnchorRows(uint64_t records, const ProfileOptions& options
 // The key is near-unique by construction, so almost every group is one row long and
 // the sort is what the pass costs. Hash equality is not taken as agreement: a group
 // is a candidate list and every pair in it is verified against the anchor columns,
-// because a 64-bit collision over 18M rows is not rare enough to ignore when what it
+// because a 64-bit collision over 20M rows is not rare enough to ignore when what it
 // would corrupt is the estimate itself.
 AnchorWalk WalkAnchorPairs(const RecordStore& store, PairMode mode,
                            const std::vector<size_t>& anchor,

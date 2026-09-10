@@ -10,7 +10,7 @@
 
 namespace cpplink {
 
-// Prices every source before a single pair is enumerated. At 18M records a
+// Prices every source before a single pair is enumerated. At 20M records a
 // careless source is catastrophic, and the group-size distribution says so in
 // seconds rather than after an overnight run.
 void PrintBlockingReport(const BlockingPlan& plan, const RecordStore& store,
