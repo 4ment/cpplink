@@ -47,6 +47,10 @@ bool Implies(const LevelSpec& upper, const LevelSpec& lower) {
     if (upper.type == LevelType::kNull || lower.type == LevelType::kNull) return false;
     if (lower.type == LevelType::kElse) return true;
     if (upper.type == LevelType::kElse) return false;
+    // Two levels reading different columns of the comparison say nothing about
+    // each other here: an exact match on an address does imply one on its
+    // username, but only through the derivation, which this does not read.
+    if (upper.column != lower.column) return false;
     if (upper.type == LevelType::kExact) {
         switch (lower.type) {
             case LevelType::kLevenshtein:
@@ -97,6 +101,9 @@ bool Implies(const LevelSpec& upper, const LevelSpec& lower) {
 std::string WhyNot(const LevelSpec& upper, const LevelSpec& lower) {
     if (upper.type == LevelType::kNull || lower.type == LevelType::kNull) {
         return "missing is not a degree of agreement";
+    }
+    if (lower.type != LevelType::kElse && upper.column != lower.column) {
+        return "different columns: neither predicate implies the other";
     }
     if (upper.type != lower.type && upper.type != LevelType::kExact &&
         upper.type != LevelType::kListContains) {

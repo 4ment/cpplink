@@ -22,6 +22,9 @@ struct BoundComparison {
     uint8_t bits = 0;
     uint8_t shift = 0;
 
+    // The first string column the comparison names, which is the one every
+    // consumer wanting "the column" -- the term-frequency adjustment, the
+    // dictionary self-join, the explain report -- reads.
     const StringColumn* strings = nullptr;
     const DateColumn* dates = nullptr;
     const StringListColumn* lists = nullptr;
@@ -44,6 +47,16 @@ struct BoundComparison {
     // aligning them once at bind time is what keeps the pair path integer-only.
     const uint32_t* alias_ids = nullptr;
     uint32_t alias_size = 0;
+    // Every string column the comparison names, in the schema's order, each with
+    // its signature table where a fuzzy level reads it. A string level reads the
+    // slot its `LevelSpec::column` indexes, so a comparison over an address and
+    // its username holds two and every other comparison holds at most one, with
+    // `strings` and `signatures` above being the first of them.
+    struct StringSlot {
+        const StringColumn* strings = nullptr;
+        const SignatureTable* signatures = nullptr;
+    };
+    std::vector<StringSlot> slots;
 };
 
 class ComparisonSet {
