@@ -276,17 +276,29 @@ uint64_t ParameterCount(const std::vector<BlockedColumn>& columns,
     return count;
 }
 
-// The comparison that reads exactly this one column and has an exact level. A
-// source blocks on a column; gamma speaks about comparisons; this is the join,
-// and where it fails the source simply contributes nothing, which keeps the
-// bound on the safe side.
+// The comparison with an exact level that fires exactly when this column
+// agrees. A source blocks on a column; gamma speaks about comparisons; this is
+// the join, and where it fails the source simply contributes nothing, which
+// keeps the bound on the safe side. A comparison over several string columns
+// qualifies only through an exact level with nothing but null above it: an
+// exact level lower down fires when its column agrees *and* the levels above
+// did not, which is not the event the source fires on.
 bool FindExactComparison(const ComparisonSet& comparisons, const std::string& column,
                          size_t* index, uint8_t* level) {
     for (size_t c = 0; c < comparisons.Size(); ++c) {
         const ComparisonSpec& spec = *comparisons.at(c).spec;
-        if (spec.columns.size() != 1 || spec.columns[0] != column) continue;
+        const bool several = comparisons.at(c).slots.size() > 1;
+        if (!several && (spec.columns.size() != 1 || spec.columns[0] != column)) {
+            continue;
+        }
         for (size_t l = 0; l < spec.levels.size(); ++l) {
-            if (spec.levels[l].type != LevelType::kExact) continue;
+            const LevelSpec& candidate = spec.levels[l];
+            if (several && candidate.type != LevelType::kNull &&
+                candidate.type != LevelType::kExact) {
+                break;
+            }
+            if (candidate.type != LevelType::kExact) continue;
+            if (several && spec.columns[candidate.column] != column) break;
             *index = c;
             *level = static_cast<uint8_t>(l);
             return true;

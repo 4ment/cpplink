@@ -82,7 +82,7 @@ A column can also be derived from another rather than read from the file, which 
 }
 ```
 
-The transforms are `normalize`, `sorted_tokens`, `soundex`, and the date parts `year`, `month`, `day` and `year_month`; a list applies them in order and is type-checked against the source column when the schema is parsed.
+The transforms are `normalize`, `sorted_tokens`, `soundex`, `email_username`, `email_domain`, and the date parts `year`, `month`, `day` and `year_month`; a list applies them in order and is type-checked against the source column when the schema is parsed.
 A derived column is interned, counted, blocked on and compared like any other, and because the derivation is a functional dependency the schema has declared, estimation treats it and its source as one piece of evidence rather than two.
 
 Comparisons are declared in the same file. Levels are evaluated top-down and the first hit wins, so their order is the model, put the strongest evidence first.
@@ -98,6 +98,38 @@ A comparison can span more than one column: a coordinate pair is one comparison,
 
 Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`, `numeric_within`, `geo_within`, `list_overlap`, `list_jaccard`, `list_contains`, `contains_levenshtein`, `contains_jaro_winkler`, `list_levenshtein`, `list_jaro_winkler`, `else`.
 A configuration that applies a level to a column type it cannot read, omits a trailing `else`, or overflows the 32-bit packed pattern is rejected at parse time, before a file is opened.
+
+A comparison can also name several string columns and let each level say which one it reads, so a field and a key derived from it are ranked inside one comparison rather than counted twice.
+This is how splink's email comparison is written here: exact on the address, then exact on the username, then Jaro-Winkler on either.
+
+```json
+{"name": "email_username", "derive": {"from": "email", "transform": "email_username"}}
+```
+
+```json
+{
+  "name": "email",
+  "columns": ["email", "email_username"],
+  "term_frequency": true,
+  "levels": [
+    {"type": "null"},
+    {"type": "exact"},
+    {"type": "exact", "column": "email_username"},
+    {"type": "jaro_winkler", "threshold": 0.88},
+    {"type": "jaro_winkler", "threshold": 0.88, "column": "email_username"},
+    {"type": "else"}
+  ]
+}
+```
+
+The username is a declared column rather than something the comparison extracts on the fly, and that is deliberate.
+splink's `EmailComparison` runs `regexp_extract` inside the comparison, once per pair, which is fine when everything is per pair anyway; here it would turn an integer equality into a `find('@')`, a substring and a string compare on every candidate.
+Declared as a column, the split runs once per distinct address at load, the username is interned and counted like any other column, and that is what gives its exact level a term-frequency adjustment, a closed-form `u`, a signature table for the fuzzy bound, and the option of blocking on it.
+The cost is one `uint32` a row plus the username dictionary, and a column that shows in `inspect` and `profile` under the name you gave it.
+A level without a `column` reads the first one.
+The comparison is null wherever any of its columns is, so an address with nothing before the `@` compares as missing rather than falling through to `else`.
+Each exact level gets its own term-frequency adjustment, over the column it read, and the first one's `u` is still closed form: an address is the column whose collision rate sits near `1/N`, where a sampled `u` sees nothing.
+What the shape does not get is `--fuzzy-tf`, `--fuzzy-u` and `cpplink levels`, which read a single column, and `simplify` never merges two levels reading different columns.
 
 `list_contains` is the one level whose two columns have different types: a scalar string against a list of aliases, firing when either row's value is an element of the other row's list.
 It is how a `first_name` is checked against a `nicknames` column, and it sits in the same comparison as the name's own levels, ordered between them:

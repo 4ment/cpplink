@@ -122,7 +122,9 @@ class Scorer {
     // The term-frequency move this pair gets for one comparison: zero unless the
     // pattern puts it on a level that has one.
     double AdjustmentFor(size_t comparison, uint32_t gamma, uint64_t a, uint64_t b) const;
-    uint32_t FrequencyFor(size_t comparison, uint64_t row) const;
+    // The term frequency of the row's value on the exact level the pattern puts
+    // this pair on, which is the one the move above was taken from.
+    uint32_t FrequencyFor(size_t comparison, uint32_t gamma, uint64_t row) const;
     // Levels of this comparison that carry an adjustment, for the report that has
     // to say which ones did.
     bool AdjustsFuzzyLevels() const;
