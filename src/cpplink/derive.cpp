@@ -115,6 +115,24 @@ void Soundex(std::string_view value, std::string* out) {
     out->append(kKeyLength - out->size(), '0');
 }
 
+// The two halves of an address, split the way splink's email comparison splits
+// it: the username is the run before the first "@", or the whole value when there
+// is none, and the domain is the run after the last "@", or nothing. Neither
+// touches case or punctuation, so a chain can add "normalize" where it wants it.
+void EmailUsername(std::string_view value, std::string* out) {
+    const size_t at = value.find('@');
+    const std::string_view head =
+        at == std::string_view::npos ? value : value.substr(0, at);
+    out->append(head.data(), head.size());
+}
+
+void EmailDomain(std::string_view value, std::string* out) {
+    const size_t at = value.rfind('@');
+    if (at == std::string_view::npos) return;
+    const std::string_view tail = value.substr(at + 1);
+    out->append(tail.data(), tail.size());
+}
+
 // Howard Hinnant's civil_from_days: days since 1970-01-01 to a proleptic
 // Gregorian date, with no library dependency and no time zone to be wrong about.
 void CivilFromDays(int32_t days, int64_t* year, int64_t* month, int64_t* day) {
@@ -144,6 +162,12 @@ void ApplyStringTransform(Transform transform, std::string_view value, std::stri
             return;
         case Transform::kSoundex:
             Soundex(value, out);
+            return;
+        case Transform::kEmailUsername:
+            EmailUsername(value, out);
+            return;
+        case Transform::kEmailDomain:
+            EmailDomain(value, out);
             return;
         default:
             // A date transform never reaches a string: the chain is type-checked

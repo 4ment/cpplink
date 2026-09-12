@@ -72,17 +72,21 @@ struct TransformName_ {
 };
 
 constexpr TransformName_ kTransformNames[] = {
-    {"normalize", Transform::kNormalize},  {"sorted_tokens", Transform::kSortedTokens},
-    {"soundex", Transform::kSoundex},      {"year", Transform::kYear},
-    {"month", Transform::kMonth},          {"day", Transform::kDay},
+    {"normalize", Transform::kNormalize},
+    {"sorted_tokens", Transform::kSortedTokens},
+    {"soundex", Transform::kSoundex},
+    {"year", Transform::kYear},
+    {"month", Transform::kMonth},
+    {"day", Transform::kDay},
     {"year_month", Transform::kYearMonth},
+    {"email_username", Transform::kEmailUsername},
+    {"email_domain", Transform::kEmailDomain},
 };
 
 constexpr TypeName kTypeNames[] = {
-    {"string", ColumnType::kString},
-    {"string_list", ColumnType::kStringList},
-    {"date", ColumnType::kDate},
-    {"double", ColumnType::kDouble},
+    {"string", ColumnType::kString},   {"string_list", ColumnType::kStringList},
+    {"date", ColumnType::kDate},       {"double", ColumnType::kDouble},
+    {"boolean", ColumnType::kBoolean},
 };
 
 }  // namespace
@@ -128,6 +132,8 @@ ColumnType TransformInput(Transform transform) {
         case Transform::kNormalize:
         case Transform::kSortedTokens:
         case Transform::kSoundex:
+        case Transform::kEmailUsername:
+        case Transform::kEmailDomain:
             return ColumnType::kString;
         case Transform::kYear:
         case Transform::kMonth:
@@ -150,6 +156,8 @@ ColumnType TransformOutput(Transform transform) {
         case Transform::kMonth:
         case Transform::kDay:
         case Transform::kYearMonth:
+        case Transform::kEmailUsername:
+        case Transform::kEmailDomain:
             return ColumnType::kString;
     }
     return ColumnType::kString;
@@ -375,6 +383,18 @@ bool LevelAcceptsColumns(LevelType level, const std::vector<ColumnType>& types) 
     return true;
 }
 
+// Several string columns, each level choosing which one it reads. The shape a
+// field and a key derived from it take when they are ranked inside one
+// comparison, and the only multi-column shape whose levels are the ordinary
+// single-column ones.
+bool IsSeveralStrings(const std::vector<ColumnType>& types) {
+    if (types.size() < 2) return false;
+    for (const ColumnType type : types) {
+        if (type != ColumnType::kString) return false;
+    }
+    return true;
+}
+
 // Checked before the levels are, so a comparison over columns no level could ever
 // read together is reported as that rather than as whichever level first tripped
 // over it.
@@ -483,11 +503,13 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                 return false;
             }
             // A one-column level in the scalar-and-list shape reads one of the
-            // two, which is the one place a level's arity may be under the
+            // two, and one over several string columns reads the one it names.
+            // Those are the two places a level's arity may be under the
             // comparison's without that being a mistake.
             const size_t needs = LevelColumnCount(level.type);
-            const bool reads_one_of_two = needs == 1 && IsScalarAndList(column_types);
-            if (needs != 0 && needs != comparison.columns.size() && !reads_one_of_two) {
+            const bool picks_one = needs == 1 && (IsScalarAndList(column_types) ||
+                                                  IsSeveralStrings(column_types));
+            if (needs != 0 && needs != comparison.columns.size() && !picks_one) {
                 *error = "comparison \"" + comparison.name + "\" level \"" + type_name +
                          "\" reads " + std::to_string(needs) +
                          " column(s) but the comparison names " +
@@ -504,6 +526,35 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
             }
             if (entry.contains("label") && entry["label"].is_string()) {
                 level.label = entry["label"].get<std::string>();
+            }
+            if (entry.contains("column")) {
+                if (!entry["column"].is_string()) {
+                    *error = "comparison \"" + comparison.name + "\" level \"" +
+                             type_name + "\" has a \"column\" that is not a string";
+                    return false;
+                }
+                if (!IsSeveralStrings(column_types) || needs != 1) {
+                    *error = "comparison \"" + comparison.name + "\" level \"" +
+                             type_name +
+                             "\" names a column, which only a single-column level of "
+                             "a comparison over several string columns may do";
+                    return false;
+                }
+                const std::string wanted = entry["column"].get<std::string>();
+                size_t at = comparison.columns.size();
+                for (size_t i = 0; i < comparison.columns.size(); ++i) {
+                    if (comparison.columns[i] == wanted) at = i;
+                }
+                if (at == comparison.columns.size()) {
+                    *error = "comparison \"" + comparison.name + "\" level \"" +
+                             type_name + "\" reads column \"" + wanted +
+                             "\", which the comparison does not name";
+                    return false;
+                }
+                level.column = static_cast<uint8_t>(at);
+                // Two exact levels in one comparison would otherwise print as
+                // two rows reading "exact", so the default label says which.
+                if (level.label.empty()) level.label = level.Describe() + " on " + wanted;
             }
             comparison.levels.push_back(level);
         }

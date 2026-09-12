@@ -97,9 +97,12 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
             }
             const Column& column = store.column(index);
             if (const auto* typed = std::get_if<StringColumn>(&column)) {
-                bound.strings = typed;
+                if (bound.strings == nullptr) bound.strings = typed;
+                bound.slots.push_back({typed, nullptr});
             } else if (const auto* typed = std::get_if<DateColumn>(&column)) {
                 bound.dates = typed;
+            } else if (const auto* typed = std::get_if<BooleanColumn>(&column)) {
+                bound.booleans = typed;
             } else if (const auto* typed = std::get_if<StringListColumn>(&column)) {
                 bound.lists = typed;
             } else if (const auto* typed = std::get_if<DoubleColumn>(&column)) {
@@ -113,10 +116,14 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
         bool fuzzy = false;
         bool list_fuzzy = false;
         bool contains = false;
+        // Which slots a fuzzy level reads: a table is built only for those, since
+        // an exact level never touches a character and has no use for one.
+        std::vector<bool> slot_fuzzy(bound.slots.size(), false);
         for (const LevelSpec& level : spec.levels) {
             if (level.type == LevelType::kLevenshtein ||
                 level.type == LevelType::kJaroWinkler) {
                 fuzzy = true;
+                if (level.column < slot_fuzzy.size()) slot_fuzzy[level.column] = true;
             } else if (level.type == LevelType::kListLevenshtein ||
                        level.type == LevelType::kListJaroWinkler) {
                 list_fuzzy = true;
@@ -128,6 +135,7 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
                 fuzzy = true;
                 list_fuzzy = true;
                 contains = true;
+                if (!slot_fuzzy.empty()) slot_fuzzy[0] = true;
             } else if (level.type == LevelType::kListContains) {
                 contains = true;
             }
@@ -145,7 +153,12 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
             return tables_.back().get();
         };
         if (use_signatures && fuzzy && bound.strings != nullptr) {
-            bound.signatures = table_for(&bound.strings->dict);
+            for (size_t i = 0; i < bound.slots.size(); ++i) {
+                if (slot_fuzzy[i]) {
+                    bound.slots[i].signatures = table_for(&bound.slots[i].strings->dict);
+                }
+            }
+            bound.signatures = bound.slots.front().signatures;
         }
         if (use_signatures && list_fuzzy && bound.lists != nullptr) {
             bound.list_signatures = table_for(&bound.lists->dict);
@@ -195,10 +208,19 @@ bool ComparisonSet::IsNull(const BoundComparison& comparison, uint64_t row) cons
                comparison.lists->offsets[row + 1] == comparison.lists->offsets[row];
     }
     if (comparison.strings != nullptr) {
-        return comparison.strings->ids[row] == kNullId;
+        // Every string column the comparison names, so an address whose username
+        // is empty is missing for the whole comparison: a level reading either
+        // half would have nothing on one side, and null is not "else".
+        for (const BoundComparison::StringSlot& slot : comparison.slots) {
+            if (slot.strings->ids[row] == kNullId) return true;
+        }
+        return false;
     }
     if (comparison.dates != nullptr) {
         return comparison.dates->values[row] == kNullDate;
+    }
+    if (comparison.booleans != nullptr) {
+        return comparison.booleans->values[row] == kNullBoolean;
     }
     if (comparison.lists != nullptr) {
         return comparison.lists->offsets[row + 1] == comparison.lists->offsets[row];
@@ -217,6 +239,8 @@ bool ComparisonSet::IsNull(const BoundComparison& comparison, uint64_t row) cons
 bool ComparisonSet::StringLevelFires(const BoundComparison& comparison,
                                      const LevelSpec& level, uint32_t left,
                                      uint32_t right) const {
+    const BoundComparison::StringSlot& slot = comparison.slots[level.column];
+    const SignatureTable* signatures = slot.signatures;
     switch (level.type) {
         case LevelType::kExact:
             // A null equals nothing, not even another null.
@@ -229,32 +253,27 @@ bool ComparisonSet::StringLevelFires(const BoundComparison& comparison,
             // Two loads and two popcounts, and the strings are never touched. On a
             // candidate set this rejects the great majority of pairs, which is the
             // only reason the fuzzy levels are affordable at all.
-            if (comparison.signatures != nullptr &&
-                LevenshteinLowerBound(comparison.signatures->Mask(left),
-                                      comparison.signatures->Length(left),
-                                      comparison.signatures->Mask(right),
-                                      comparison.signatures->Length(right)) > limit) {
+            if (signatures != nullptr &&
+                LevenshteinLowerBound(signatures->Mask(left), signatures->Length(left),
+                                      signatures->Mask(right),
+                                      signatures->Length(right)) > limit) {
                 return false;
             }
-            return BoundedLevenshtein(comparison.strings->dict.Value(left),
-                                      comparison.strings->dict.Value(right),
-                                      limit) <= limit;
+            return BoundedLevenshtein(slot.strings->dict.Value(left),
+                                      slot.strings->dict.Value(right), limit) <= limit;
         }
 
         case LevelType::kJaroWinkler: {
             if (left == kNullId || right == kNullId) return false;
             if (left == right) return true;
-            if (comparison.signatures != nullptr &&
-                JaroWinklerUpperBound(comparison.signatures->Mask(left),
-                                      comparison.signatures->Length(left),
-                                      comparison.signatures->Mask(right),
-                                      comparison.signatures->Length(right)) <
-                    level.threshold) {
+            if (signatures != nullptr &&
+                JaroWinklerUpperBound(signatures->Mask(left), signatures->Length(left),
+                                      signatures->Mask(right),
+                                      signatures->Length(right)) < level.threshold) {
                 return false;
             }
-            return JaroWinklerAtLeast(comparison.strings->dict.Value(left),
-                                      comparison.strings->dict.Value(right),
-                                      level.threshold);
+            return JaroWinklerAtLeast(slot.strings->dict.Value(left),
+                                      slot.strings->dict.Value(right), level.threshold);
         }
 
         default:
@@ -417,20 +436,26 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
 
         case LevelType::kExact:
             if (comparison.strings != nullptr) {
-                return StringLevelFires(comparison, level, comparison.strings->ids[a],
-                                        comparison.strings->ids[b]);
+                const StringColumn& strings = *comparison.slots[level.column].strings;
+                return StringLevelFires(comparison, level, strings.ids[a],
+                                        strings.ids[b]);
             }
             if (comparison.dates != nullptr) {
                 const int32_t left = comparison.dates->values[a];
                 return left != kNullDate && left == comparison.dates->values[b];
             }
+            if (comparison.booleans != nullptr) {
+                const int8_t left = comparison.booleans->values[a];
+                return left != kNullBoolean && left == comparison.booleans->values[b];
+            }
             if (comparison.lists != nullptr) return SameSet(*comparison.lists, a, b);
             return false;
 
         case LevelType::kLevenshtein:
-        case LevelType::kJaroWinkler:
-            return StringLevelFires(comparison, level, comparison.strings->ids[a],
-                                    comparison.strings->ids[b]);
+        case LevelType::kJaroWinkler: {
+            const StringColumn& strings = *comparison.slots[level.column].strings;
+            return StringLevelFires(comparison, level, strings.ids[a], strings.ids[b]);
+        }
 
         case LevelType::kDateWithin: {
             const int32_t left = comparison.dates->values[a];
@@ -521,29 +546,29 @@ bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, const LevelSpe
             return LevelFires(comparison, level, a, b);
 
         case LevelType::kLevenshtein: {
-            const uint32_t left = comparison.strings->ids[a];
-            const uint32_t right = comparison.strings->ids[b];
+            const BoundComparison::StringSlot& slot = comparison.slots[level.column];
+            const uint32_t left = slot.strings->ids[a];
+            const uint32_t right = slot.strings->ids[b];
             if (left == kNullId || right == kNullId) return false;
             if (left == right) return true;
-            if (comparison.signatures == nullptr) return true;
-            return LevenshteinLowerBound(comparison.signatures->Mask(left),
-                                         comparison.signatures->Length(left),
-                                         comparison.signatures->Mask(right),
-                                         comparison.signatures->Length(right)) <=
+            if (slot.signatures == nullptr) return true;
+            return LevenshteinLowerBound(
+                       slot.signatures->Mask(left), slot.signatures->Length(left),
+                       slot.signatures->Mask(right), slot.signatures->Length(right)) <=
                    static_cast<int>(level.threshold);
         }
 
         case LevelType::kJaroWinkler: {
-            const uint32_t left = comparison.strings->ids[a];
-            const uint32_t right = comparison.strings->ids[b];
+            const BoundComparison::StringSlot& slot = comparison.slots[level.column];
+            const uint32_t left = slot.strings->ids[a];
+            const uint32_t right = slot.strings->ids[b];
             if (left == kNullId || right == kNullId) return false;
             if (left == right) return true;
-            if (comparison.signatures == nullptr) return true;
-            return JaroWinklerUpperBound(comparison.signatures->Mask(left),
-                                         comparison.signatures->Length(left),
-                                         comparison.signatures->Mask(right),
-                                         comparison.signatures->Length(right)) >=
-                   level.threshold;
+            if (slot.signatures == nullptr) return true;
+            return JaroWinklerUpperBound(
+                       slot.signatures->Mask(left), slot.signatures->Length(left),
+                       slot.signatures->Mask(right),
+                       slot.signatures->Length(right)) >= level.threshold;
         }
 
         case LevelType::kGeoWithin: {

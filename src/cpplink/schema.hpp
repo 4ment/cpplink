@@ -15,6 +15,7 @@ enum class ColumnType {
     kStringList,  // CSR of interned ids, sorted and deduplicated per row
     kDate,        // days since 1970-01-01
     kDouble,      // stored as-is; neither interned nor counted
+    kBoolean,     // one byte per row, counted: two values and a null
 };
 
 const char* ColumnTypeName(ColumnType type);
@@ -22,20 +23,25 @@ bool ParseColumnType(const std::string& name, ColumnType* type);
 
 // Term frequencies are kept only where exact agreement on a value is a discrete
 // event worth counting. Two doubles agreeing to the last bit says nothing useful,
-// so kDouble carries no counts and cannot drive rare-value blocking.
+// so kDouble carries no counts and cannot drive rare-value blocking. A boolean is
+// the smallest countable column there is: agreeing on the value one row in a
+// hundred carries is evidence, agreeing on the other is nearly none, and the two
+// counts are what price the difference.
 bool HasTermFrequencies(ColumnType type);
 
 // A value transform applied at load to build a derived column. Each has an input
 // type and an output type, so a chain of them type-checks like a pipeline and the
 // derived column's type is decided by the last one rather than declared.
 enum class Transform {
-    kNormalize,     // lowercase, and every byte that is not alphanumeric a space
-    kSortedTokens,  // whitespace-separated tokens, sorted and rejoined
-    kSoundex,       // the four-character American Soundex key
-    kYear,          // a date's year
-    kMonth,         // its month, zero-padded
-    kDay,           // its day of the month, zero-padded
-    kYearMonth,     // its year and month, as "1987-03"
+    kNormalize,      // lowercase, and every byte that is not alphanumeric a space
+    kSortedTokens,   // whitespace-separated tokens, sorted and rejoined
+    kSoundex,        // the four-character American Soundex key
+    kYear,           // a date's year
+    kMonth,          // its month, zero-padded
+    kDay,            // its day of the month, zero-padded
+    kYearMonth,      // its year and month, as "1987-03"
+    kEmailUsername,  // the part before the first "@", or the whole value without one
+    kEmailDomain,    // the part after the last "@"; nothing without one
 };
 
 const char* TransformName(Transform transform);
@@ -105,10 +111,19 @@ enum class LevelType {
 const char* LevelTypeName(LevelType type);
 bool ParseLevelType(const std::string& name, LevelType* type);
 
+// A level reads the comparison's columns. Where the comparison names several
+// string columns, a single-column level reads the one `column` indexes -- the
+// first by default -- which is what lets one comparison rank an exact match on a
+// field above an exact match on a key derived from it and a fuzzy match on
+// either below both, as splink's email comparison does over the address and its
+// username. Levels are ordered evidence about one field, so that has to be one
+// comparison and not several: split up, "the addresses agree" and "the usernames
+// agree" would be counted as independent evidence about the same characters.
 struct LevelSpec {
     LevelType type = LevelType::kElse;
     double threshold = 0.0;
-    std::string label;  // defaults to a description of type and threshold
+    std::string label;   // defaults to a description of type and threshold
+    uint8_t column = 0;  // index into the comparison's columns
 
     std::string Describe() const;
 };

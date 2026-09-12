@@ -43,14 +43,26 @@ std::string ValueOf(const BoundComparison& comparison, uint64_t row) {
         return ValueOf(scalar, row) + " in " + ValueOf(list, row);
     }
     if (comparison.strings != nullptr) {
-        const uint32_t id = comparison.strings->ids[row];
-        if (id == kNullId) return "<null>";
-        return std::string(comparison.strings->dict.Value(id));
+        // Every string column the comparison names, so an address and its
+        // username both show and the level charged can be checked against
+        // whichever it read.
+        std::string out;
+        for (const BoundComparison::StringSlot& slot : comparison.slots) {
+            if (!out.empty()) out += " / ";
+            const uint32_t id = slot.strings->ids[row];
+            out += id == kNullId ? "<null>" : std::string(slot.strings->dict.Value(id));
+        }
+        return out;
     }
     if (comparison.dates != nullptr) {
         const int32_t value = comparison.dates->values[row];
         if (value == kNullDate) return "<null>";
         return std::to_string(value) + "d";
+    }
+    if (comparison.booleans != nullptr) {
+        const int8_t value = comparison.booleans->values[row];
+        if (value == kNullBoolean) return "<null>";
+        return value != 0 ? "true" : "false";
     }
     if (comparison.numbers != nullptr) {
         const double value = comparison.numbers->values[row];
@@ -214,7 +226,7 @@ void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& compariso
             out << "\nTerm frequency, for the comparisons that moved the weight:\n";
             any = true;
         }
-        const uint32_t frequency = scorer.FrequencyFor(i, a);
+        const uint32_t frequency = scorer.FrequencyFor(i, gamma, a);
         const double share =
             store.NumRecords() > 0
                 ? static_cast<double>(frequency) / static_cast<double>(store.NumRecords())

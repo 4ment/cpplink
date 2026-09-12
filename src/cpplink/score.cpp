@@ -45,6 +45,11 @@ uint32_t TermFrequencyAdjustment::Frequency(uint64_t row) const {
         if (value == kNullDate) return 0;
         return dates->tf[static_cast<size_t>(value - dates->tf_origin)];
     }
+    if (booleans != nullptr) {
+        const int8_t value = booleans->values[row];
+        if (value == kNullBoolean) return 0;
+        return booleans->tf[static_cast<size_t>(value)];
+    }
     return 0;
 }
 
@@ -150,54 +155,61 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
             }
         }
 
-        TermFrequencyAdjustment adjustment;
-        adjustment.comparison = c;
-        adjustment.damping = options.tf_damping;
-        bool has_exact = false;
-        for (size_t l = 0; l < spec.levels.size(); ++l) {
-            if (spec.levels[l].type == LevelType::kExact) {
-                adjustment.level = static_cast<uint8_t>(l);
-                adjustment.log_u_times_records = std::log2(learned.levels[l].u * records);
-                has_exact = true;
-                break;
-            }
-        }
-        // A list column's term frequencies count values, not sets, so an exact
-        // level over a whole set has no frequency to look up. Doubles have no
-        // frequencies at all. Both simply get no adjustment.
+        // The exact levels, each over the column it reads. A comparison over one
+        // column has one; one over an address and its username has two, and the
+        // second is adjusted by how common the username is, which is the only
+        // frequency it can be adjusted by. A list column's term frequencies
+        // count values, not sets, so an exact level over a whole set has no
+        // frequency to look up. Doubles have no frequencies at all. Both simply
+        // get no adjustment. A boolean's two counts are an adjustment of the
+        // same kind as any other, and the one that matters most on such a
+        // column: agreeing on the rare value is most of what it can say.
         const BoundComparison& bound = comparisons.at(c);
-        if (bound.strings != nullptr && bound.lists == nullptr) {
-            adjustment.strings = bound.strings;
-        } else if (bound.dates != nullptr && bound.lists == nullptr) {
-            adjustment.dates = bound.dates;
-        }
-        if (!has_exact ||
-            (adjustment.strings == nullptr && adjustment.dates == nullptr)) {
-            continue;
-        }
+        for (size_t l = 0; l < spec.levels.size(); ++l) {
+            if (spec.levels[l].type != LevelType::kExact) continue;
+            TermFrequencyAdjustment adjustment;
+            adjustment.comparison = c;
+            adjustment.damping = options.tf_damping;
+            adjustment.level = static_cast<uint8_t>(l);
+            adjustment.log_u_times_records = std::log2(learned.levels[l].u * records);
+            if (bound.strings != nullptr && bound.lists == nullptr) {
+                adjustment.strings = bound.slots[spec.levels[l].column].strings;
+            } else if (bound.dates != nullptr && bound.lists == nullptr) {
+                adjustment.dates = bound.dates;
+            } else if (bound.booleans != nullptr && bound.lists == nullptr) {
+                adjustment.booleans = bound.booleans;
+            }
+            const std::vector<uint32_t>* tf = nullptr;
+            if (adjustment.strings != nullptr) {
+                tf = &adjustment.strings->tf;
+            } else if (adjustment.dates != nullptr) {
+                tf = &adjustment.dates->tf;
+            } else if (adjustment.booleans != nullptr) {
+                tf = &adjustment.booleans->tf;
+            }
+            if (tf == nullptr) break;
 
-        // The bracket. delta_max comes from the rarest value the column holds and
-        // delta_min from the most common, so it brackets every pair that can
-        // occur. Both are exact, which is what makes the drop and emit decisions
-        // give bit-identical output to scoring everything.
-        uint32_t rarest = std::numeric_limits<uint32_t>::max();
-        uint32_t commonest = 0;
-        const std::vector<uint32_t>& tf =
-            adjustment.strings != nullptr ? adjustment.strings->tf : adjustment.dates->tf;
-        for (const uint32_t frequency : tf) {
-            if (frequency == 0) continue;
-            rarest = std::min(rarest, frequency);
-            commonest = std::max(commonest, frequency);
+            // The bracket. delta_max comes from the rarest value the column holds
+            // and delta_min from the most common, so it brackets every pair that
+            // can occur. Both are exact, which is what makes the drop and emit
+            // decisions give bit-identical output to scoring everything.
+            uint32_t rarest = std::numeric_limits<uint32_t>::max();
+            uint32_t commonest = 0;
+            for (const uint32_t frequency : *tf) {
+                if (frequency == 0) continue;
+                rarest = std::min(rarest, frequency);
+                commonest = std::max(commonest, frequency);
+            }
+            if (commonest == 0) continue;  // the column is entirely null
+            adjustment.delta_max =
+                adjustment.damping *
+                (adjustment.log_u_times_records - std::log2(static_cast<double>(rarest)));
+            adjustment.delta_min =
+                adjustment.damping * (adjustment.log_u_times_records -
+                                      std::log2(static_cast<double>(commonest)));
+            adjustment.active = true;
+            adjustments_.push_back(adjustment);
         }
-        if (commonest == 0) continue;  // the column is entirely null
-        adjustment.delta_max =
-            adjustment.damping *
-            (adjustment.log_u_times_records - std::log2(static_cast<double>(rarest)));
-        adjustment.delta_min =
-            adjustment.damping *
-            (adjustment.log_u_times_records - std::log2(static_cast<double>(commonest)));
-        adjustment.active = true;
-        adjustments_.push_back(adjustment);
     }
 
     // The two-way corrections, resolved to comparison indices once. A term names
@@ -454,11 +466,11 @@ bool Scorer::AdjustsFuzzyLevels() const {
     return false;
 }
 
-uint32_t Scorer::FrequencyFor(size_t comparison, uint64_t row) const {
+uint32_t Scorer::FrequencyFor(size_t comparison, uint32_t gamma, uint64_t row) const {
     for (const TermFrequencyAdjustment& adjustment : adjustments_) {
-        if (adjustment.comparison == comparison && !adjustment.fuzzy) {
-            return adjustment.Frequency(row);
-        }
+        if (adjustment.comparison != comparison || adjustment.fuzzy) continue;
+        if (comparisons_->LevelOf(gamma, comparison) != adjustment.level) continue;
+        return adjustment.Frequency(row);
     }
     return 0;
 }

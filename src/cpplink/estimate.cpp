@@ -89,6 +89,8 @@ bool WithinDatasetCollisions(const RecordStore& store, const BoundComparison& bo
         values = bound.strings->tf.size();
     } else if (bound.dates != nullptr) {
         values = bound.dates->tf.size();
+    } else if (bound.booleans != nullptr) {
+        values = bound.booleans->tf.size();
     } else {
         return false;
     }
@@ -102,11 +104,14 @@ bool WithinDatasetCollisions(const RecordStore& store, const BoundComparison& bo
             if (bound.strings != nullptr) {
                 const uint32_t id = bound.strings->ids[row];
                 if (id != kNullId) ++counts[id];
-            } else {
+            } else if (bound.dates != nullptr) {
                 const int32_t date = bound.dates->values[row];
                 if (date != kNullDate) {
                     ++counts[static_cast<size_t>(date - bound.dates->tf_origin)];
                 }
+            } else {
+                const int8_t flag = bound.booleans->values[row];
+                if (flag != kNullBoolean) ++counts[static_cast<size_t>(flag)];
             }
         }
         for (const uint32_t count : counts) {
@@ -116,6 +121,48 @@ bool WithinDatasetCollisions(const RecordStore& store, const BoundComparison& bo
     }
     *total = sum.Total();
     return true;
+}
+
+// The same second moment for an exact level of a comparison over several string
+// columns, which cannot come off the term frequencies: the level reads one column
+// but the comparison is null wherever *any* of them is, so the rows that can agree
+// on the level's column are the rows where the whole comparison is present. One
+// pass over the rows counts exactly those, per value and per input, and hands
+// back the three sums the dedup and link forms need. It is the shape the email
+// comparison takes, and it matters there more than anywhere: an address is the
+// column whose u sits near 1/N, where a sampled u has nothing to see.
+void RestrictedCollisions(const RecordStore& store, const ComparisonSet& comparisons,
+                          size_t index, const StringColumn& column, double* total_sq,
+                          double* present, double* within_sq) {
+    const size_t datasets = store.NumDatasets();
+    const size_t values = column.tf.size();
+    std::vector<uint32_t> pooled(values, 0);
+    std::vector<uint32_t> counts;
+    Neumaier within;
+    for (size_t d = 0; d < datasets; ++d) {
+        counts.assign(values, 0);
+        const uint64_t end = store.DatasetEnd(d);
+        for (uint64_t row = store.DatasetStart(d); row < end; ++row) {
+            if (comparisons.IsNullValue(index, row)) continue;
+            const uint32_t id = column.ids[row];
+            ++counts[id];
+            ++pooled[id];
+        }
+        for (const uint32_t count : counts) {
+            const double n = static_cast<double>(count);
+            within.Add(n * n);
+        }
+    }
+    Neumaier squares;
+    Neumaier rows;
+    for (const uint32_t count : pooled) {
+        const double n = static_cast<double>(count);
+        squares.Add(n * n);
+        rows.Add(n);
+    }
+    *total_sq = squares.Total();
+    *present = rows.Total();
+    *within_sq = within.Total();
 }
 
 bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t index,
@@ -183,17 +230,31 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
         return true;
     }
     if (levels[level].type != LevelType::kExact) return false;
-    if (bound.spec->columns.size() != 1 || bound.lists != nullptr) return false;
+    if (bound.lists != nullptr) return false;
     // Only a null level may sit above it, or equality is not the level's event.
     for (size_t l = 0; l < level; ++l) {
         if (levels[l].type != LevelType::kNull) return false;
     }
+
+    if (bound.slots.size() > 1) {
+        double total_sq = 0.0;
+        double present = 0.0;
+        double within_sq = 0.0;
+        RestrictedCollisions(store, comparisons, index,
+                             *bound.slots[levels[level].column].strings, &total_sq,
+                             &present, &within_sq);
+        *value = (total_sq - (cross ? within_sq : present)) / space;
+        return true;
+    }
+    if (bound.spec->columns.size() != 1) return false;
 
     const std::vector<uint32_t>* tf = nullptr;
     if (bound.strings != nullptr) {
         tf = &bound.strings->tf;
     } else if (bound.dates != nullptr) {
         tf = &bound.dates->tf;
+    } else if (bound.booleans != nullptr) {
+        tf = &bound.booleans->tf;
     }
     if (tf == nullptr) return false;
 

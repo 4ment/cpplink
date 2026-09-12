@@ -29,6 +29,7 @@ const std::vector<uint32_t>* BlockingPlan::Frequencies(const BoundSource& source
     if (source.strings != nullptr) return &source.strings->tf;
     if (source.lists != nullptr) return &source.lists->tf;
     if (source.dates != nullptr) return &source.dates->tf;
+    if (source.booleans != nullptr) return &source.booleans->tf;
     return nullptr;
 }
 
@@ -62,6 +63,19 @@ uint64_t BlockingPlan::KeyOf(size_t source_index, uint64_t row) const {
             return kNoKey;
         }
         return DateKey(value);
+    }
+    if (source.booleans != nullptr) {
+        // Two values, so the groups are the two halves of the file: priced by
+        // CountPairs like any other value source, and a cap refuses them the
+        // moment either half is larger than it.
+        const int8_t value = source.booleans->values[row];
+        if (value == kNullBoolean) return kNoKey;
+        const uint32_t frequency = source.booleans->tf[static_cast<size_t>(value)];
+        if (frequency < 2) return kNoKey;
+        if (source.max_frequency != 0 && frequency > source.max_frequency) {
+            return kNoKey;
+        }
+        return static_cast<uint64_t>(value);
     }
     return kNoKey;
 }
@@ -104,7 +118,25 @@ uint64_t BlockingPlan::CountPairs(size_t source_index) const {
     const BoundSource& source = sources_[source_index];
     if (source.kind == SourceKind::kAllPairs) return CountAllPairs();
     if (mode_ == PairMode::kCrossDataset) return CountCrossPairs(source_index);
+    return CountPooledPairs(source_index);
+}
 
+uint64_t BlockingPlan::ApproximatePairs(size_t source_index, bool* exact) const {
+    const BoundSource& source = sources_[source_index];
+    // Windows are counted by a prefix sum over the sorted order the source already
+    // holds, so only a keyed source pays a sort for its cross count.
+    *exact = mode_ != PairMode::kCrossDataset || source.kind == SourceKind::kAllPairs ||
+             source.kind == SourceKind::kSortedNeighbourhood;
+    if (*exact) return CountPairs(source_index);
+    const double all = static_cast<double>(PairsIn(rows_));
+    if (all <= 0.0) return 0;
+    const double cross = static_cast<double>(CountAllPairs());
+    return static_cast<uint64_t>(
+        static_cast<double>(CountPooledPairs(source_index)) * cross / all + 0.5);
+}
+
+uint64_t BlockingPlan::CountPooledPairs(size_t source_index) const {
+    const BoundSource& source = sources_[source_index];
     if (source.kind == SourceKind::kSortedNeighbourhood) {
         const uint64_t count = source.order.size();
         if (count < 2) return 0;
@@ -317,10 +349,13 @@ bool BlockingPlan::BuildValueSource(const BlockingSpec& spec, const RecordStore&
             source.dates = typed;
         } else if (const auto* typed = std::get_if<StringListColumn>(&column)) {
             source.lists = typed;
+        } else if (const auto* typed = std::get_if<BooleanColumn>(&column)) {
+            source.booleans = typed;
         }
         break;
     }
-    if (source.strings == nullptr && source.dates == nullptr) {
+    if (source.strings == nullptr && source.dates == nullptr &&
+        source.booleans == nullptr) {
         *error = "blocking source \"" + spec.name + "\" cannot block on column \"" +
                  spec.column + "\"";
         return false;
@@ -390,6 +425,16 @@ bool BlockingPlan::BuildSortedNeighbourhood(const BlockingSpec& spec,
         column_index = i;
         strings = std::get_if<StringColumn>(&store.column(i));
         dates = std::get_if<DateColumn>(&store.column(i));
+        if (std::holds_alternative<BooleanColumn>(store.column(i))) {
+            // Sorting a boolean puts every row into one of two runs in file
+            // order, so a window over it pairs a row with whatever happened to be
+            // loaded beside it. A value source over the same column is the thing
+            // it would be approximating, and that one is exact.
+            *error = "sorted_neighbourhood blocking on \"" + spec.column +
+                     "\" has no order to exploit: a boolean holds two values, so "
+                     "use exact_value or rare_value instead";
+            return false;
+        }
         break;
     }
     if (strings == nullptr && dates == nullptr) {

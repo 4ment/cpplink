@@ -38,12 +38,14 @@ Planted duplicate pairs listed in examples/sample.truth.csv
 
 ## What it writes
 
-Nine columns, matching [`examples/sample_schema.json`](../reference/schema.md):
+Ten columns, matching [`examples/sample_schema.json`](../reference/schema.md), which also
+declares an `email_username` column derived from `email` at load:
 
 | Column | Type | Shape |
 | --- | --- | --- |
 | `id` | string | `r0`, `r1`, … — the `unique_id` |
 | `first_name`, `last_name` | string | Zipf-distributed, so the frequency skew is realistic |
+| `gender` | string | two values close to even, missing on 3% of rows |
 | `dob` | date | low cardinality, ~21k distinct values |
 | `email`, `phone` | string | near-unique, ~1.65M distinct over 1.8M rows |
 | `postcode` | string | 9,000 distinct |
@@ -51,14 +53,21 @@ Nine columns, matching [`examples/sample_schema.json`](../reference/schema.md):
 | `address_tokens` | string_list | ~4.5 elements a row |
 
 That mix is the point: it exercises the near-unique dictionaries that dominate memory, the
-low-cardinality columns that break rare-value blocking, a list column, a date, and a
-double pair that carries no term frequencies.
+low-cardinality columns that break rare-value blocking, a boolean, a list column, a date, and
+a double pair that carries no term frequencies.
+
+An address is a username drawn from the names and a four-digit suffix under one of six
+domains, skewed so the first takes about half the rows the way one provider does: 933k
+distinct addresses over 920k distinct usernames at 1M rows, so usernames do collide across
+domains and the username level has a `u` above the floor.
 
 **Duplicates are corrupted copies of earlier rows.** The corruption model drops `email` 35% of
 the time and `phone` 25%, independently, perturbs coordinates, and introduces typos into names
 — which is why the [measured blocking findings](../blocking.md) lean the way they do, and why
 they carry a caveat: real data with weaker identifiers would shift the balance back toward
-fuzzy sources.
+fuzzy sources. Of the addresses it keeps, one in four keeps its username under a different
+domain, which is the pair the email comparison's username level exists for. `gender` is
+dropped on 5% of duplicates and flipped on 2%.
 
 !!! note "Records are generated from their row index"
     Deterministically, so a duplicate can reproduce its original exactly without either being

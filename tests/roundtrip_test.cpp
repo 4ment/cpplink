@@ -382,6 +382,135 @@ TEST_F(RoundTrip, ListValuesAreSortedAndDeduplicatedPerRow) {
     }
 }
 
+// The boolean column and the email comparison the sample now exists to exercise.
+// gender is the boolean; email_username is derived from the address at load, and
+// the comparison ranks an exact address above an exact username above a fuzzy
+// match on either, which is where a duplicate that moved provider lands.
+constexpr const char* kFlagAndEmailSchema = R"({
+  "unique_id": "id",
+  "columns": [
+    {"name": "gender", "type": "boolean"},
+    {"name": "email", "type": "string"},
+    {"name": "email_username", "derive": {"from": "email", "transform": "email_username"}},
+    {"name": "email_domain", "derive": {"from": "email", "transform": "email_domain"}}
+  ],
+  "comparisons": [
+    {"name": "gender", "columns": ["gender"], "term_frequency": true, "levels": [
+      {"type": "null"}, {"type": "exact"}, {"type": "else"}]},
+    {"name": "email", "columns": ["email", "email_username"], "levels": [
+      {"type": "null"},
+      {"type": "exact"},
+      {"type": "exact", "column": "email_username"},
+      {"type": "jaro_winkler", "threshold": 0.93},
+      {"type": "jaro_winkler", "threshold": 0.93, "column": "email_username"},
+      {"type": "else"}]}
+  ]
+})";
+
+TEST_F(RoundTrip, GenderIsABooleanWithNullsAndBothValues) {
+    cpplink::SampleOptions options;
+    options.rows = 4000;
+    options.row_group_size = 1000;
+    options.truth_path.clear();
+
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kFlagAndEmailSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
+
+    const auto& gender = std::get<cpplink::BooleanColumn>(store.column(0));
+    ASSERT_EQ(gender.values.size(), 4000u);
+    ASSERT_EQ(gender.tf.size(), 2u);
+    EXPECT_EQ(store.DistinctValues(0), 2u);
+    // Missing on a few percent of rows, and otherwise close to even.
+    const double nulls = static_cast<double>(store.NullCount(0)) / 4000.0;
+    EXPECT_GT(nulls, 0.01);
+    EXPECT_LT(nulls, 0.10);
+    const double set = static_cast<double>(gender.tf[1]) /
+                       static_cast<double>(gender.tf[0] + gender.tf[1]);
+    EXPECT_GT(set, 0.40);
+    EXPECT_LT(set, 0.60);
+}
+
+// A duplicate that kept its username under another domain is the one pair the
+// exact address level cannot see and the username level can, and the sample
+// plants enough of them to measure. The domain pool itself is skewed the way one
+// provider dominates real data, which is what the derived domain column shows.
+TEST_F(RoundTrip, SomeDuplicatesKeepTheirUsernameUnderAnotherDomain) {
+    cpplink::SampleOptions options;
+    options.rows = 6000;
+    options.row_group_size = 6000;
+    options.duplicate_rate = 0.2;
+    options.truth_path = truth_;
+
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kFlagAndEmailSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+    cpplink::TruthPairs truth;
+    ASSERT_TRUE(cpplink::LoadTruthPairs(truth_, store, &truth, &error)) << error;
+    ASSERT_GT(truth.rows.size(), 500u);
+
+    const auto& domain = std::get<cpplink::StringColumn>(store.column(3));
+    EXPECT_GE(store.DistinctValues(3), 4u);
+    uint32_t top = 0;
+    for (const uint32_t count : domain.tf) top = std::max(top, count);
+    const double top_share = static_cast<double>(top) /
+                             static_cast<double>(store.NumRecords() - store.NullCount(3));
+    EXPECT_GT(top_share, 0.35);
+    EXPECT_LT(top_share, 0.65);
+
+    // Over the planted pairs: whole address kept, username kept under another
+    // domain, or the address dropped on one side. Every planted address either
+    // survives whole, moves domain, or goes missing; nothing else touches it, so
+    // the fuzzy levels have no pair to fire on here.
+    uint64_t whole = 0;
+    uint64_t moved = 0;
+    uint64_t missing = 0;
+    for (const auto& pair : truth.rows) {
+        switch (comparisons.EvaluateOne(1, pair.first, pair.second)) {
+            case 0:
+                ++missing;
+                break;
+            case 1:
+                ++whole;
+                break;
+            case 2:
+                ++moved;
+                EXPECT_NE(domain.ids[pair.first], domain.ids[pair.second]);
+                break;
+            default:
+                ADD_FAILURE() << "pair " << pair.first << "," << pair.second
+                              << " reached a fuzzy or else level";
+        }
+    }
+    const double total = static_cast<double>(truth.rows.size());
+    EXPECT_NEAR(static_cast<double>(missing) / total, 0.35, 0.05);
+    EXPECT_NEAR(static_cast<double>(moved) / total, 0.65 * 0.25, 0.05);
+    EXPECT_NEAR(static_cast<double>(whole) / total, 0.65 * 0.75, 0.05);
+
+    // And the flag agrees on nearly every planted pair: flipped on two percent,
+    // dropped on five.
+    uint64_t agree = 0;
+    uint64_t present = 0;
+    for (const auto& pair : truth.rows) {
+        const uint8_t level = comparisons.EvaluateOne(0, pair.first, pair.second);
+        if (level == 0) continue;
+        ++present;
+        if (level == 1) ++agree;
+    }
+    ASSERT_GT(present, 0u);
+    EXPECT_GT(static_cast<double>(agree) / static_cast<double>(present), 0.95);
+}
+
 TEST_F(RoundTrip, PlantedDuplicatesAreRecordedAsGroundTruth) {
     cpplink::SampleOptions options;
     options.rows = 4000;
