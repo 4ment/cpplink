@@ -59,6 +59,7 @@ cpplink is told what is in the data with a JSON schema, see [examples/sample_sch
   "unique_id": "id",
   "columns": [
     {"name": "last_name",      "type": "string"},
+    {"name": "gender",         "type": "string"},
     {"name": "dob",            "type": "date"},
     {"name": "latitude",       "type": "double"},
     {"name": "address_tokens", "type": "string_list"}
@@ -66,8 +67,8 @@ cpplink is told what is in the data with a JSON schema, see [examples/sample_sch
 }
 ```
 
-`string` columns are interned to dense `uint32` ids, `string_list` columns are stored as CSR with each row sorted, `date` is days since the epoch, and `double` is stored as-is.
-Only the first three carry term frequencies: exact agreement between two doubles is not a discrete event worth counting, so a `double` column cannot drive rare-value blocking.
+`string` columns are interned to dense `uint32` ids, `string_list` columns are stored as CSR with each row sorted, `date` is days since the epoch, `boolean` is one byte a row with two term-frequency counts, and `double` is stored as-is.
+Only `double` carries no term frequencies: exact agreement between two doubles is not a discrete event worth counting, so a `double` column cannot drive rare-value blocking.
 
 A column can also be derived from another rather than read from the file, which is cheap here because interning makes an exact level on a derived key an integer equality and the transform runs once per distinct value rather than once per row:
 

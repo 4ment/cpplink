@@ -10,12 +10,23 @@
       "type": "string"
     },
     {
+      "name": "gender",
+      "type": "string"
+    },
+    {
       "name": "dob",
       "type": "date"
     },
     {
       "name": "email",
       "type": "string"
+    },
+    {
+      "name": "email_username",
+      "derive": {
+        "from": "email",
+        "transform": "email_username"
+      }
     },
     {
       "name": "phone",
@@ -92,6 +103,24 @@
       ]
     },
     {
+      "name": "gender",
+      "columns": [
+        "gender"
+      ],
+      "term_frequency": true,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
       "name": "dob",
       "columns": [
         "dob"
@@ -121,7 +150,8 @@
     {
       "name": "email",
       "columns": [
-        "email"
+        "email",
+        "email_username"
       ],
       "term_frequency": true,
       "levels": [
@@ -132,8 +162,17 @@
           "type": "exact"
         },
         {
+          "type": "exact",
+          "column": "email_username"
+        },
+        {
           "type": "jaro_winkler",
           "threshold": 0.93
+        },
+        {
+          "type": "jaro_winkler",
+          "threshold": 0.93,
+          "column": "email_username"
         },
         {
           "type": "else"

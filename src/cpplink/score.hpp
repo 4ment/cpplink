@@ -56,6 +56,7 @@ struct TermFrequencyAdjustment {
 
     const StringColumn* strings = nullptr;
     const DateColumn* dates = nullptr;
+    const BooleanColumn* booleans = nullptr;
     const BallMassTable* ball = nullptr;
 
     // log2(u / p) for the pair, damped: p is the shared value's frequency on an

@@ -34,6 +34,7 @@ struct BoundSource {
 
     const StringColumn* strings = nullptr;
     const DateColumn* dates = nullptr;
+    const BooleanColumn* booleans = nullptr;
     const StringListColumn* lists = nullptr;
     uint32_t max_frequency = 0;  // 0 means no cap
 

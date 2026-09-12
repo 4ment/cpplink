@@ -101,6 +101,8 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
                 bound.slots.push_back({typed, nullptr});
             } else if (const auto* typed = std::get_if<DateColumn>(&column)) {
                 bound.dates = typed;
+            } else if (const auto* typed = std::get_if<BooleanColumn>(&column)) {
+                bound.booleans = typed;
             } else if (const auto* typed = std::get_if<StringListColumn>(&column)) {
                 bound.lists = typed;
             } else if (const auto* typed = std::get_if<DoubleColumn>(&column)) {
@@ -216,6 +218,9 @@ bool ComparisonSet::IsNull(const BoundComparison& comparison, uint64_t row) cons
     }
     if (comparison.dates != nullptr) {
         return comparison.dates->values[row] == kNullDate;
+    }
+    if (comparison.booleans != nullptr) {
+        return comparison.booleans->values[row] == kNullBoolean;
     }
     if (comparison.lists != nullptr) {
         return comparison.lists->offsets[row + 1] == comparison.lists->offsets[row];
@@ -438,6 +443,10 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
             if (comparison.dates != nullptr) {
                 const int32_t left = comparison.dates->values[a];
                 return left != kNullDate && left == comparison.dates->values[b];
+            }
+            if (comparison.booleans != nullptr) {
+                const int8_t left = comparison.booleans->values[a];
+                return left != kNullBoolean && left == comparison.booleans->values[b];
             }
             if (comparison.lists != nullptr) return SameSet(*comparison.lists, a, b);
             return false;

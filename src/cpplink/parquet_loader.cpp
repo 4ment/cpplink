@@ -96,6 +96,21 @@ bool AppendDoubles(const arrow::Array& array, DoubleColumn* column, std::string*
     return false;
 }
 
+bool AppendBooleans(const arrow::Array& array, BooleanColumn* column,
+                    std::string* error) {
+    if (array.type_id() == arrow::Type::BOOL) {
+        const auto& typed = static_cast<const arrow::BooleanArray&>(array);
+        for (int64_t i = 0; i < typed.length(); ++i) {
+            column->values.push_back(typed.IsNull(i)  ? kNullBoolean
+                                     : typed.Value(i) ? int8_t{1}
+                                                      : int8_t{0});
+        }
+        return true;
+    }
+    *error = "expected a boolean column, found " + array.type()->ToString();
+    return false;
+}
+
 bool AppendStrings(const arrow::Array& array, StringColumn* column, std::string* error) {
     if (array.type_id() != arrow::Type::STRING) {
         *error = "expected a string column, found " + array.type()->ToString();
@@ -170,6 +185,9 @@ bool AppendColumn(const arrow::ChunkedArray& chunked, ColumnType type, Column* c
                 break;
             case ColumnType::kDate:
                 ok = AppendDates(*chunk, &std::get<DateColumn>(*column), error);
+                break;
+            case ColumnType::kBoolean:
+                ok = AppendBooleans(*chunk, &std::get<BooleanColumn>(*column), error);
                 break;
             case ColumnType::kDouble:
                 ok = AppendDoubles(*chunk, &std::get<DoubleColumn>(*column), error);

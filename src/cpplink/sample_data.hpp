@@ -22,9 +22,9 @@ struct SampleOptions {
 };
 
 // Writes a parquet file with the column mix cpplink is aimed at: high-cardinality
-// email and phone, Zipf-distributed names and postcodes, a date, a coordinate pair
-// and a list column. A configurable share of rows are corrupted copies of earlier
-// rows, which is what makes the file usable for later phases as well as this one.
+// email and phone, Zipf-distributed names and postcodes, a boolean, a date, a
+// coordinate pair and a list column. A configurable share of rows are corrupted copies of
+// earlier rows, which is what makes the file usable for later phases as well as this one.
 //
 // Records are generated deterministically from their row index, so a duplicate can
 // reproduce its original exactly without either being held in memory.

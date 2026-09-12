@@ -120,12 +120,18 @@ uint32_t ValueFrequency(const BoundSource& source, uint64_t row) {
         if (value == kNullDate) return 0;
         return source.dates->tf[static_cast<size_t>(value - source.dates->tf_origin)];
     }
+    if (source.booleans != nullptr) {
+        const int8_t value = source.booleans->values[row];
+        return value == kNullBoolean ? 0
+                                     : source.booleans->tf[static_cast<size_t>(value)];
+    }
     return 0;
 }
 
 const std::vector<uint32_t>* FrequencyTable(const BoundSource& source) {
     if (source.strings != nullptr) return &source.strings->tf;
     if (source.dates != nullptr) return &source.dates->tf;
+    if (source.booleans != nullptr) return &source.booleans->tf;
     if (source.lists != nullptr) return &source.lists->tf;
     return nullptr;
 }

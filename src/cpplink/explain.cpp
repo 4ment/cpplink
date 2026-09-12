@@ -59,6 +59,11 @@ std::string ValueOf(const BoundComparison& comparison, uint64_t row) {
         if (value == kNullDate) return "<null>";
         return std::to_string(value) + "d";
     }
+    if (comparison.booleans != nullptr) {
+        const int8_t value = comparison.booleans->values[row];
+        if (value == kNullBoolean) return "<null>";
+        return value != 0 ? "true" : "false";
+    }
     if (comparison.numbers != nullptr) {
         const double value = comparison.numbers->values[row];
         if (std::isnan(value)) return "<null>";

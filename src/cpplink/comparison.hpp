@@ -27,6 +27,7 @@ struct BoundComparison {
     // dictionary self-join, the explain report -- reads.
     const StringColumn* strings = nullptr;
     const DateColumn* dates = nullptr;
+    const BooleanColumn* booleans = nullptr;
     const StringListColumn* lists = nullptr;
     const DoubleColumn* numbers = nullptr;   // also latitude for a geo comparison
     const DoubleColumn* numbers2 = nullptr;  // longitude
