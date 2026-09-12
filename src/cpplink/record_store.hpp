@@ -17,6 +17,9 @@ namespace cpplink {
 // A missing date. Like kNullId, it never compares equal to anything.
 inline constexpr int32_t kNullDate = std::numeric_limits<int32_t>::min();
 
+// A missing boolean. Like kNullId, it never compares equal to anything.
+inline constexpr int8_t kNullBoolean = -1;
+
 // The shape of the pair space a run enumerates.
 //
 // Deduplication is the upper triangle of one input; linking is the cross-product
@@ -57,7 +60,16 @@ struct DoubleColumn {
     std::vector<double> values;  // NaN where missing
 };
 
-using Column = std::variant<StringColumn, StringListColumn, DateColumn, DoubleColumn>;
+// The value is its own id, so the term-frequency table is two counts and every
+// consumer that indexes a date's table by `value - tf_origin` indexes this one by
+// the value alone.
+struct BooleanColumn {
+    std::vector<int8_t> values;  // kNullBoolean where missing, else 0 or 1
+    std::vector<uint32_t> tf;    // [false, true]
+};
+
+using Column =
+    std::variant<StringColumn, StringListColumn, DateColumn, DoubleColumn, BooleanColumn>;
 
 // Record identifiers, kept as an arena without an index: they are almost all
 // distinct, so a hash map would cost as much as the values and buy nothing.

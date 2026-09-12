@@ -84,6 +84,7 @@ const std::vector<uint32_t>* TermFrequencies(const Column& column) {
     if (const auto* col = std::get_if<StringColumn>(&column)) return &col->tf;
     if (const auto* col = std::get_if<StringListColumn>(&column)) return &col->tf;
     if (const auto* col = std::get_if<DateColumn>(&column)) return &col->tf;
+    if (const auto* col = std::get_if<BooleanColumn>(&column)) return &col->tf;
     return nullptr;
 }
 
@@ -92,13 +93,22 @@ const std::vector<uint32_t>* TermFrequencies(const Column& column) {
 struct ScalarView {
     const std::vector<uint32_t>* ids = nullptr;
     const std::vector<int32_t>* dates = nullptr;
+    const std::vector<int8_t>* booleans = nullptr;
     const Dictionary* dict = nullptr;
     int32_t origin = 0;
 
-    bool Valid() const { return ids != nullptr || dates != nullptr; }
+    bool Valid() const {
+        return ids != nullptr || dates != nullptr || booleans != nullptr;
+    }
 
+    // The key is the index into the column's term-frequency table, whichever
+    // shape that table has, so a joint over any two scalar columns folds alike.
     uint32_t Key(uint64_t row) const {
         if (ids != nullptr) return (*ids)[row];
+        if (booleans != nullptr) {
+            const int8_t flag = (*booleans)[row];
+            return flag == kNullBoolean ? kNullId : static_cast<uint32_t>(flag);
+        }
         const int32_t day = (*dates)[row];
         if (day == kNullDate) return kNullId;
         return static_cast<uint32_t>(day - origin);
@@ -113,6 +123,8 @@ ScalarView ViewOf(const Column& column) {
     } else if (const auto* col = std::get_if<DateColumn>(&column)) {
         view.dates = &col->values;
         view.origin = col->tf_origin;
+    } else if (const auto* col = std::get_if<BooleanColumn>(&column)) {
+        view.booleans = &col->values;
     }
     return view;
 }
@@ -961,8 +973,9 @@ ProfileReport BuildProfile(const RecordStore& store, PairMode mode,
         }
         // A list column's agreement is not a single-value event, so its collision
         // entropy would not be the ceiling this table's heading claims.
-        const bool scalar =
-            spec.type == ColumnType::kString || spec.type == ColumnType::kDate;
+        const bool scalar = spec.type == ColumnType::kString ||
+                            spec.type == ColumnType::kDate ||
+                            spec.type == ColumnType::kBoolean;
         if (scalar && tf != nullptr && column.present > 1) {
             column.collision = Collision(*tf, column.present);
             // A column no two rows share collides at a rate this file cannot

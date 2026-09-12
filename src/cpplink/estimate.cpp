@@ -89,6 +89,8 @@ bool WithinDatasetCollisions(const RecordStore& store, const BoundComparison& bo
         values = bound.strings->tf.size();
     } else if (bound.dates != nullptr) {
         values = bound.dates->tf.size();
+    } else if (bound.booleans != nullptr) {
+        values = bound.booleans->tf.size();
     } else {
         return false;
     }
@@ -102,11 +104,14 @@ bool WithinDatasetCollisions(const RecordStore& store, const BoundComparison& bo
             if (bound.strings != nullptr) {
                 const uint32_t id = bound.strings->ids[row];
                 if (id != kNullId) ++counts[id];
-            } else {
+            } else if (bound.dates != nullptr) {
                 const int32_t date = bound.dates->values[row];
                 if (date != kNullDate) {
                     ++counts[static_cast<size_t>(date - bound.dates->tf_origin)];
                 }
+            } else {
+                const int8_t flag = bound.booleans->values[row];
+                if (flag != kNullBoolean) ++counts[static_cast<size_t>(flag)];
             }
         }
         for (const uint32_t count : counts) {
@@ -248,6 +253,8 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
         tf = &bound.strings->tf;
     } else if (bound.dates != nullptr) {
         tf = &bound.dates->tf;
+    } else if (bound.booleans != nullptr) {
+        tf = &bound.booleans->tf;
     }
     if (tf == nullptr) return false;
 

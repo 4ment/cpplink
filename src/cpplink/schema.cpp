@@ -84,10 +84,9 @@ constexpr TransformName_ kTransformNames[] = {
 };
 
 constexpr TypeName kTypeNames[] = {
-    {"string", ColumnType::kString},
-    {"string_list", ColumnType::kStringList},
-    {"date", ColumnType::kDate},
-    {"double", ColumnType::kDouble},
+    {"string", ColumnType::kString},   {"string_list", ColumnType::kStringList},
+    {"date", ColumnType::kDate},       {"double", ColumnType::kDouble},
+    {"boolean", ColumnType::kBoolean},
 };
 
 }  // namespace

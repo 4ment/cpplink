@@ -15,6 +15,7 @@ enum class ColumnType {
     kStringList,  // CSR of interned ids, sorted and deduplicated per row
     kDate,        // days since 1970-01-01
     kDouble,      // stored as-is; neither interned nor counted
+    kBoolean,     // one byte per row, counted: two values and a null
 };
 
 const char* ColumnTypeName(ColumnType type);
@@ -22,7 +23,10 @@ bool ParseColumnType(const std::string& name, ColumnType* type);
 
 // Term frequencies are kept only where exact agreement on a value is a discrete
 // event worth counting. Two doubles agreeing to the last bit says nothing useful,
-// so kDouble carries no counts and cannot drive rare-value blocking.
+// so kDouble carries no counts and cannot drive rare-value blocking. A boolean is
+// the smallest countable column there is: agreeing on the value one row in a
+// hundred carries is evidence, agreeing on the other is nearly none, and the two
+// counts are what price the difference.
 bool HasTermFrequencies(ColumnType type);
 
 // A value transform applied at load to build a derived column. Each has an input

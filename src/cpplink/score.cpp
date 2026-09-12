@@ -45,6 +45,11 @@ uint32_t TermFrequencyAdjustment::Frequency(uint64_t row) const {
         if (value == kNullDate) return 0;
         return dates->tf[static_cast<size_t>(value - dates->tf_origin)];
     }
+    if (booleans != nullptr) {
+        const int8_t value = booleans->values[row];
+        if (value == kNullBoolean) return 0;
+        return booleans->tf[static_cast<size_t>(value)];
+    }
     return 0;
 }
 
@@ -156,7 +161,9 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
         // frequency it can be adjusted by. A list column's term frequencies
         // count values, not sets, so an exact level over a whole set has no
         // frequency to look up. Doubles have no frequencies at all. Both simply
-        // get no adjustment.
+        // get no adjustment. A boolean's two counts are an adjustment of the
+        // same kind as any other, and the one that matters most on such a
+        // column: agreeing on the rare value is most of what it can say.
         const BoundComparison& bound = comparisons.at(c);
         for (size_t l = 0; l < spec.levels.size(); ++l) {
             if (spec.levels[l].type != LevelType::kExact) continue;
@@ -169,8 +176,18 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
                 adjustment.strings = bound.slots[spec.levels[l].column].strings;
             } else if (bound.dates != nullptr && bound.lists == nullptr) {
                 adjustment.dates = bound.dates;
+            } else if (bound.booleans != nullptr && bound.lists == nullptr) {
+                adjustment.booleans = bound.booleans;
             }
-            if (adjustment.strings == nullptr && adjustment.dates == nullptr) break;
+            const std::vector<uint32_t>* tf = nullptr;
+            if (adjustment.strings != nullptr) {
+                tf = &adjustment.strings->tf;
+            } else if (adjustment.dates != nullptr) {
+                tf = &adjustment.dates->tf;
+            } else if (adjustment.booleans != nullptr) {
+                tf = &adjustment.booleans->tf;
+            }
+            if (tf == nullptr) break;
 
             // The bracket. delta_max comes from the rarest value the column holds
             // and delta_min from the most common, so it brackets every pair that
@@ -178,10 +195,7 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
             // decisions give bit-identical output to scoring everything.
             uint32_t rarest = std::numeric_limits<uint32_t>::max();
             uint32_t commonest = 0;
-            const std::vector<uint32_t>& tf = adjustment.strings != nullptr
-                                                  ? adjustment.strings->tf
-                                                  : adjustment.dates->tf;
-            for (const uint32_t frequency : tf) {
+            for (const uint32_t frequency : *tf) {
                 if (frequency == 0) continue;
                 rarest = std::min(rarest, frequency);
                 commonest = std::max(commonest, frequency);

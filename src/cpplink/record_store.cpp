@@ -23,6 +23,8 @@ Column MakeColumn(ColumnType type) {
             return DateColumn{};
         case ColumnType::kDouble:
             return DoubleColumn{};
+        case ColumnType::kBoolean:
+            return BooleanColumn{};
     }
     return StringColumn{};
 }
@@ -113,6 +115,11 @@ void RecordStore::Finalize() {
             for (int32_t value : col->values) {
                 if (value != kNullDate) ++col->tf[static_cast<size_t>(value - low)];
             }
+        } else if (auto* col = std::get_if<BooleanColumn>(&columns_[i])) {
+            col->tf.assign(2, 0);
+            for (int8_t value : col->values) {
+                if (value != kNullBoolean) ++col->tf[static_cast<size_t>(value)];
+            }
         }
     }
 }
@@ -121,9 +128,14 @@ uint32_t RecordStore::DistinctValues(size_t index) const {
     const Column& column = columns_[index];
     if (const auto* col = std::get_if<StringColumn>(&column)) return col->dict.Size();
     if (const auto* col = std::get_if<StringListColumn>(&column)) return col->dict.Size();
-    if (const auto* col = std::get_if<DateColumn>(&column)) {
+    // A dense table holds every value in its range, seen or not, so distinct is
+    // the entries that were.
+    const std::vector<uint32_t>* dense = nullptr;
+    if (const auto* col = std::get_if<DateColumn>(&column)) dense = &col->tf;
+    if (const auto* col = std::get_if<BooleanColumn>(&column)) dense = &col->tf;
+    if (dense != nullptr) {
         uint32_t distinct = 0;
-        for (uint32_t count : col->tf) {
+        for (uint32_t count : *dense) {
             if (count > 0) ++distinct;
         }
         return distinct;
@@ -149,6 +161,10 @@ uint64_t RecordStore::NullCount(size_t index) const {
     } else if (const auto* col = std::get_if<DoubleColumn>(&column)) {
         for (double value : col->values) {
             if (std::isnan(value)) ++nulls;
+        }
+    } else if (const auto* col = std::get_if<BooleanColumn>(&column)) {
+        for (int8_t value : col->values) {
+            if (value == kNullBoolean) ++nulls;
         }
     }
     return nulls;
@@ -195,6 +211,10 @@ MemoryReport RecordStore::Memory() const {
             report.lines.push_back({name + " values",
                                     static_cast<uint64_t>(col->values.capacity()) * 8,
                                     "f64 per record, no tf"});
+        } else if (const auto* col = std::get_if<BooleanColumn>(&column)) {
+            report.lines.push_back({name + " values",
+                                    static_cast<uint64_t>(col->values.capacity()),
+                                    "i8 per record, tf is two counts"});
         }
     }
     return report;

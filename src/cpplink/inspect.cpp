@@ -56,6 +56,7 @@ std::string TopValueShare(const RecordStore& store, size_t index) {
     if (const auto* col = std::get_if<StringColumn>(&column)) tf = &col->tf;
     if (const auto* col = std::get_if<StringListColumn>(&column)) tf = &col->tf;
     if (const auto* col = std::get_if<DateColumn>(&column)) tf = &col->tf;
+    if (const auto* col = std::get_if<BooleanColumn>(&column)) tf = &col->tf;
     if (tf == nullptr || tf->empty()) return "-";
     const uint32_t top = *std::max_element(tf->begin(), tf->end());
     return Percent(top, store.NumRecords());
@@ -69,6 +70,7 @@ std::string RareValuePairs(const RecordStore& store, size_t index, uint32_t cap)
     if (const auto* col = std::get_if<StringColumn>(&column)) tf = &col->tf;
     if (const auto* col = std::get_if<StringListColumn>(&column)) tf = &col->tf;
     if (const auto* col = std::get_if<DateColumn>(&column)) tf = &col->tf;
+    if (const auto* col = std::get_if<BooleanColumn>(&column)) tf = &col->tf;
     if (tf == nullptr || tf->empty()) return "-";
     uint64_t pairs = 0;
     for (uint32_t count : *tf) {

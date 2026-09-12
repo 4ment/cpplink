@@ -22,6 +22,26 @@ namespace {
 constexpr int32_t kEarliestDob = -7305;  // 1950-01-01
 constexpr int32_t kLatestDob = 13514;    // 2007-01-01
 
+// The domains an address is drawn from, skewed so the first takes about half the
+// rows the way one provider does. A duplicate that keeps its username and moves
+// domain is the case the email comparison's username level exists for, and one
+// no benchmark dataset carried until this one did.
+constexpr const char* kDomains[] = {"example.com",     "mail.example.com",
+                                    "example.net",     "example.org",
+                                    "post.example.io", "inbox.example.co"};
+constexpr size_t kDomainCount = std::size(kDomains);
+constexpr double kDomainSkew = 2.5;
+
+// A missing value one row in thirty, and the two values otherwise even.
+constexpr double kGenderNullRate = 0.03;
+
+size_t DrawDomain(std::mt19937_64* rng) {
+    std::uniform_real_distribution<double> uniform(0.0, 1.0);
+    const size_t rank = static_cast<size_t>(std::pow(uniform(*rng), kDomainSkew) *
+                                            static_cast<double>(kDomainCount));
+    return std::min(rank, kDomainCount - 1);
+}
+
 std::mt19937_64 SeededFor(uint64_t seed, uint64_t index) {
     // splitmix64, so neighbouring indices give unrelated streams.
     uint64_t z = index + seed * 0x9E3779B97F4A7C15ull;
@@ -83,6 +103,7 @@ class Vocabulary {
 struct SampleRecord {
     std::string first_name;
     std::string last_name;
+    int gender = -1;  // -1 missing, else 0 or 1: the boolean column
     int32_t dob = 0;
     std::string email;
     std::string phone;
@@ -109,10 +130,17 @@ class Generator {
         std::uniform_int_distribution<int32_t> dob(kEarliestDob, kLatestDob);
         record.dob = dob(rng);
 
+        std::uniform_real_distribution<double> chance(0.0, 1.0);
+        const double gender = chance(rng);
+        if (gender >= kGenderNullRate) {
+            record.gender = gender < 0.5 + kGenderNullRate / 2 ? 1 : 0;
+        }
+
         // Email and phone are near-unique, which is what drives dictionary size.
+        // The username is what carries that; the domain is a handful of values.
         std::uniform_int_distribution<int> suffix(0, 9999);
         record.email = record.first_name + "." + record.last_name +
-                       std::to_string(suffix(rng)) + "@example.com";
+                       std::to_string(suffix(rng)) + "@" + kDomains[DrawDomain(&rng)];
         std::uniform_int_distribution<int64_t> phone(400000000LL, 499999999LL);
         record.phone = "0" + std::to_string(phone(rng));
 
@@ -132,13 +160,31 @@ class Generator {
         return record;
     }
 
-    // A plausible duplicate: typos, a dropped field, jittered coordinates.
+    // A plausible duplicate: typos, a dropped field, jittered coordinates, and an
+    // address that moved provider.
     SampleRecord Corrupt(SampleRecord record, std::mt19937_64* rng) const {
         std::uniform_real_distribution<double> chance(0.0, 1.0);
         if (chance(*rng) < 0.45) Typo(&record.last_name, rng);
         if (chance(*rng) < 0.30) Typo(&record.first_name, rng);
-        if (chance(*rng) < 0.35) record.email.clear();
+        // Dropped 35% of the time as before; of the addresses kept, one in four
+        // keeps its username under a different domain, which is a pair the exact
+        // address level cannot see and the username level can.
+        const double email_fate = chance(*rng);
+        if (email_fate < 0.35) {
+            record.email.clear();
+        } else if (email_fate < 0.35 + 0.25 * 0.65) {
+            MoveDomain(&record.email, rng);
+        }
         if (chance(*rng) < 0.25) record.phone.clear();
+        // A flag is rarely wrong and sometimes not filled in.
+        if (record.gender >= 0) {
+            const double gender_fate = chance(*rng);
+            if (gender_fate < 0.05) {
+                record.gender = -1;
+            } else if (gender_fate < 0.07) {
+                record.gender = 1 - record.gender;
+            }
+        }
         if (chance(*rng) < 0.15) record.postcode.clear();
         if (chance(*rng) < 0.20) {
             std::uniform_int_distribution<int> days(-2, 2);
@@ -160,6 +206,17 @@ class Generator {
         std::swap((*word)[position(*rng)], (*word)[position(*rng) + 1]);
     }
 
+    // Keeps the username and draws a different domain, redrawing on the one it
+    // already has so the address really does change.
+    static void MoveDomain(std::string* email, std::mt19937_64* rng) {
+        const size_t at = email->find('@');
+        if (at == std::string::npos) return;
+        const std::string current = email->substr(at + 1);
+        std::string domain = current;
+        while (domain == current) domain = kDomains[DrawDomain(rng)];
+        *email = email->substr(0, at + 1) + domain;
+    }
+
     uint64_t seed_;
     Vocabulary first_names_;
     Vocabulary last_names_;
@@ -171,6 +228,7 @@ std::shared_ptr<arrow::Schema> MakeArrowSchema() {
         arrow::field("id", arrow::utf8()),
         arrow::field("first_name", arrow::utf8()),
         arrow::field("last_name", arrow::utf8()),
+        arrow::field("gender", arrow::boolean()),
         arrow::field("dob", arrow::date32()),
         arrow::field("email", arrow::utf8()),
         arrow::field("phone", arrow::utf8()),
@@ -181,14 +239,15 @@ std::shared_ptr<arrow::Schema> MakeArrowSchema() {
     });
 }
 
-// The ten builders one output file accumulates rows into, and the writer they are
-// flushed to. Routing a row to one of two files is then a choice of sink rather
+// The eleven builders one output file accumulates rows into, and the writer they
+// are flushed to. Routing a row to one of two files is then a choice of sink rather
 // than a second copy of the append code.
 struct RowSink {
     explicit RowSink(arrow::MemoryPool* pool)
         : id(pool),
           first(pool),
           last(pool),
+          gender(pool),
           email(pool),
           phone(pool),
           postcode(pool),
@@ -224,6 +283,8 @@ struct RowSink {
         auto status = id.Append(identifier);
         status &= first.Append(record.first_name);
         status &= last.Append(record.last_name);
+        status &=
+            record.gender < 0 ? gender.AppendNull() : gender.Append(record.gender == 1);
         status &= dob.Append(record.dob);
         status &= record.email.empty() ? email.AppendNull() : email.Append(record.email);
         status &= record.phone.empty() ? phone.AppendNull() : phone.Append(record.phone);
@@ -245,17 +306,18 @@ struct RowSink {
 
     bool Flush(const std::shared_ptr<arrow::Schema>& schema, std::string* error) {
         if (pending == 0) return true;
-        std::vector<std::shared_ptr<arrow::Array>> arrays(10);
+        std::vector<std::shared_ptr<arrow::Array>> arrays(11);
         arrow::Status status = id.Finish(&arrays[0]);
         status &= first.Finish(&arrays[1]);
         status &= last.Finish(&arrays[2]);
-        status &= dob.Finish(&arrays[3]);
-        status &= email.Finish(&arrays[4]);
-        status &= phone.Finish(&arrays[5]);
-        status &= postcode.Finish(&arrays[6]);
-        status &= latitude.Finish(&arrays[7]);
-        status &= longitude.Finish(&arrays[8]);
-        status &= tokens.Finish(&arrays[9]);
+        status &= gender.Finish(&arrays[3]);
+        status &= dob.Finish(&arrays[4]);
+        status &= email.Finish(&arrays[5]);
+        status &= phone.Finish(&arrays[6]);
+        status &= postcode.Finish(&arrays[7]);
+        status &= latitude.Finish(&arrays[8]);
+        status &= longitude.Finish(&arrays[9]);
+        status &= tokens.Finish(&arrays[10]);
         if (!status.ok()) {
             *error = "finishing a batch: " + status.message();
             return false;
@@ -281,6 +343,7 @@ struct RowSink {
     }
 
     arrow::StringBuilder id, first, last, email, phone, postcode;
+    arrow::BooleanBuilder gender;
     arrow::Date32Builder dob;
     arrow::DoubleBuilder latitude, longitude;
     std::shared_ptr<arrow::StringBuilder> token_values;

@@ -277,6 +277,13 @@ bool KeyAndFrequency(const BoundSource& source, uint64_t row, uint64_t* key,
             source.dates->tf[static_cast<size_t>(value - source.dates->tf_origin)];
         return true;
     }
+    if (source.booleans != nullptr) {
+        const int8_t value = source.booleans->values[row];
+        if (value == kNullBoolean) return false;
+        *key = static_cast<uint64_t>(value);
+        *frequency = source.booleans->tf[static_cast<size_t>(value)];
+        return true;
+    }
     return false;
 }
 
