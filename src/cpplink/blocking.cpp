@@ -104,7 +104,25 @@ uint64_t BlockingPlan::CountPairs(size_t source_index) const {
     const BoundSource& source = sources_[source_index];
     if (source.kind == SourceKind::kAllPairs) return CountAllPairs();
     if (mode_ == PairMode::kCrossDataset) return CountCrossPairs(source_index);
+    return CountPooledPairs(source_index);
+}
 
+uint64_t BlockingPlan::ApproximatePairs(size_t source_index, bool* exact) const {
+    const BoundSource& source = sources_[source_index];
+    // Windows are counted by a prefix sum over the sorted order the source already
+    // holds, so only a keyed source pays a sort for its cross count.
+    *exact = mode_ != PairMode::kCrossDataset || source.kind == SourceKind::kAllPairs ||
+             source.kind == SourceKind::kSortedNeighbourhood;
+    if (*exact) return CountPairs(source_index);
+    const double all = static_cast<double>(PairsIn(rows_));
+    if (all <= 0.0) return 0;
+    const double cross = static_cast<double>(CountAllPairs());
+    return static_cast<uint64_t>(
+        static_cast<double>(CountPooledPairs(source_index)) * cross / all + 0.5);
+}
+
+uint64_t BlockingPlan::CountPooledPairs(size_t source_index) const {
+    const BoundSource& source = sources_[source_index];
     if (source.kind == SourceKind::kSortedNeighbourhood) {
         const uint64_t count = source.order.size();
         if (count < 2) return 0;

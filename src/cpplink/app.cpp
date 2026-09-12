@@ -5,9 +5,13 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <memory>
 #include <ostream>
+
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/cluster.hpp"
@@ -130,7 +134,7 @@ void PrintUsage(std::ostream& out) {
         << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
         << "                [--spill-sample R] [--fuzzy-tf] [--ball-budget N]\n"
         << "                [--no-interactions] [--mode MODE] [--all-pairs]\n"
-        << "                <file.parquet>...\n"
+        << "                [-v | --verbose] <file.parquet>...\n"
         << "cpplink completeness --schema <schema.json> --model <model.json>\n"
         << "                [--truth <pairs.csv>] [--sample R] [--threads N]\n"
         << "                [--value-weighting records|pairs] [--min-observed N]\n"
@@ -751,7 +755,8 @@ void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
 bool LoadForBlocking(const std::string& schema_path,
                      const std::vector<std::string>& data_paths, PairMode mode,
                      Schema* schema, std::unique_ptr<RecordStore>* store,
-                     BlockingPlan* plan, std::ostream& err, bool all_pairs = false) {
+                     BlockingPlan* plan, std::ostream& err, bool all_pairs = false,
+                     LoadStats* stats = nullptr) {
     std::string error;
     if (!LoadSchema(schema_path, schema, &error)) {
         err << "cpplink: " << error << "\n";
@@ -768,7 +773,7 @@ bool LoadForBlocking(const std::string& schema_path,
         return false;
     }
     *store = std::make_unique<RecordStore>(*schema);
-    if (!LoadParquetFiles(data_paths, *schema, store->get(), nullptr, &error)) {
+    if (!LoadParquetFiles(data_paths, *schema, store->get(), stats, &error)) {
         err << "cpplink: " << error << "\n";
         return false;
     }
@@ -777,6 +782,17 @@ bool LoadForBlocking(const std::string& schema_path,
         return false;
     }
     return true;
+}
+
+// The width of the terminal behind `stream`, or zero when it is not one. Progress
+// is redrawn in place only on a terminal; anywhere else -- a file, a pipe, a test's
+// string stream -- it is printed as lines. The stream is compared to the process's
+// own stderr because an ostream carries no descriptor to ask.
+unsigned TerminalColumns(const std::ostream& stream) {
+    if (&stream != &std::cerr || isatty(STDERR_FILENO) == 0) return 0;
+    winsize size{};
+    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0) return 80;
+    return size.ws_col;
 }
 
 int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
@@ -1198,6 +1214,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     bool mode_given = false;
     bool all_pairs = false;
     bool format_given = false;
+    bool verbose = false;
     std::string out_path;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
@@ -1208,6 +1225,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             mode_given = true;
         } else if (args[i] == "--all-pairs") {
             all_pairs = true;
+        } else if (args[i] == "-v" || args[i] == "--verbose") {
+            verbose = true;
         } else if (args[i] == "--model") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
         } else if (args[i] == "--out") {
@@ -1297,12 +1316,18 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
         return 1;
     }
 
+    if (verbose) {
+        out << "Loading " << data_paths.size()
+            << (data_paths.size() == 1 ? " file" : " files") << "...\n";
+        out.flush();
+    }
     Schema schema;
     std::unique_ptr<RecordStore> store;
     BlockingPlan plan;
+    LoadStats stats;
     if (!LoadForBlocking(schema_path, data_paths,
                          DefaultMode(mode_given, mode, data_paths.size()), &schema,
-                         &store, &plan, err, all_pairs)) {
+                         &store, &plan, err, all_pairs, &stats)) {
         return 1;
     }
     if (schema.comparisons.empty()) {
@@ -1327,6 +1352,14 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
                      fuzzy_tf ? &balls : nullptr)) {
         err << "cpplink predict: " << error << "\n";
         return 1;
+    }
+
+    if (verbose) {
+        PrintPredictPlan(*store, plan, comparisons, scorer, options, stats.seconds, out);
+        // Progress goes beside the report rather than into it, so a report
+        // redirected to a file stays a report.
+        options.progress = &err;
+        options.progress_columns = TerminalColumns(err);
     }
 
     PredictReport report;

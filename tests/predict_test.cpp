@@ -19,6 +19,7 @@
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
+#include "cpplink/format.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
@@ -352,6 +353,52 @@ TEST_F(PredictFixture, ReportNamesTheZonesAndTheShards) {
     EXPECT_NE(text.find("check"), std::string::npos);
     EXPECT_NE(text.find("admissible"), std::string::npos);
     EXPECT_NE(text.find("shard-000.bin"), std::string::npos);
+}
+
+// The plan is printed from the sources and the scorer before a pair is
+// enumerated, and progress reaches the whole stream: the last line reads 100%
+// and the candidate count it carries is the one the report ends with. Without
+// a terminal width the lines are plain, one per reading, with nothing redrawn.
+TEST_F(PredictFixture, VerboseRunPrintsThePlanAndReportsProgressToTheEnd) {
+    cpplink::ScoreOptions score;
+    score.threshold = 1.0;
+    cpplink::Scorer scorer;
+    std::string error;
+    ASSERT_TRUE(scorer.Bind(model_, comparisons_, *store_, score, &error)) << error;
+    cpplink::PredictOptions options;
+    options.out_dir = (dir_ / "verbose").string();
+    options.threads = 2;
+    std::ostringstream progress;
+    options.progress = &progress;
+
+    std::ostringstream plan;
+    cpplink::PrintPredictPlan(*store_, plan_, comparisons_, scorer, options, 0.5, plan);
+    const std::string planned = plan.str();
+    EXPECT_NE(planned.find("Records        " + std::to_string(kRecords)),
+              std::string::npos)
+        << planned;
+    EXPECT_NE(planned.find("Threshold      1.000 bits"), std::string::npos) << planned;
+    EXPECT_NE(planned.find("Threads        2"), std::string::npos) << planned;
+    EXPECT_NE(planned.find("Sum over sources"), std::string::npos) << planned;
+    for (size_t s = 0; s < plan_.Size(); ++s) {
+        EXPECT_NE(planned.find(plan_.at(s).name), std::string::npos) << planned;
+    }
+
+    cpplink::PredictReport report;
+    ASSERT_TRUE(
+        cpplink::Predict(*store_, comparisons_, plan_, scorer, options, &report, &error));
+    const std::string lines = progress.str();
+    EXPECT_EQ(lines.find('\r'), std::string::npos) << lines;
+    EXPECT_EQ(lines.find("\033"), std::string::npos) << lines;
+    const size_t last = lines.rfind("100.0%");
+    ASSERT_NE(last, std::string::npos) << lines;
+    std::string final_line = lines.substr(last);
+    final_line.resize(final_line.find('\n'));
+    EXPECT_NE(final_line.find(cpplink::WithThousands(report.enumerated) + " candidates"),
+              std::string::npos)
+        << final_line;
+    EXPECT_NE(final_line.find("elapsed"), std::string::npos) << final_line;
+    EXPECT_EQ(final_line.find("left"), std::string::npos) << final_line;
 }
 
 // The threads still write a shard each; what changes is that the run ends with

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -18,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "cpplink/format.hpp"
 #include "cpplink/merge_edges.hpp"
 #include "cpplink/pair_stream.hpp"
 #include "cpplink/spill.hpp"
@@ -26,19 +28,6 @@ namespace cpplink {
 namespace {
 
 constexpr size_t kFlushBytes = 1u << 20;
-
-std::string WithThousands(uint64_t value) {
-    std::string digits = std::to_string(value);
-    std::string out;
-    int count = 0;
-    for (auto it = digits.rbegin(); it != digits.rend(); ++it) {
-        if (count > 0 && count % 3 == 0) out.push_back(',');
-        out.push_back(*it);
-        ++count;
-    }
-    std::reverse(out.begin(), out.end());
-    return out;
-}
 
 std::string Percent(uint64_t part, uint64_t whole) {
     if (whole == 0) return "-";
@@ -58,16 +47,197 @@ uint64_t Mix64(uint64_t value) {
 // Per-thread counters, one cache line each: they are touched once per candidate
 // pair, and packing them adjacently would put every thread's increment on the
 // same line and cost more than the scoring being counted.
+//
+// The two the progress line reads are atomic so that reading them from another
+// thread is defined, and they are bumped with a relaxed load and store rather
+// than a read-modify-write: one thread owns each tally, so that is a plain
+// increment to the compiler and to the hardware, not a locked instruction.
 struct alignas(64) ThreadTally {
-    uint64_t enumerated = 0;
+    std::atomic<uint64_t> enumerated{0};
     uint64_t skipped = 0;
     uint64_t dropped = 0;
     uint64_t checked = 0;
     uint64_t certain = 0;
-    uint64_t edges = 0;
+    std::atomic<uint64_t> edges{0};
     uint64_t spilled = 0;
     uint64_t random = 0;
     uint64_t tf_lookups = 0;
+};
+
+inline void Bump(std::atomic<uint64_t>* counter) {
+    counter->store(counter->load(std::memory_order_relaxed) + 1,
+                   std::memory_order_relaxed);
+}
+
+inline uint64_t Peek(const std::atomic<uint64_t>& counter) {
+    return counter.load(std::memory_order_relaxed);
+}
+
+// 10.09bn, 8.7M, 120k: the progress line is redrawn in the width of a terminal,
+// where a ten-digit count with its commas is a third of the room.
+std::string Short(double value) {
+    char buffer[32];
+    if (value >= 1e9) {
+        std::snprintf(buffer, sizeof(buffer), "%.2fbn", value / 1e9);
+    } else if (value >= 1e6) {
+        std::snprintf(buffer, sizeof(buffer), "%.2fM", value / 1e6);
+    } else if (value >= 1e3) {
+        std::snprintf(buffer, sizeof(buffer), "%.1fk", value / 1e3);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%.0f", value);
+    }
+    return buffer;
+}
+
+std::string Clock(double seconds) {
+    const auto whole = static_cast<uint64_t>(seconds);
+    char buffer[32];
+    if (whole >= 3600) {
+        std::snprintf(buffer, sizeof(buffer), "%" PRIu64 ":%02" PRIu64 ":%02" PRIu64,
+                      whole / 3600, whole / 60 % 60, whole % 60);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%" PRIu64 ":%02" PRIu64, whole / 60,
+                      whole % 60);
+    }
+    return buffer;
+}
+
+// The progress line. Its denominator is the sum over the sources of what each is
+// priced at, `ApproximatePairs`; a finished source contributes its whole price and
+// the running one a share proportional to the tasks done, so the fraction reaches
+// one when the walk ends whether the prices were exact or not.
+// The candidate and prediction counts are the tallies as they stand, read
+// relaxed: a number that is a few hundred pairs stale is what a progress line is.
+class PredictProgress : public PairProgress {
+   public:
+    PredictProgress(const BlockingPlan& plan, const std::vector<size_t>& sources,
+                    const std::vector<ThreadTally>& tally, std::ostream& out,
+                    unsigned columns)
+        : plan_(plan),
+          sources_(sources),
+          tally_(tally),
+          out_(out),
+          columns_(columns),
+          started_(std::chrono::steady_clock::now()),
+          last_line_(started_) {
+        before_.reserve(sources.size() + 1);
+        before_.push_back(0);
+        for (const size_t s : sources) {
+            // An estimate paces the sources against one another; the fraction
+            // still reaches one, because a source contributes what it was priced
+            // at once it is done.
+            bool exact = false;
+            before_.push_back(before_.back() + plan.ApproximatePairs(s, &exact));
+        }
+    }
+
+    void BeginSource(size_t position, size_t tasks) override {
+        // One permanent line per source, so a log says which one was running when
+        // the run slowed down; on a terminal it goes above the redrawn line.
+        if (sources_.size() < 2) return;
+        ClearLine();
+        const BoundSource& source = plan_.at(sources_[position]);
+        out_ << "  source " << (position + 1) << "/" << sources_.size() << "  "
+             << source.name << "  "
+             << WithThousands(before_[position + 1] - before_[position]) << " pairs, "
+             << WithThousands(tasks) << (tasks == 1 ? " task" : " tasks") << "\n";
+        out_.flush();
+    }
+
+    void Tick(size_t position, size_t done, size_t tasks) override {
+        const double total = static_cast<double>(before_.back());
+        double fraction = 1.0;
+        if (total > 0.0) {
+            const double share =
+                tasks == 0 ? 1.0 : static_cast<double>(done) / static_cast<double>(tasks);
+            fraction =
+                (static_cast<double>(before_[position]) +
+                 share * static_cast<double>(before_[position + 1] - before_[position])) /
+                total;
+        }
+        fraction = std::min(1.0, std::max(0.0, fraction));
+        const bool last = position + 1 == sources_.size() && done == tasks;
+        const auto now = std::chrono::steady_clock::now();
+        if (columns_ == 0 && !last) {
+            // A log line every few percent or every minute, whichever comes
+            // first, and never two for the same reading.
+            const double since = std::chrono::duration<double>(now - last_line_).count();
+            if (fraction - last_fraction_ < 0.05 && since < 60.0) return;
+        }
+        last_fraction_ = fraction;
+        last_line_ = now;
+        Render(fraction, std::chrono::duration<double>(now - started_).count(), last);
+    }
+
+    // The redrawn line is left on screen, ended so the report starts under it.
+    void Finish() {
+        if (columns_ > 0) out_ << "\n";
+        out_.flush();
+    }
+
+   private:
+    void ClearLine() {
+        if (columns_ > 0) out_ << "\r\033[K";
+    }
+
+    void Render(double fraction, double elapsed, bool last) {
+        uint64_t candidates = 0;
+        uint64_t edges = 0;
+        for (const ThreadTally& t : tally_) {
+            candidates += Peek(t.enumerated);
+            edges += Peek(t.edges);
+        }
+        const bool terminal = columns_ > 0;
+        char percent[16];
+        std::snprintf(percent, sizeof(percent), "%5.1f%%", 100.0 * fraction);
+        std::string line = percent;
+        line += "  " +
+                (terminal ? Short(static_cast<double>(candidates))
+                          : WithThousands(candidates)) +
+                " candidates";
+        if (elapsed > 0.0) {
+            line += "  " + Short(static_cast<double>(candidates) / elapsed) + "/s";
+        }
+        line += "  " +
+                (terminal ? Short(static_cast<double>(edges)) : WithThousands(edges)) +
+                " predictions";
+        line += "  " + Clock(elapsed) + " elapsed";
+        // The first few seconds of a run are a source's first tasks, which say
+        // little about the rest of the stream, so the estimate waits for them.
+        if (!last && fraction > 0.0 && fraction < 1.0 && elapsed >= 5.0) {
+            line += "  ~" + Clock(elapsed * (1.0 - fraction) / fraction) + " left";
+        }
+        if (!terminal) {
+            out_ << line << "\n";
+            out_.flush();
+            return;
+        }
+        // The bar takes the room the numbers leave, and a terminal too narrow
+        // for both keeps the numbers: a line wider than the terminal wraps and
+        // the redraw stacks up instead of replacing itself.
+        const size_t room = columns_ - 1;
+        if (line.size() + 4 <= room) {
+            const size_t width = std::min<size_t>(20, room - line.size() - 3);
+            const size_t filled = static_cast<size_t>(fraction * width + 0.5);
+            line = "[" + std::string(filled, '=') + std::string(width - filled, ' ') +
+                   "] " + line;
+        } else if (line.size() > room) {
+            line.resize(room);
+        }
+        ClearLine();
+        out_ << line;
+        out_.flush();
+    }
+
+    const BlockingPlan& plan_;
+    const std::vector<size_t>& sources_;
+    const std::vector<ThreadTally>& tally_;
+    std::ostream& out_;
+    const unsigned columns_;
+    std::vector<uint64_t> before_;  // pairs in the sources before each position
+    std::chrono::steady_clock::time_point started_;
+    std::chrono::steady_clock::time_point last_line_;
+    double last_fraction_ = -1.0;
 };
 
 }  // namespace
@@ -201,82 +371,93 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
     const bool csv = options.format == EdgeFormat::kCsv;
     const IdColumn& ids = store.ids();
 
-    ForEachPairParallel(plan, plan.AllSources(), threads, [&](unsigned t) {
-        ThreadTally* counts = &tally[t];
-        EdgeShardWriter* writer = writers[t].get();
-        SpillWriter* spill = spilling ? spills[t].get() : nullptr;
-        return [&, counts, writer, spill](uint32_t a, uint32_t b) {
-            ++counts->enumerated;
-            // Drawn per candidate, before anything decides the pair's fate, so
-            // the sample stays uniform over candidates.
-            bool sampled = false;
-            if (sampling) {
-                counts->random = Mix64(counts->random);
-                sampled = counts->random < sample_cut;
-            }
-            // The ceiling, before the comparison rather than after it. Every
-            // level the cheap bounds still admit is granted, and if the best the
-            // pair could possibly score is under the threshold there is nothing
-            // a string metric could change. A sampled pair is exempt: the spill
-            // holds patterns, and a pattern is what this skips producing.
-            if (!sampled && !scorer.CanReach(a, b)) {
-                ++counts->skipped;
-                return;
-            }
-            const uint32_t gamma = comparisons.Evaluate(a, b);
-            const Zone zone = scorer.Classify(gamma);
-            if (zone == Zone::kDrop) {
-                ++counts->dropped;
-                if (sampled) {
+    const std::vector<size_t> sources = plan.AllSources();
+    std::unique_ptr<PredictProgress> progress;
+    if (options.progress != nullptr) {
+        progress = std::make_unique<PredictProgress>(
+            plan, sources, tally, *options.progress, options.progress_columns);
+    }
+
+    ForEachPairParallel(
+        plan, sources, threads,
+        [&](unsigned t) {
+            ThreadTally* counts = &tally[t];
+            EdgeShardWriter* writer = writers[t].get();
+            SpillWriter* spill = spilling ? spills[t].get() : nullptr;
+            return [&, counts, writer, spill](uint32_t a, uint32_t b) {
+                Bump(&counts->enumerated);
+                // Drawn per candidate, before anything decides the pair's fate, so
+                // the sample stays uniform over candidates.
+                bool sampled = false;
+                if (sampling) {
+                    counts->random = Mix64(counts->random);
+                    sampled = counts->random < sample_cut;
+                }
+                // The ceiling, before the comparison rather than after it. Every
+                // level the cheap bounds still admit is granted, and if the best the
+                // pair could possibly score is under the threshold there is nothing
+                // a string metric could change. A sampled pair is exempt: the spill
+                // holds patterns, and a pattern is what this skips producing.
+                if (!sampled && !scorer.CanReach(a, b)) {
+                    ++counts->skipped;
+                    return;
+                }
+                const uint32_t gamma = comparisons.Evaluate(a, b);
+                const Zone zone = scorer.Classify(gamma);
+                if (zone == Zone::kDrop) {
+                    ++counts->dropped;
+                    if (sampled) {
+                        spill->Write(a, b, gamma);
+                        ++counts->spilled;
+                    }
+                    return;
+                }
+                // Drop is where the bracket pays: the pattern cannot clear the
+                // threshold however rare its values are, so no term-frequency table is
+                // touched. Check and certain both still need the exact weight, because
+                // the weight is part of the output.
+                if (zone == Zone::kCheck) {
+                    ++counts->checked;
+                } else {
+                    ++counts->certain;
+                }
+                const double weight = scorer.Weight(gamma, a, b);
+                ++counts->tf_lookups;
+                if (weight < scorer.threshold()) {
+                    if (sampled) {
+                        spill->Write(a, b, gamma);
+                        ++counts->spilled;
+                    }
+                    return;
+                }
+                if (limit > 0 && emitted.fetch_add(1) >= limit) return;
+                Bump(&counts->edges);
+                // Above threshold: always spilled, and only once even if also sampled.
+                if (spilling) {
                     spill->Write(a, b, gamma);
                     ++counts->spilled;
                 }
-                return;
-            }
-            // Drop is where the bracket pays: the pattern cannot clear the
-            // threshold however rare its values are, so no term-frequency table is
-            // touched. Check and certain both still need the exact weight, because
-            // the weight is part of the output.
-            if (zone == Zone::kCheck) {
-                ++counts->checked;
-            } else {
-                ++counts->certain;
-            }
-            const double weight = scorer.Weight(gamma, a, b);
-            ++counts->tf_lookups;
-            if (weight < scorer.threshold()) {
-                if (sampled) {
-                    spill->Write(a, b, gamma);
-                    ++counts->spilled;
+                if (csv) {
+                    writer->WriteCsv(ids.Get(a), ids.Get(b), gamma, weight);
+                } else {
+                    writer->WriteBinary(a, b, gamma, weight);
                 }
-                return;
-            }
-            if (limit > 0 && emitted.fetch_add(1) >= limit) return;
-            ++counts->edges;
-            // Above threshold: always spilled, and only once even if also sampled.
-            if (spilling) {
-                spill->Write(a, b, gamma);
-                ++counts->spilled;
-            }
-            if (csv) {
-                writer->WriteCsv(ids.Get(a), ids.Get(b), gamma, weight);
-            } else {
-                writer->WriteBinary(a, b, gamma, weight);
-            }
-        };
-    });
+            };
+        },
+        progress.get());
+    if (progress) progress->Finish();
 
     for (unsigned t = 0; t < threads; ++t) {
         if (!writers[t]->Close()) {
             *error = "failed while writing \"" + report->shards[t] + "\"";
             return false;
         }
-        report->enumerated += tally[t].enumerated;
+        report->enumerated += Peek(tally[t].enumerated);
         report->skipped += tally[t].skipped;
         report->dropped += tally[t].dropped;
         report->checked += tally[t].checked;
         report->certain += tally[t].certain;
-        report->edges += tally[t].edges;
+        report->edges += Peek(tally[t].edges);
         report->spilled += tally[t].spilled;
         report->tf_lookups += tally[t].tf_lookups;
     }
@@ -309,6 +490,12 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         if (!WriteSpillManifest(options.spill_dir, manifest, error)) return false;
     }
     if (!options.merge_path.empty()) {
+        if (options.progress != nullptr) {
+            *options.progress << "  merging " << threads
+                              << (threads == 1 ? " shard" : " shards") << " into "
+                              << options.merge_path << "\n";
+            options.progress->flush();
+        }
         if (!MergeStagedShards(store, options.out_dir, options.merge_path,
                                options.format == EdgeFormat::kBinary,
                                &report->merge_seconds, error)) {
@@ -320,6 +507,93 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
     report->seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return true;
+}
+
+void PrintPredictPlan(const RecordStore& store, const BlockingPlan& plan,
+                      const ComparisonSet& comparisons, const Scorer& scorer,
+                      const PredictOptions& options, double load_seconds,
+                      std::ostream& out) {
+    out << "Records        " << WithThousands(store.NumRecords());
+    if (load_seconds > 0.0) {
+        out << "  (loaded in " << std::fixed << std::setprecision(1) << load_seconds
+            << " s)";
+    }
+    out << "\n";
+    if (store.NumDatasets() > 1) {
+        out << "Inputs         " << store.NumDatasets() << "  (";
+        for (size_t d = 0; d < store.NumDatasets(); ++d) {
+            if (d > 0) out << " + ";
+            out << WithThousands(store.DatasetEnd(d) - store.DatasetStart(d));
+        }
+        out << " rows), mode " << PairModeName(plan.mode()) << "\n";
+    }
+    out << "Threshold      " << std::fixed << std::setprecision(3) << scorer.threshold()
+        << " bits  (posterior " << std::setprecision(6)
+        << ProbabilityForWeight(scorer.threshold()) << ")\n"
+        << "Threads        " << ResolveThreads(options.threads) << "\n"
+        << "Gamma          " << static_cast<unsigned>(comparisons.Width()) << " bits";
+    if (scorer.Dense()) {
+        out << ", " << WithThousands(scorer.PatternSpace())
+            << " patterns: " << WithThousands(scorer.PatternsIn(Zone::kDrop)) << " drop, "
+            << WithThousands(scorer.PatternsIn(Zone::kCheck)) << " check, "
+            << WithThousands(scorer.PatternsIn(Zone::kEmit)) << " certain";
+    }
+    out << "\n";
+    const unsigned threads = ResolveThreads(options.threads);
+    if (!options.merge_path.empty()) {
+        out << "Predictions    " << options.merge_path << "  (" << threads
+            << (threads == 1 ? " shard" : " shards") << " merged at the end)\n";
+    } else {
+        out << "Predictions    " << options.out_dir << "  (" << threads
+            << (threads == 1 ? " shard" : " shards")
+            << (options.format == EdgeFormat::kCsv ? ", csv)" : ", binary)") << "\n";
+    }
+    if (!options.spill_dir.empty()) {
+        out << "Spill          " << options.spill_dir;
+        if (options.spill_sample > 0.0) {
+            out << "  (sampling " << std::setprecision(4) << options.spill_sample
+                << " of every candidate)";
+        }
+        out << "\n";
+    }
+    if (options.max_edges > 0) {
+        out << "Limit          " << WithThousands(options.max_edges) << " predictions\n";
+    }
+    out << "\n";
+
+    out << std::left << std::setw(36) << "Source" << std::right << std::setw(20)
+        << "Candidate pairs" << std::setw(16) << "Largest group" << "\n";
+    out << std::string(72, '-') << "\n";
+    uint64_t sum = 0;
+    bool all_exact = true;
+    for (size_t s = 0; s < plan.Size(); ++s) {
+        bool exact = false;
+        const uint64_t pairs = plan.ApproximatePairs(s, &exact);
+        all_exact = all_exact && exact;
+        sum += pairs;
+        out << std::left << std::setw(36) << Truncate(plan.at(s).name, 35) << std::right
+            << std::setw(20) << ((exact ? "" : "~") + WithThousands(pairs))
+            << std::setw(16) << WithThousands(plan.LargestGroup(s)) << "\n";
+    }
+    out << std::string(72, '-') << "\n";
+    out << std::left << std::setw(36) << "Sum over sources" << std::right << std::setw(20)
+        << ((all_exact ? "" : "~") + WithThousands(sum)) << "\n";
+    const double space = store.PairSpace(plan.mode());
+    if (space > 0.0) {
+        out << std::left << std::setw(36) << "Pairs unblocked" << std::right
+            << std::setw(20) << WithThousands(static_cast<uint64_t>(space)) << "\n";
+    }
+    if (all_exact) {
+        out << "The sum bounds the candidates from above: a pair an earlier source "
+               "produces\nis not produced again, and the progress line measures "
+               "against the sum.\n\n";
+    } else {
+        out << "A count marked ~ is the pooled count scaled to the cross-dataset "
+               "share of the\npair space, since the exact one costs a sort per "
+               "source; explain-blocking pays\nit. The progress line paces the "
+               "sources against these.\n\n";
+    }
+    out.flush();
 }
 
 void PrintPredictReport(const PredictReport& report, const Scorer& scorer,

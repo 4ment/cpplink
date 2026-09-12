@@ -106,6 +106,13 @@ class BlockingPlan {
     // Exact candidate count for one source, from term frequencies alone: no sort,
     // no enumeration. Summing these over sources bounds the union from above.
     uint64_t CountPairs(size_t source) const;
+    // `CountPairs` where that is closed form, and otherwise an estimate that is:
+    // the cross-dataset count of a keyed source needs the rows grouped, which is a
+    // sort per source, and a progress line or a plan table is not worth one. The
+    // estimate is the pooled count scaled by the share of the pair space that
+    // crosses the inputs, exact when a value's rows split between the inputs as
+    // the rows do. `exact` says which was returned.
+    uint64_t ApproximatePairs(size_t source, bool* exact) const;
     // The largest group the source would enumerate, in rows. A single huge group
     // is quadratic and is the usual reason a run never finishes.
     uint64_t LargestGroup(size_t source) const;
@@ -221,6 +228,9 @@ class BlockingPlan {
     // The unblocked source's count: the triangle, or the cross product in link
     // mode. Closed form, with no groups to walk.
     uint64_t CountAllPairs() const;
+    // A keyed or windowed source's count over every pair of the store, from the
+    // term frequencies, whichever mode the plan is in.
+    uint64_t CountPooledPairs(size_t source_index) const;
 
     // Cross-dataset counting cannot come from the term frequencies, which pool the
     // inputs: it needs the rows grouped, so this one sorts.
