@@ -66,6 +66,12 @@ struct PredictOptions {
     // re-tune upward and not enough to see what a lower threshold would find.
     double spill_sample = 0.0;
     uint64_t spill_seed = 20260904;
+    // Where to report progress while the run walks the pair stream, or null for
+    // none. With `progress_columns` set the stream is a terminal that wide and
+    // one line is redrawn in place; without it a line is printed every few
+    // percent, which is what a log file wants.
+    std::ostream* progress = nullptr;
+    unsigned progress_columns = 0;
 };
 
 struct PredictReport {
@@ -93,6 +99,16 @@ struct PredictReport {
     std::string merged_path;
     double merge_seconds = 0.0;
 };
+
+// What the run is about to do, printed before a pair is enumerated: the inputs,
+// the threshold and the zones it cuts the pattern space into, where the output
+// goes, and every source priced by `CountPairs`. The sum over sources bounds the
+// candidates from above, and it is the denominator the progress line reports
+// against.
+void PrintPredictPlan(const RecordStore& store, const BlockingPlan& plan,
+                      const ComparisonSet& comparisons, const Scorer& scorer,
+                      const PredictOptions& options, double load_seconds,
+                      std::ostream& out);
 
 // Scores the deduplicated union of every source and writes the edges above the
 // threshold, one shard per thread. Nothing holds a row per candidate pair: a pair

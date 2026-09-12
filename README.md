@@ -217,9 +217,11 @@ cpplink simplify --schema examples/sample_schema.json --model model.json \
 
 # Score every candidate pair and write the predictions above a threshold. --out
 # names a directory to get one shard per thread, or a .csv/.parquet file to get
-# one file: threads still write a shard each and the run merges them at the end
+# one file: threads still write a shard each and the run merges them at the end.
+# -v prints the plan first (every source priced, the threshold, where the output
+# goes) and a progress line while the pairs are walked, on stderr
 cpplink predict --schema examples/sample_schema.json --model model.json \
-                --out predictions.parquet --threshold 20 data.parquet
+                --out predictions.parquet --threshold 20 -v data.parquet
 
 # Re-score a spilled run under a new model, without comparing anything again
 cpplink predict --schema examples/sample_schema.json --model model.json \

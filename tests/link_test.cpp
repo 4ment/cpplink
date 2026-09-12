@@ -165,6 +165,45 @@ TEST_F(LinkFixture, CountMatchesEnumerationForEverySourceInLinkMode) {
     }
 }
 
+// The count a progress line paces against does not pay a sort: in dedup mode it
+// is the exact closed form, and in link mode a keyed source is priced as its
+// pooled count scaled to the cross share of the pair space -- exact if a value's
+// rows split as the rows do, an estimate otherwise, and said to be one. Windows
+// and the unblocked source are closed form either way and stay exact.
+TEST_F(LinkFixture, ApproximateCountIsExactWhereNoSortIsNeededAndSaysSoWhereItIsNot) {
+    for (const std::string& config : Configurations()) {
+        cpplink::BlockingPlan dedup;
+        Plan(config, cpplink::PairMode::kAll, &dedup);
+        for (size_t s = 0; s < dedup.Size(); ++s) {
+            bool exact = false;
+            EXPECT_EQ(dedup.ApproximatePairs(s, &exact), dedup.CountPairs(s))
+                << config << " source " << dedup.at(s).name;
+            EXPECT_TRUE(exact) << config << " source " << dedup.at(s).name;
+        }
+
+        cpplink::BlockingPlan link;
+        Plan(config, cpplink::PairMode::kCrossDataset, &link);
+        const double share = static_cast<double>(kSplit * (kRows - kSplit)) /
+                             static_cast<double>(kRows * (kRows - 1) / 2);
+        for (size_t s = 0; s < link.Size(); ++s) {
+            bool exact = false;
+            const uint64_t priced = link.ApproximatePairs(s, &exact);
+            const cpplink::SourceKind kind = link.at(s).kind;
+            if (kind == cpplink::SourceKind::kSortedNeighbourhood ||
+                kind == cpplink::SourceKind::kAllPairs) {
+                EXPECT_TRUE(exact) << config << " source " << link.at(s).name;
+                EXPECT_EQ(priced, link.CountPairs(s))
+                    << config << " source " << link.at(s).name;
+            } else {
+                EXPECT_FALSE(exact) << config << " source " << link.at(s).name;
+                const double pooled = static_cast<double>(dedup.CountPairs(s));
+                EXPECT_EQ(priced, static_cast<uint64_t>(pooled * share + 0.5))
+                    << config << " source " << link.at(s).name;
+            }
+        }
+    }
+}
+
 // A task is rows [begin, end) of one group, so the partner cursor has to be
 // correct for a range that does not start at the group's first row. Every split
 // point is checked, because only the first row of a task exercises that setup.
