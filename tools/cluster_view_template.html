@@ -90,6 +90,13 @@ main { flex: 1; display: flex; min-height: 0; }
   background: var(--panel); display: flex; flex-direction: column; min-height: 0;
 }
 .controls { padding: 10px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 8px; }
+.modes { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.modes button {
+  flex: 1; font: inherit; font-size: 12px; padding: 4px 0; border: none; cursor: pointer;
+  background: var(--bg); color: var(--muted);
+}
+.modes button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.modes button:disabled { opacity: 0.45; cursor: default; }
 .controls input, .controls select {
   font: inherit; font-size: 13px; width: 100%; padding: 5px 8px; color: var(--ink);
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
@@ -106,6 +113,7 @@ main { flex: 1; display: flex; min-height: 0; }
 .item.more { justify-content: center; color: var(--muted); font-size: 12px; }
 .item.more .cid { flex: none; }
 .item .cid { font-family: var(--mono); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .cid .sep { color: var(--muted); padding: 0 3px; }
 .item .sz { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pill {
   font-size: 10px; padding: 1px 5px; border-radius: 999px; white-space: nowrap;
@@ -152,6 +160,27 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
 .matrix td.weak { background: var(--warn-soft); color: var(--warn); }
 .matrix th.rowhead { text-align: left; font-family: var(--mono); text-transform: none; letter-spacing: 0; }
 .note { color: var(--muted); font-size: 12px; }
+.links { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.links button.ghost { font-family: var(--mono); }
+.matrix td.pair, .matrix td.pair:hover { cursor: pointer; }
+.matrix td.pair:hover { background: var(--sel); color: var(--ink); }
+.wf { width: 100%; height: auto; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.wf text { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
+.wf text.dim { fill: var(--muted); }
+.wf text.tick { font-size: 10px; fill: var(--muted); text-anchor: middle; }
+.wf text.val { font-size: 10.5px; }
+.wf text.name { font-weight: 600; }
+.wf text.lvl { fill: var(--muted); text-anchor: end; font-size: 10px; }
+.wf line.grid { stroke: var(--line-soft); }
+.wf line.zero { stroke: var(--muted); stroke-dasharray: 3 3; }
+.wf line.thr { stroke: var(--accent); stroke-dasharray: 4 3; stroke-width: 1.5; }
+.wf line.step { stroke: var(--line); }
+.wf rect.up { fill: var(--accent); }
+.wf rect.down { fill: var(--bad); }
+.wf rect.tf { fill: var(--warn); }
+.wf rect.total { fill: var(--ink); opacity: 0.85; }
+.wf rect.prior { fill: var(--muted); }
+.wf g.bar:hover rect { opacity: 0.7; }
 .net {
   width: 100%; height: auto; max-height: 55vh; display: block;
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
@@ -196,29 +225,23 @@ kbd {
 <main>
   <div id="side">
     <div class="controls">
+      <div class="modes">
+        <button data-mode="clusters" class="on">clusters</button>
+        <button data-mode="pairs" title="the run's predictions, one row per pair">pairs</button>
+      </div>
       <input id="q" type="search" placeholder="search id or any value">
       <div class="row">
         <label for="sort">sort</label>
-        <select id="sort">
-          <option value="discord">most disagreement</option>
-          <option value="size">size</option>
-          <option value="weakest">weakest edge</option>
-          <option value="id">id</option>
-        </select>
+        <select id="sort"></select>
       </div>
       <div class="row">
         <label for="only">show</label>
-        <select id="only">
-          <option value="all">every cluster</option>
-          <option value="split">columns that disagree</option>
-          <option value="transitive">transitive-only links</option>
-          <option value="mixed">mixed against truth</option>
-        </select>
+        <select id="only"></select>
       </div>
     </div>
     <div id="list"></div>
   </div>
-  <div id="detail"><div class="empty-state">Pick a cluster.</div></div>
+  <div id="detail"><div class="empty-state">Pick a cluster or a pair.</div></div>
 </main>
 <script type="application/json" id="payload">__CLUSTER_DATA__</script>
 <script>
@@ -235,14 +258,31 @@ const truthColors = ['#2f6f5e', '#8a5a2b', '#4a5d9c', '#8c3f6d', '#6b7a2f', '#a0
 
 let COLS = [];
 let SOURCE = '';
-let TOTALS = { clusters: 0, records: 0 };
+let TOTALS = { clusters: 0, records: 0, pairs: 0 };
 let HAS_TRUTH = false;
+let HAS_MODEL = false;
+let MODEL = null;        // embedded mode: the per-level table the ledgers expand from
+let mode = 'clusters';   // what the sidebar lists: clusters, or the run's predictions
 let entries = [];        // the list, as far as it has been loaded
-let matched = 0;         // clusters the current filter matches
+let matched = 0;         // entries the current filter matches
 let exhausted = false;
-let current = null;
+let current = null;      // {kind: 'cluster', id} or {kind: 'pair', a, b}
 let details = new Map();
 let token = 0;           // guards against a slow response for an old query
+
+// The sidebar's sort and filter are per mode; the same two selects carry both.
+const SORTS = {
+    clusters: [['discord', 'most disagreement'], ['size', 'size'],
+               ['weakest', 'weakest edge'], ['id', 'id']],
+    pairs: [['weakest', 'weakest first'], ['strongest', 'strongest first'], ['id', 'id']],
+};
+const ONLYS = {
+    clusters: [['all', 'every cluster'], ['split', 'columns that disagree'],
+               ['transitive', 'transitive-only links'], ['mixed', 'mixed against truth']],
+    pairs: [['all', 'every prediction'], ['within', 'inside a cluster'],
+            ['rejected', 'rejected by clustering']],
+};
+const pairKey = (a, b) => a + '\u0000' + b;
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s === null || s === undefined ? '' : s)
@@ -401,7 +441,7 @@ function network(c) {
             `scored above the threshold; a pair with no line is in this cluster ` +
             `through the others. Line weight is the match weight, the thinnest ` +
             `${links.length ? `(${lo.toFixed(1)} bits) ` : ''}marked. ` +
-            `Click a line to hold its two records lit in the table above.</div>`;
+            `Click a line to open that pair and its waterfall.</div>`;
     }
     c.net = body
         ? `<div class="section"><h3>Network</h3>${body}</div>`
@@ -430,15 +470,17 @@ async function loadPage(reset) {
     const query = { q: $('#q').value.trim(), sort: $('#sort').value,
                     only: $('#only').value, offset: entries.length, limit: PAGE };
     if (LIVE) {
-        const page = await api('/api/list', query);
+        const page = await api(mode === 'pairs' ? '/api/pairs' : '/api/list', query);
         if (mine !== token) return;
-        entries = entries.concat(page.clusters);
+        entries = entries.concat(mode === 'pairs' ? page.pairs : page.clusters);
         matched = page.matched;
         exhausted = entries.length >= matched;
     } else {
-        const all = EMBEDDED.clusters.filter(c => passes(c, query));
+        const all = mode === 'pairs'
+            ? EMBEDDED.pairs.filter(p => pairPasses(p, query))
+            : EMBEDDED.clusters.filter(c => passes(c, query));
         matched = all.length;
-        sortLocal(all, query.sort);
+        if (mode === 'pairs') sortPairs(all, query.sort); else sortLocal(all, query.sort);
         entries = all.slice(0, entries.length + PAGE);
         exhausted = entries.length >= matched;
     }
@@ -451,13 +493,13 @@ function passes(c, query) {
     return !query.q || c.hay.includes(query.q.toLowerCase());
 }
 
-function sortLocal(list, sort) {
-    const key = {
-        discord: c => [-c.discord, -c.size],
-        size: c => [-c.size, -c.discord],
-        weakest: c => [c.weakest === null ? Infinity : c.weakest, -c.size],
-        id: c => [c.id],
-    }[sort];
+function pairPasses(p, query) {
+    if (query.only === 'within' && p.ca !== p.cb) return false;
+    if (query.only === 'rejected' && p.ca === p.cb) return false;
+    return !query.q || p.hay.includes(query.q.toLowerCase());
+}
+
+function sortBy(list, key) {
     list.sort((a, b) => {
         const ka = key(a), kb = key(b);
         for (let i = 0; i < ka.length; i++) {
@@ -468,27 +510,99 @@ function sortLocal(list, sort) {
     });
 }
 
+function sortLocal(list, sort) {
+    sortBy(list, {
+        discord: c => [-c.discord, -c.size],
+        size: c => [-c.size, -c.discord],
+        weakest: c => [c.weakest === null ? Infinity : c.weakest, -c.size],
+        id: c => [c.id],
+    }[sort]);
+}
+
+function sortPairs(list, sort) {
+    sortBy(list, {
+        weakest: p => [p.w, p.a, p.b],
+        strongest: p => [-p.w, p.a, p.b],
+        id: p => [p.a, p.b],
+    }[sort]);
+}
+
 async function detail(id) {
     if (details.has(id)) return details.get(id);
-    const entry = entries.find(c => c.id === id);
-    const got = LIVE ? await api('/api/cluster', { id }) : entry;
+    const got = LIVE ? await api('/api/cluster', { id })
+                     : EMBEDDED.clusters.find(c => c.id === id);
     details.set(id, got);
     return got;
+}
+
+// A pair's detail is its two records, the weight, and the ledger behind it.
+// Embedded, the records are the ones its clusters hold and the ledger is
+// expanded from the compact form the builder wrote; live, the server answers
+// and the ledger is the explainer's own object.
+async function pairDetail(a, b) {
+    const key = pairKey(a, b);
+    if (details.has(key)) return details.get(key);
+    let got;
+    if (LIVE) {
+        got = await api('/api/pair', { a, b });
+    } else {
+        const p = EMBEDDED.pairIndex.get(key);
+        got = p ? {
+            a, b, w: p.w, ca: p.ca, cb: p.cb,
+            rows: [EMBEDDED.records.get(a), EMBEDDED.records.get(b)],
+            waterfall: p.wf ? expand(p.wf) : null,
+        } : null;
+        if (got && HAS_TRUTH && got.rows[0] && got.rows[1]) {
+            // Truth labels are per cluster, so across two clusters the pair's
+            // own labels are the two entity groups the builder recorded.
+            const ta = EMBEDDED.entityOf.get(a), tb = EMBEDDED.entityOf.get(b);
+            got.rows = got.rows.map(r => ({ id: r.id, v: r.v }));
+            got.rows[0].t = 0;
+            got.rows[1].t = ta !== undefined && ta === tb ? 0 : 1;
+        }
+    }
+    details.set(key, got);
+    return got;
+}
+
+// The compact ledger back to the shape `cpplink explain --json` writes.
+function expand(wf) {
+    let running = MODEL.prior;
+    const steps = wf.s.map(([level, tf, frequency], c) => {
+        const cmp = MODEL.comparisons[c], lvl = cmp.levels[level];
+        running += lvl.bits + (tf || 0);
+        return { name: cmp.name, label: lvl.label, level, m: lvl.m, u: lvl.u,
+                 bits: lvl.bits, tf: tf || 0, frequency: frequency || 0, running };
+    });
+    const interactions = wf.i.map((bits, i) => {
+        running += bits;
+        return { name: MODEL.interactions[i], bits, running };
+    });
+    return { prior: MODEL.prior, records: MODEL.records, threshold: MODEL.threshold,
+             steps, interactions, weight: wf.w, probability: wf.p,
+             bracket: wf.b, zone: wf.z, emitted: wf.w >= MODEL.threshold };
 }
 
 function renderList() {
     const list = $('#list');
     list.innerHTML = '';
-    for (const c of entries) {
+    for (const e of entries) {
         const el = document.createElement('div');
-        el.className = 'item' + (current && c.id === current.id ? ' on' : '');
-        let pills = '';
-        if (c.entities > 1) pills += `<span class="pill bad">${c.entities} entities</span>`;
-        if (c.discord) pills += `<span class="pill">${c.discord} split</span>`;
-        else pills += `<span class="pill ok">all agree</span>`;
-        el.innerHTML = `<span class="cid">${esc(c.id)}</span>${pills}` +
-            `<span class="sz">${c.size.toLocaleString()}</span>`;
-        el.onclick = () => select(c.id);
+        el.className = 'item' + (isCurrent(e) ? ' on' : '');
+        if (mode === 'pairs') {
+            const pill = e.ca !== e.cb ? '<span class="pill">rejected</span>' : '';
+            el.innerHTML = `<span class="cid">${esc(e.a)}<span class="sep">&middot;</span>` +
+                `${esc(e.b)}</span>${pill}<span class="sz">${e.w.toFixed(1)}</span>`;
+            el.onclick = () => selectPair(e.a, e.b);
+        } else {
+            let pills = '';
+            if (e.entities > 1) pills += `<span class="pill bad">${e.entities} entities</span>`;
+            if (e.discord) pills += `<span class="pill">${e.discord} split</span>`;
+            else pills += `<span class="pill ok">all agree</span>`;
+            el.innerHTML = `<span class="cid">${esc(e.id)}</span>${pills}` +
+                `<span class="sz">${e.size.toLocaleString()}</span>`;
+            el.onclick = () => select(e.id);
+        }
         list.appendChild(el);
     }
     if (!exhausted) {
@@ -498,18 +612,72 @@ function renderList() {
         more.onclick = async () => { await loadPage(false); renderList(); };
         list.appendChild(more);
     }
+    const what = mode === 'pairs'
+        ? `<b>${matched.toLocaleString()}</b> of <b>${TOTALS.pairs.toLocaleString()}</b> predictions`
+        : `<b>${matched.toLocaleString()}</b> of <b>${TOTALS.clusters.toLocaleString()}</b> clusters`;
     $('#hmeta').innerHTML =
-        `<b>${matched.toLocaleString()}</b> of <b>${TOTALS.clusters.toLocaleString()}</b> ` +
-        `clusters &middot; ${TOTALS.records.toLocaleString()} records &middot; ${esc(SOURCE)}` +
+        `${what} &middot; ${TOTALS.records.toLocaleString()} records &middot; ${esc(SOURCE)}` +
         (LIVE ? ' &middot; <span style="color:var(--accent)">live</span>' : '');
+}
+
+function isCurrent(e) {
+    if (!current) return false;
+    if (mode === 'pairs') return current.kind === 'pair' && current.a === e.a && current.b === e.b;
+    return current.kind === 'cluster' && current.id === e.id;
+}
+
+function fillSelect(el, options, keep) {
+    el.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
+    if (keep && options.some(([v]) => v === keep)) el.value = keep;
+}
+
+async function setMode(next) {
+    if (next === mode || (next === 'pairs' && !TOTALS.pairs)) return;
+    mode = next;
+    for (const b of document.querySelectorAll('.modes button')) {
+        b.classList.toggle('on', b.dataset.mode === mode);
+    }
+    fillSelect($('#sort'), SORTS[mode]);
+    fillSelect($('#only'), ONLYS[mode]);
+    try { localStorage.setItem('cpplink.mode', mode); } catch (e) {}
+    await rebuild(true);
 }
 
 async function rebuild(reset) {
     await loadPage(reset !== false);
     renderList();
-    if (!current || !entries.some(c => c.id === current.id)) {
-        await select(entries.length ? entries[0].id : null);
+    if (!entries.some(isCurrent)) {
+        if (!entries.length) await select(null);
+        else if (mode === 'pairs') await selectPair(entries[0].a, entries[0].b);
+        else await select(entries[0].id);
     }
+}
+
+// The rows of a cluster, or of a pair, as one table: a cell differing from the
+// column's commonest value is marked, and the mark is what a reader scans for.
+function recordsTable(rows, stats, opts) {
+    const truthy = rows.length && rows[0].t !== undefined;
+    const head = ['<th>id</th>'].concat(truthy ? ['<th>truth</th>'] : [])
+        .concat(COLS.map((name, i) => {
+            const s = stats[i];
+            const d = s.distinct > 1 ? ` <span class="dcount">(${s.distinct})</span>` : '';
+            return `<th>${esc(name)}${d}</th>`;
+        })).join('');
+    const body = rows.map((r, i) => {
+        const cells = COLS.map((_, i) => {
+            const s = stats[i], v = r.v[i];
+            if (v === null || v === '') return '<td class="val miss">&mdash;</td>';
+            // Two rows have no majority, so both sides of a difference are marked.
+            const odd = s.distinct > 1 && (opts && opts.both ? true : v !== s.top);
+            return `<td class="val${odd ? ' odd' : ''}">${esc(v)}</td>`;
+        }).join('');
+        const colour = truthColors[(r.t || 0) % truthColors.length];
+        const t = truthy ? `<td><span class="truth" style="background:${colour}22;` +
+            `color:${colour}">${r.t + 1}</span></td>` : '';
+        return `<tr data-i="${i}"><td class="id">${esc(r.id)}</td>${t}${cells}</tr>`;
+    }).join('');
+    return `<div class="tablewrap"><table><thead><tr>${head}</tr></thead>` +
+        `<tbody>${body}</tbody></table></div>`;
 }
 
 async function select(id) {
@@ -519,12 +687,14 @@ async function select(id) {
         renderList();
         return;
     }
-    current = { id };
+    current = { kind: 'cluster', id };
     renderList();
+    remember();
     const d = $('#detail');
     d.innerHTML = '<div class="empty-state">Loading&hellip;</div>';
     const c = await detail(id);
     if (!current || current.id !== id) return;
+    if (!c) { d.innerHTML = `<div class="empty-state">No cluster ${esc(id)}.</div>`; return; }
     const view = summarise(c);
 
     let sub = `${c.size.toLocaleString()} records`;
@@ -557,27 +727,6 @@ async function select(id) {
             `<span class="v">${s.distinct} values</span></div>`;
     }).join('');
 
-    const truthy = c.rows.length && c.rows[0].t !== undefined;
-    const head = ['<th>id</th>'].concat(truthy ? ['<th>truth</th>'] : [])
-        .concat(COLS.map((name, i) => {
-            const s = view.stats[i];
-            const d = s.distinct > 1 ? ` <span class="dcount">(${s.distinct})</span>` : '';
-            return `<th>${esc(name)}${d}</th>`;
-        })).join('');
-
-    const body = c.rows.map((r, i) => {
-        const cells = COLS.map((_, i) => {
-            const s = view.stats[i], v = r.v[i];
-            if (v === null || v === '') return '<td class="val miss">&mdash;</td>';
-            const odd = s.distinct > 1 && v !== s.top;
-            return `<td class="val${odd ? ' odd' : ''}">${esc(v)}</td>`;
-        }).join('');
-        const colour = truthColors[(r.t || 0) % truthColors.length];
-        const t = truthy ? `<td><span class="truth" style="background:${colour}22;` +
-            `color:${colour}">${r.t + 1}</span></td>` : '';
-        return `<tr data-i="${i}"><td class="id">${esc(r.id)}</td>${t}${cells}</tr>`;
-    }).join('');
-
     let matrix = '';
     if (c.edges && c.rows.length <= 40) {
         const at = new Map(c.rows.map((r, i) => [r.id, i]));
@@ -593,11 +742,12 @@ async function select(id) {
             if (i === j) return '<td class="none">&middot;</td>';
             const x = w.get(Math.min(i, j) + ':' + Math.max(i, j));
             if (x === undefined) return '<td class="none">&mdash;</td>';
-            return `<td class="${x === lo ? 'weak' : ''}">${x.toFixed(1)}</td>`;
+            return `<td class="pair${x === lo ? ' weak' : ''}" data-i="${Math.min(i, j)}" ` +
+                `data-j="${Math.max(i, j)}" title="open this pair">${x.toFixed(1)}</td>`;
         }).join('');
         matrix = `
       <div class="section">
-        <h3>Edge weights, in bits &mdash; a dash is a pair the run never scored above the threshold</h3>
+        <h3>Prediction weights, in bits &mdash; a dash is a pair the run never scored above the threshold; click one to see its waterfall</h3>
         <div class="tablewrap"><table class="matrix">
           <tr><th></th>${c.rows.map((_, j) => `<th>${j + 1}</th>`).join('')}</tr>
           ${c.rows.map((r, i) => `<tr><th class="rowhead">${i + 1}. ${esc(r.id)}</th>${cells(i)}</tr>`).join('')}
@@ -609,45 +759,216 @@ async function select(id) {
     <h2>${esc(c.id)}</h2>
     <div class="sub">${sub}</div>
     <div class="section"><h3>What they have in common</h3><div class="chips">${chips}</div></div>
-    <div class="section"><h3>Records</h3><div class="tablewrap"><table>
-      <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></div>
+    <div class="section"><h3>Records</h3>${recordsTable(c.rows, view.stats)}</div>
     ${showNet ? network(c) : ''}
     ${matrix}`;
     // A node is a record and a line is a pair of them, so hovering either lights
-    // the rows it names; a line is also clickable, and that one holds.
+    // the rows it names; a line is also clickable, and that one opens the pair.
     const table = d.querySelector('tbody');
     const lit = (rows, on) => rows.forEach(r => r.classList.toggle('lit', on));
+    const edgeOf = (i, j) => c.edges.find(([a, b]) =>
+        (a === c.rows[i].id && b === c.rows[j].id) || (a === c.rows[j].id && b === c.rows[i].id));
     for (const node of d.querySelectorAll('.net g.node')) {
         const row = table.children[+node.dataset.i];
         node.onmouseenter = () => lit([row], true);
         node.onmouseleave = () => lit([row], false);
         node.onclick = () => row.scrollIntoView({ block: 'nearest' });
     }
-    let held = null;
     for (const link of d.querySelectorAll('.net g.link')) {
         const ends = [table.children[+link.dataset.i], table.children[+link.dataset.j]];
         link.onmouseenter = () => lit(ends, true);
         link.onmouseleave = () => lit(ends, false);
         link.onclick = () => {
-            if (held) {
-                held.link.classList.remove('on');
-                held.ends.forEach(r => r.classList.remove('pin'));
-            }
-            if (held && held.link === link) { held = null; return; }
-            link.classList.add('on');
-            ends.forEach(r => r.classList.add('pin'));
-            held = { link, ends };
-            ends[0].scrollIntoView({ block: 'nearest' });
+            const e = edgeOf(+link.dataset.i, +link.dataset.j);
+            if (e) showPair(e[0], e[1]);
+        };
+    }
+    for (const cell of d.querySelectorAll('.matrix td.pair')) {
+        cell.onclick = () => {
+            const e = edgeOf(+cell.dataset.i, +cell.dataset.j);
+            if (e) showPair(e[0], e[1]);
         };
     }
     d.scrollTop = 0;
 }
 
+// Opening a pair from a cluster keeps the cluster list as it is: the pair is
+// shown in the detail pane with a way back, not selected in a list it is not in.
+async function showPair(a, b) {
+    if (mode === 'pairs') return selectPair(a, b);
+    current = { kind: 'pair', a, b, from: current && current.id };
+    await renderPair(a, b);
+}
+
+async function selectPair(a, b) {
+    current = { kind: 'pair', a, b };
+    renderList();
+    await renderPair(a, b);
+}
+
+// The address names what is open, so a pair or a cluster can be linked to:
+// #cluster=<id>, #pair=<a>,<b>, or #pairs for the list alone.
+function remember() {
+    if (!current) return;
+    const hash = current.kind === 'pair'
+        ? `#pair=${encodeURIComponent(current.a)},${encodeURIComponent(current.b)}`
+        : `#cluster=${encodeURIComponent(current.id)}`;
+    history.replaceState(null, '', hash);
+}
+
+async function renderPair(a, b) {
+    const d = $('#detail');
+    d.innerHTML = '<div class="empty-state">Loading&hellip;</div>';
+    remember();
+    const p = await pairDetail(a, b);
+    if (!current || current.kind !== 'pair' || current.a !== a || current.b !== b) return;
+    if (!p || !p.rows[0] || !p.rows[1]) {
+        d.innerHTML = `<div class="empty-state">No prediction ${esc(a)} &middot; ${esc(b)}.</div>`;
+        return;
+    }
+    const rejected = p.ca !== p.cb;
+    let sub = `<b>${p.w.toFixed(2)} bits</b>`;
+    if (p.waterfall) sub += ` &middot; posterior ${probability(p.waterfall.probability)}`;
+    sub += rejected
+        ? ` &middot; <span style="color:var(--warn)">rejected by clustering</span>: the two records sit in different clusters`
+        : ` &middot; inside one cluster`;
+    if (p.rows[0].t !== undefined) {
+        sub += p.rows[0].t === p.rows[1].t
+            ? ' &middot; <span style="color:var(--accent)">same entity in the truth</span>'
+            : ' &middot; <span style="color:var(--bad)">different entities in the truth</span>';
+    }
+    const links = [];
+    if (current.from) links.push(`<button class="ghost" data-cluster="${esc(current.from)}">&larr; back to ${esc(current.from)}</button>`);
+    for (const cid of new Set([p.ca, p.cb])) {
+        if (cid !== current.from) links.push(`<button class="ghost" data-cluster="${esc(cid)}">cluster ${esc(cid)}</button>`);
+    }
+    const stats = statsOf(p.rows, null);
+    let ledger;
+    if (p.waterfall) {
+        ledger = waterfall(p.waterfall);
+    } else {
+        ledger = `<div class="note">${HAS_MODEL
+            ? 'No waterfall for this pair.'
+            : 'Write the waterfalls with <code>cpplink explain --predictions</code> and run the viewer with <code>--waterfalls</code> and <code>--model</code> to see how this weight was reached.'}</div>`;
+    }
+    d.innerHTML = `
+    <h2>${esc(a)} <span style="color:var(--muted)">&middot;</span> ${esc(b)}</h2>
+    <div class="sub">${sub}</div>
+    <div class="links">${links.join('')}</div>
+    <div class="section"><h3>Records</h3>${recordsTable(p.rows, stats, { both: true })}</div>
+    <div class="section"><h3>Match weight, as a ledger</h3>${ledger}</div>`;
+    for (const b of d.querySelectorAll('.links button')) {
+        b.onclick = async () => {
+            if (mode !== 'clusters') await setMode('clusters');
+            select(b.dataset.cluster);
+        };
+    }
+    d.scrollTop = 0;
+}
+
+function probability(p) {
+    if (p >= 0.9999) return p.toFixed(6);
+    if (p >= 0.001) return p.toFixed(4);
+    return p.toExponential(2);
+}
+
+const fmt = x => (x >= 0 ? '+' : '') + x.toFixed(2);
+const sci = x => x === undefined || x === null ? '?' : (x >= 0.01 ? x.toFixed(3) : x.toExponential(2));
+
+// The waterfall: one floating bar per row of the ledger, from the running total
+// before it to the running total after, ending at the match weight. A
+// term-frequency move is its own thinner bar, since it is the part of the row
+// that depends on the value rather than the level, and the threshold is the
+// line the whole picture is read against.
+function waterfall(w) {
+    const rows = [];
+    rows.push({ kind: 'prior', name: '(prior)', label: 'lambda', from: 0, to: w.prior,
+                tip: `prior odds: ${fmt(w.prior)} bits` });
+    let at = w.prior;
+    for (const s of w.steps) {
+        const tip = [`${s.name}: ${s.label}`];
+        if (s.m !== undefined && s.m !== null) tip.push(`m = ${sci(s.m)}   u = ${sci(s.u)}`);
+        tip.push(`log2(m/u) = ${fmt(s.bits)}`);
+        tip.push(`values: ${s.values ? s.values.join('  |  ') : '(see the records above)'}`);
+        rows.push({ kind: s.bits >= 0 ? 'up' : 'down', name: s.name, label: s.label,
+                    from: at, to: at + s.bits, tip: tip.join('\n') });
+        at += s.bits;
+        if (s.tf) {
+            const rare = s.frequency ? `${s.frequency.toLocaleString()} of ${w.records.toLocaleString()} rows carry the value` : 'neighbourhood mass';
+            rows.push({ kind: 'tf', name: '', label: 'term frequency', from: at, to: at + s.tf,
+                        tip: `${s.name}: term-frequency move ${fmt(s.tf)}\n${rare}` });
+            at += s.tf;
+        }
+    }
+    for (const t of w.interactions) {
+        rows.push({ kind: t.bits >= 0 ? 'up' : 'down', name: '(interaction)', label: t.name,
+                    from: at, to: at + t.bits, tip: `${t.name}: ${fmt(t.bits)} bits` });
+        at += t.bits;
+    }
+    rows.push({ kind: 'total', name: 'match weight', label: `posterior ${probability(w.probability)}`,
+                from: 0, to: w.weight, tip: `match weight ${w.weight.toFixed(3)} bits` });
+
+    // Two label columns on the left, the comparison name and the level it hit,
+    // then the chart, then room for the value beside the last bar.
+    const W = 820, N = 8, L = 300, R = 80, TOP = 26, RH = 22, BH = 13;
+    const H = TOP + rows.length * RH + 8;
+    const points = rows.flatMap(r => [r.from, r.to]).concat([0, w.threshold]);
+    let lo = Math.min(...points), hi = Math.max(...points);
+    const pad = (hi - lo || 1) * 0.06;
+    lo -= pad; hi += pad;
+    const x = v => L + (v - lo) / (hi - lo) * (W - L - R);
+    const span = hi - lo;
+    const step = [1, 2, 5, 10, 20, 25, 50, 100, 200].find(s => span / s <= 9) || 500;
+    const clip = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;
+    let axis = '';
+    for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+        axis += `<line class="grid" x1="${x(v).toFixed(1)}" y1="${TOP - 4}" x2="${x(v).toFixed(1)}" y2="${H - 6}"/>` +
+            `<text class="tick" x="${x(v).toFixed(1)}" y="${TOP - 9}">${v}</text>`;
+    }
+    axis += `<line class="zero" x1="${x(0).toFixed(1)}" y1="${TOP - 4}" x2="${x(0).toFixed(1)}" y2="${H - 6}"/>`;
+    axis += `<line class="thr" x1="${x(w.threshold).toFixed(1)}" y1="${TOP - 4}" x2="${x(w.threshold).toFixed(1)}" y2="${H - 6}">` +
+        `<title>threshold ${w.threshold} bits</title></line>`;
+    let body = '';
+    rows.forEach((r, i) => {
+        const y = TOP + i * RH, mid = y + RH / 2;
+        const a = x(Math.min(r.from, r.to)), b = x(Math.max(r.from, r.to));
+        const h = r.kind === 'tf' ? BH - 5 : BH;
+        const yy = mid - h / 2;
+        body += `<text class="name" x="${N}" y="${mid + 4}">${esc(clip(r.name, 17))}</text>`;
+        body += `<text class="lvl" x="${L - 10}" y="${mid + 4}">${esc(clip(r.label, 24))}</text>`;
+        // The running total is continuous, so a hairline joins where one row
+        // ends to where the next begins.
+        if (i > 0 && i < rows.length - 1) {
+            body += `<line class="step" x1="${x(r.from).toFixed(1)}" y1="${(mid - RH).toFixed(1)}" ` +
+                `x2="${x(r.from).toFixed(1)}" y2="${mid.toFixed(1)}"/>`;
+        }
+        body += `<g class="bar"><title>${esc(r.tip)}</title>` +
+            `<rect class="${r.kind}" x="${a.toFixed(1)}" y="${yy.toFixed(1)}" ` +
+            `width="${Math.max(1, b - a).toFixed(1)}" height="${h}" rx="2"/></g>`;
+        // The value sits to the right of the bar whichever way it points, so
+        // it never lands on the label column or on the bar itself.
+        const value = r.kind === 'total' ? `= ${r.to.toFixed(2)}` : fmt(r.to - r.from);
+        body += `<text class="val${r.kind === 'tf' ? ' dim' : ''}" x="${(b + 5).toFixed(1)}" ` +
+            `y="${mid + 4}">${value}</text>`;
+    });
+    const zone = {
+        emit: 'every pair with this pattern clears the threshold, so no term-frequency table was consulted',
+        drop: 'no pair with this pattern can clear the threshold, whatever values it carries',
+        check: 'the bracket straddles the threshold, so this pattern was scored exactly',
+        unreachable: 'no evaluation can produce this pattern',
+    }[w.zone] || w.zone;
+    return `<svg class="wf" viewBox="0 0 ${W} ${H}">${axis}${body}</svg>` +
+        `<div class="note" style="margin-top:6px">Bits of match weight, left to right; the dashed ` +
+        `<span style="color:var(--accent)">green</span> line is the threshold (${w.threshold} bits) and ` +
+        `the grey one is even odds. Hover a bar for m, u and the values. Pattern bracket ` +
+        `${w.bracket[0].toFixed(1)} to ${w.bracket[1].toFixed(1)} bits: ${zone}.</div>`;
+}
+
 function move(step) {
-    const i = entries.findIndex(c => current && c.id === current.id);
+    const i = entries.findIndex(isCurrent);
     const next = entries[Math.max(0, Math.min(entries.length - 1, i + step))];
     if (next) {
-        select(next.id);
+        if (mode === 'pairs') selectPair(next.a, next.b); else select(next.id);
         $('#list').children[entries.indexOf(next)].scrollIntoView({ block: 'nearest' });
     }
 }
@@ -669,6 +990,9 @@ $('#q').addEventListener('input', () => {
 });
 $('#sort').addEventListener('change', () => rebuild(true));
 $('#only').addEventListener('change', () => rebuild(true));
+for (const b of document.querySelectorAll('.modes button')) {
+    b.onclick = () => setMode(b.dataset.mode);
+}
 $('#list').addEventListener('scroll', async e => {
     const el = e.target;
     if (exhausted || el.scrollTop + el.clientHeight < el.scrollHeight - 200) return;
@@ -681,7 +1005,7 @@ $('#net').checked = showNet;
 $('#net').addEventListener('change', () => {
     showNet = $('#net').checked;
     try { localStorage.setItem('cpplink.net', showNet ? '1' : '0'); } catch (e) {}
-    if (current) select(current.id);
+    if (current && current.kind === 'cluster') select(current.id);
 });
 $('#theme').onclick = () => {
     const now = document.documentElement.getAttribute('data-theme');
@@ -696,10 +1020,16 @@ $('#theme').onclick = () => {
         SOURCE = summary.source;
         TOTALS = summary.totals;
         HAS_TRUTH = summary.has_truth;
+        HAS_MODEL = summary.has_model;
     } else {
         COLS = EMBEDDED.columns;
         SOURCE = EMBEDDED.source;
+        MODEL = EMBEDDED.model || null;
+        HAS_MODEL = MODEL !== null;
         TOTALS = { clusters: EMBEDDED.totals.clusters, records: EMBEDDED.totals.records || 0 };
+        EMBEDDED.records = new Map();
+        EMBEDDED.entityOf = new Map();
+        EMBEDDED.pairs = [];
         for (const c of EMBEDDED.clusters) {
             const stats = statsOf(c.rows, null);
             c.size = c.size || c.rows.length + (c.more || 0);
@@ -709,10 +1039,50 @@ $('#theme').onclick = () => {
             c.entities = c.rows[0] && c.rows[0].t !== undefined
                 ? new Set(c.rows.map(r => r.t)).size : 0;
             c.hay = (c.id + ' ' + c.rows.map(r => r.id + ' ' + r.v.join(' ')).join(' ')).toLowerCase();
-            c.edges = (c.edges || []).map(([i, j, x]) => [c.rows[i].id, c.rows[j].id, x]);
+            for (const r of c.rows) {
+                EMBEDDED.records.set(r.id, r);
+                // An entity label is only comparable inside its cluster; across
+                // clusters the builder's group is what says "same entity".
+                if (r.g !== undefined) EMBEDDED.entityOf.set(r.id, r.g);
+            }
+            c.edges = (c.edges || []).map(([i, j, x, wf]) => {
+                const a = c.rows[i].id, b = c.rows[j].id;
+                EMBEDDED.pairs.push({ a, b, w: x, ca: c.id, cb: c.id, wf });
+                return [a, b, x];
+            });
         }
+        for (const p of EMBEDDED.rejected || []) EMBEDDED.pairs.push(p);
+        EMBEDDED.pairIndex = new Map();
+        for (const p of EMBEDDED.pairs) {
+            const ra = EMBEDDED.records.get(p.a), rb = EMBEDDED.records.get(p.b);
+            p.hay = (p.a + ' ' + p.b + ' ' + (ra ? ra.v.join(' ') : '') + ' ' +
+                     (rb ? rb.v.join(' ') : '')).toLowerCase();
+            EMBEDDED.pairIndex.set(pairKey(p.a, p.b), p);
+        }
+        TOTALS.pairs = EMBEDDED.pairs.length;
     }
-    await rebuild(true);
+    let remembered = 'clusters';
+    try { remembered = localStorage.getItem('cpplink.mode') || 'clusters'; } catch (e) {}
+    const hash = decodeURIComponent(location.hash.slice(1));
+    let open = null;
+    if (hash === 'pairs' || hash.startsWith('pair=')) remembered = 'pairs';
+    if (hash.startsWith('pair=')) {
+        const at = hash.indexOf(',');
+        if (at > 5) open = { kind: 'pair', a: hash.slice(5, at), b: hash.slice(at + 1) };
+    } else if (hash.startsWith('cluster=')) {
+        remembered = 'clusters';
+        open = { kind: 'cluster', id: hash.slice(8) };
+    }
+    fillSelect($('#sort'), SORTS.clusters);
+    fillSelect($('#only'), ONLYS.clusters);
+    if (!TOTALS.pairs) {
+        document.querySelector('.modes button[data-mode="pairs"]').disabled = true;
+        remembered = 'clusters';
+    }
+    if (open) current = open;  // so the list's first entry does not replace it
+    if (remembered === 'pairs') await setMode('pairs'); else await rebuild(true);
+    if (open && open.kind === 'pair') await selectPair(open.a, open.b);
+    else if (open) await select(open.id);
 })();
 </script>
 </body>

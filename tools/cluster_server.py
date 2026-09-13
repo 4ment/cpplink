@@ -4,7 +4,8 @@
 """Serve the cluster viewer over a DuckDB cache, for runs too large to embed.
 
     tools/cluster_server.py --schema s.json --clusters clusters.csv \
-        --predictions predictions.parquet --truth truth.csv data.parquet
+        --predictions predictions.parquet --waterfalls waterfalls.parquet \
+        --model m.json --truth truth.csv data.parquet
 
 Same page as cluster_view.py, but the clusters are queried rather than written
 into the file, so every cluster of the run is reachable instead of a sample.
@@ -18,6 +19,14 @@ the viewer can ever show -- the clustered records, never the singletons -- so
 it is a fraction of the dataset: at 20M records with 2.9M of them clustered,
 the parquet is read exactly once and every later request touches a table seven
 times smaller than the file.
+
+With `--waterfalls` the page also draws the waterfall of the prediction picked.
+The file is what `cpplink explain --predictions <file> --out <file>` writes, one
+wide row per prediction; it is loaded into the cache beside the predictions and
+a click is one lookup, so the ledger is the scorer's own arithmetic and nothing
+is computed or spawned here. The level labels and rates come from `--model`.
+Predictions clustering kept apart -- above the write threshold, below the
+clustering one -- are kept and listed as `rejected`.
 """
 
 import argparse
@@ -36,11 +45,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from cluster_view import (EDGE_DTYPE, EDGE_MAGIC, cell,  # noqa: E402
-                          read_truth, schema_columns)
+from cluster_view import (EDGE_DTYPE, EDGE_MAGIC, cell, ledger,  # noqa: E402
+                          read_model_levels, read_truth, schema_columns)
 
 EDGE_CHUNK = 1 << 20
-CACHE_VERSION = 3
+CACHE_VERSION = 5
 
 
 def quoted(name):
@@ -65,7 +74,7 @@ def scan(path, types):
 def fingerprint(args, columns):
     """What the cache was built from, so a changed input rebuilds it."""
     parts = [CACHE_VERSION, columns, args.max_rows]
-    for path in [args.clusters, args.truth] + list(args.data):
+    for path in [args.clusters, args.truth, args.waterfalls] + list(args.data):
         if path:
             parts.append([os.path.abspath(path), os.path.getmtime(path),
                           os.path.getsize(path)])
@@ -124,42 +133,36 @@ def build(conn, args, id_column, columns, say):
     """)
 
     say("reading the clustered records")
-    conn.execute(f"""
-        CREATE TABLE records AS
-        SELECT m.cluster_id, d.{quoted(id_column)} AS uid, {picked},
-               lower(concat_ws(' ', d.{quoted(id_column)}, {picked})) AS text
-        FROM read_parquet({files}) d
-        JOIN members m ON m.uid = d.{quoted(id_column)}
-    """)
+    # A record keeps its store row (`rid`): the position in the inputs read in
+    # order, which is what a shard names. file_row_number is that position
+    # inside one file, and the offsets between the inputs are the only thing to
+    # carry.
+    parts, offset = [], 0
+    for path in files:
+        parts.append(f"""
+            SELECT m.cluster_id, d.{quoted(id_column)} AS uid, {picked},
+                   lower(concat_ws(' ', d.{quoted(id_column)}, {picked})) AS text,
+                   {offset} + file_row_number AS rid
+            FROM read_parquet('{path}', file_row_number = true) d
+            JOIN members m ON m.uid = d.{quoted(id_column)}""")
+        offset += pq.ParquetFile(path).metadata.num_rows
+    conn.execute("CREATE TABLE records AS " + " UNION ALL ".join(parts))
 
     if args.predictions:
         if os.path.isdir(args.predictions):
             say("naming the predictions")
-            # A row index in a shard is a position in the inputs read in order,
-            # and file_row_number is that position inside one file, so the
-            # offsets that separate the inputs are the only thing to carry.
-            conn.execute("CREATE TABLE rowmap (rid BIGINT, uid VARCHAR)")
-            offset = 0
-            for path in files:
-                conn.execute(f"""
-                    INSERT INTO rowmap
-                    SELECT {offset} + file_row_number, {quoted(id_column)}
-                    FROM read_parquet('{path}', file_row_number = true)
-                """)
-                offset += pq.ParquetFile(path).metadata.num_rows
+            # A shard names rows, and the clustered records carry theirs.
             load_shard_edges(conn, args.predictions)
             conn.execute("""
                 CREATE TABLE named_edges AS
                 SELECT ra.uid AS a, rb.uid AS b, e.w AS weight
                 FROM raw_edges e
-                JOIN rowmap ra ON ra.rid = e.a
-                JOIN rowmap rb ON rb.rid = e.b
+                JOIN records ra ON ra.rid = e.a
+                JOIN records rb ON rb.rid = e.b
             """)
             conn.execute("DROP TABLE raw_edges")
-            conn.execute("DROP TABLE rowmap")
         else:
-            # A merged file already names records by unique_id, which is the
-            # whole of what the rowmap above exists to recover.
+            # A merged file already names records by unique_id.
             say("reading the predictions")
             conn.execute(f"""
                 CREATE TABLE named_edges AS
@@ -167,21 +170,47 @@ def build(conn, args, id_column, columns, say):
                        match_weight AS weight
                 FROM {scan(args.predictions, ("id_a", "id_b"))}
             """)
-        # Both ends, because clustering at a threshold above the one the run
-        # wrote at leaves predictions that cross two clusters or land outside
-        # every one, and the page shows a weight only inside a cluster.
+        # Both ends clustered, because clustering at a threshold above the one
+        # the run wrote at leaves predictions that cross two clusters or land
+        # outside every one. A pair across two clusters is kept with both
+        # cluster ids, since it is the prediction clustering overruled and the
+        # one most worth explaining; a pair with an end no cluster holds has no
+        # record to show and is dropped.
         conn.execute("""
-            CREATE TABLE edges AS
-            SELECT m.cluster_id, e.a, e.b, e.weight
+            CREATE TABLE pairs AS
+            SELECT e.a, e.b, e.weight, ra.cluster_id AS cluster_a,
+                   rb.cluster_id AS cluster_b
             FROM named_edges e
-            JOIN members m ON m.uid = e.a
-            JOIN members mb ON mb.uid = e.b AND mb.cluster_id = m.cluster_id
+            JOIN records ra ON ra.uid = e.a
+            JOIN records rb ON rb.uid = e.b
         """)
         conn.execute("DROP TABLE named_edges")
+        conn.execute("""
+            CREATE TABLE edges AS
+            SELECT cluster_a AS cluster_id, a, b, weight FROM pairs
+            WHERE cluster_a = cluster_b
+        """)
         conn.execute("CREATE INDEX edges_by_cluster ON edges (cluster_id)")
+        conn.execute("CREATE INDEX pairs_by_weight ON pairs (weight)")
+        conn.execute("CREATE INDEX pairs_by_a ON pairs (a)")
+        conn.execute("CREATE INDEX pairs_by_b ON pairs (b)")
+        if args.waterfalls:
+            # Only the rows the page can ever ask for: the pairs kept above.
+            say("reading the waterfalls")
+            conn.execute(f"""
+                CREATE TABLE waterfalls AS
+                SELECT w.* REPLACE (CAST(w.id_a AS VARCHAR) AS id_a,
+                                    CAST(w.id_b AS VARCHAR) AS id_b)
+                FROM {scan(args.waterfalls, ("id_a", "id_b"))} w
+                JOIN pairs p ON p.a = CAST(w.id_a AS VARCHAR)
+                            AND p.b = CAST(w.id_b AS VARCHAR)
+            """)
+            conn.execute("CREATE INDEX waterfalls_by_pair ON waterfalls (id_a, id_b)")
     else:
         conn.execute("CREATE TABLE edges (cluster_id VARCHAR, a VARCHAR, "
                      "b VARCHAR, weight DOUBLE)")
+        conn.execute("CREATE TABLE pairs (a VARCHAR, b VARCHAR, weight DOUBLE, "
+                     "cluster_a VARCHAR, cluster_b VARCHAR)")
 
     if args.truth:
         say("closing the known pairs")
@@ -222,6 +251,7 @@ def build(conn, args, id_column, columns, say):
     """)
     conn.execute("CREATE INDEX stats_by_id ON stats (id)")
     conn.execute("CREATE INDEX records_by_cluster ON records (cluster_id)")
+    conn.execute("CREATE INDEX records_by_uid ON records (uid)")
 
 
 ORDERS = {
@@ -238,20 +268,39 @@ FILTERS = {
     "mixed": "entities > 1",
 }
 
+PAIR_ORDERS = {
+    "weakest": "weight, a, b",
+    "strongest": "weight DESC, a, b",
+    "id": "a, b",
+}
+
+PAIR_FILTERS = {
+    "all": "TRUE",
+    "within": "cluster_a = cluster_b",
+    "rejected": "cluster_a <> cluster_b",
+}
+
 
 class Viewer:
     """The queries the page makes, over one shared read-only connection."""
 
-    def __init__(self, conn, columns, source, max_rows, has_truth):
+    def __init__(self, conn, columns, source, max_rows, has_truth, levels=None):
         self.conn = conn
         self.columns = columns
         self.source = source
         self.max_rows = max_rows
         self.has_truth = has_truth
+        self.levels = levels  # the model's level table, when waterfalls are held
         self.lock = threading.Lock()
         with self.lock:
             self.totals = conn.execute(
                 "SELECT count(*), coalesce(sum(size), 0) FROM stats").fetchone()
+            self.pair_total = conn.execute("SELECT count(*) FROM pairs").fetchone()[0]
+            self.waterfall_columns = [
+                r[0] for r in conn.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'waterfalls' ORDER BY ordinal_position")
+                .fetchall()]
 
     def query(self, sql, params=()):
         with self.lock:
@@ -259,8 +308,64 @@ class Viewer:
 
     def summary(self):
         return {"columns": self.columns, "source": self.source,
-                "totals": {"clusters": self.totals[0], "records": self.totals[1]},
-                "has_truth": self.has_truth}
+                "totals": {"clusters": self.totals[0], "records": self.totals[1],
+                           "pairs": self.pair_total},
+                "has_truth": self.has_truth,
+                "has_model": bool(self.waterfall_columns)}
+
+    def waterfall(self, a, b):
+        """The ledger of one prediction, from the wide row the run's explain wrote."""
+        if not self.waterfall_columns or self.levels is None:
+            return None
+        rows = self.query("SELECT * FROM waterfalls WHERE id_a = ? AND id_b = ?", [a, b])
+        if not rows:
+            return None
+        return ledger(dict(zip(self.waterfall_columns, rows[0])), self.levels)
+
+    def pairs(self, q, sort, only, offset, limit):
+        where = PAIR_FILTERS.get(only, "TRUE")
+        params = []
+        if q:
+            # Either record's text, since a pair is read by either of its ends.
+            like = ("%" + q.lower().replace("\\", "\\\\")
+                    .replace("%", "\\%").replace("_", "\\_") + "%")
+            where += (" AND (a IN (SELECT uid FROM records WHERE text LIKE ? "
+                      "ESCAPE '\\') OR b IN (SELECT uid FROM records WHERE text "
+                      "LIKE ? ESCAPE '\\'))")
+            params += [like, like]
+        matched = self.query(f"SELECT count(*) FROM pairs WHERE {where}", params)[0][0]
+        rows = self.query(
+            f"SELECT a, b, weight, cluster_a, cluster_b FROM pairs WHERE {where} "
+            f"ORDER BY {PAIR_ORDERS.get(sort, PAIR_ORDERS['weakest'])} "
+            f"LIMIT {int(limit)} OFFSET {int(offset)}", params)
+        return {"matched": matched,
+                "pairs": [{"a": r[0], "b": r[1], "w": round(r[2], 3),
+                           "ca": r[3], "cb": r[4]} for r in rows]}
+
+    def pair(self, a, b):
+        head = self.query("SELECT a, b, weight, cluster_a, cluster_b FROM pairs "
+                          "WHERE a = ? AND b = ?", [a, b])
+        if not head:
+            return None
+        picked = ", ".join(quoted(c) for c in self.columns)
+        rows = {r[0]: r for r in self.query(
+            f"SELECT uid, {picked} FROM records WHERE uid IN (?, ?)", [a, b])}
+        if a not in rows or b not in rows:
+            return None
+        answer = {
+            "a": a, "b": b, "w": round(head[0][2], 3),
+            "ca": head[0][3], "cb": head[0][4],
+            "rows": [{"id": uid, "v": [cell(v) for v in rows[uid][1:]]}
+                     for uid in (a, b)],
+        }
+        if self.has_truth:
+            groups = dict(self.query(
+                "SELECT uid, grp FROM truth WHERE uid IN (?, ?)", [a, b]))
+            same = a in groups and b in groups and groups[a] == groups[b]
+            answer["rows"][0]["t"] = 0
+            answer["rows"][1]["t"] = 0 if same else 1
+        answer["waterfall"] = self.waterfall(a, b)
+        return answer
 
     def listing(self, q, sort, only, offset, limit):
         where = FILTERS.get(only, "TRUE")
@@ -356,6 +461,15 @@ def handler_for(viewer, page):
                     found = viewer.cluster(query.get("id", ""))
                     self.send_json(found or {"error": "no such cluster"},
                                    200 if found else 404)
+                elif url.path == "/api/pairs":
+                    self.send_json(viewer.pairs(
+                        query.get("q", ""), query.get("sort", "weakest"),
+                        query.get("only", "all"), int(query.get("offset", 0)),
+                        min(int(query.get("limit", 100)), 500)))
+                elif url.path == "/api/pair":
+                    found = viewer.pair(query.get("a", ""), query.get("b", ""))
+                    self.send_json(found or {"error": "no such prediction"},
+                                   200 if found else 404)
                 else:
                     self.send_json({"error": "not found"}, 404)
             except BrokenPipeError:
@@ -377,6 +491,11 @@ def main():
                     help="the run's predictions -- one csv or parquet file, or the "
                          "shard directory -- for within-cluster weights")
     ap.add_argument("--truth", help="known pairs, to colour members by true entity")
+    ap.add_argument("--waterfalls", help="the csv or parquet cpplink explain "
+                                         "--predictions wrote; draws each "
+                                         "prediction's waterfall")
+    ap.add_argument("--model", help="the model the run scored with, for the level "
+                                    "labels and rates the waterfall shows")
     ap.add_argument("--cache", default="cluster_view.duckdb")
     ap.add_argument("--rebuild", action="store_true", help="rebuild the cache first")
     ap.add_argument("--min-size", type=int, default=2)
@@ -388,6 +507,10 @@ def main():
     ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--open", action="store_true", help="open a browser on it")
     args = ap.parse_args()
+    if bool(args.waterfalls) != bool(args.model):
+        ap.error("--waterfalls and --model go together")
+    if args.waterfalls and not args.predictions:
+        ap.error("--waterfalls needs --predictions")
 
     id_column, columns = schema_columns(args.schema)
     stamp = fingerprint(args, columns)
@@ -424,8 +547,9 @@ def main():
 
     conn = duckdb.connect(args.cache, read_only=True)
     conn.execute(f"SET memory_limit = '{args.memory}'")
+    levels = read_model_levels(args.model) if args.model else None
     viewer = Viewer(conn, columns, ", ".join(os.path.basename(p) for p in args.data),
-                    args.max_rows, bool(args.truth))
+                    args.max_rows, bool(args.truth), levels)
 
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "cluster_view_template.html")) as handle:

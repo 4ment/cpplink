@@ -6,8 +6,11 @@
     cpplink predict --schema s.json --model m.json --out predictions.parquet data.parquet
     cpplink cluster --schema s.json --predictions predictions.parquet \
         --out clusters.csv data.parquet
+    cpplink explain --schema s.json --model m.json --predictions predictions.parquet \
+        --out waterfalls.parquet data.parquet
     tools/cluster_view.py --schema s.json --clusters clusters.csv \
-        --predictions predictions.parquet --out clusters.html data.parquet
+        --predictions predictions.parquet --waterfalls waterfalls.parquet \
+        --model m.json --out clusters.html data.parquet
 
 Reads the cluster assignment, pulls each member's column values back out of the
 parquet, and writes one HTML file holding the clusters it selected. Open it in a
@@ -19,6 +22,17 @@ The `network` checkbox in the header draws the selected cluster's predictions as
 a graph, which is where a chain shows itself as a chain. It is off by default and
 the choice is remembered, because the layout is the one quadratic thing the page
 does and most clusters are read without it.
+
+With `--waterfalls`, every embedded prediction also carries its waterfall: the
+prior, then what each comparison charged and its term-frequency move, ending at
+the match weight. The page lists the pairs beside the clusters and draws the
+ledger for the one picked. The file is what `cpplink explain --predictions
+<file> --out <file>` writes, one wide row per prediction, and nothing here
+recomputes a bit of it: the chart is the scorer's own arithmetic, read back. The
+level labels and rates come from `--model`, since they are the model's and not
+the pair's. Predictions the run made between two records that clustering then
+put in different clusters are kept as well, since a pair scored above the write
+threshold and below the clustering one is the pair most worth reading.
 
 A run ends with single files, so `--clusters` and `--predictions` each name one
 file and its extension picks csv or parquet. `--predictions` still takes the
@@ -296,6 +310,137 @@ def read_truth(path, wanted_ids):
             for uid, i in zip(want.to_pylist(), at) if i is not None}
 
 
+WATERFALL_FIXED = ["id_a", "id_b", "gamma", "prior", "match_weight", "match_probability",
+                   "bracket_low", "bracket_high", "threshold", "zone", "emitted"]
+
+
+def read_model_levels(path):
+    """What a ledger needs from the model file: labels and rates per level.
+
+    A waterfall row names the level each comparison landed on; its label, m and
+    u are the model's rather than the pair's, so the file does not repeat them
+    and they are read from here once.
+    """
+    with open(path) as handle:
+        model = json.load(handle)
+    comparisons = [{"name": c["name"],
+                    "levels": [{"label": lvl.get("label", str(i)),
+                                "m": lvl.get("m"), "u": lvl.get("u")}
+                               for i, lvl in enumerate(c["levels"])]}
+                   for c in model["comparisons"]]
+    interactions = [f'{t["left"]} x {t["right"]}' for t in model.get("interactions", [])]
+    return {"records": model.get("records"), "comparisons": comparisons,
+            "interactions": interactions}
+
+
+def waterfall_batches(path):
+    """One waterfall file, a batch of rows at a time, whichever format it is."""
+    if path.endswith(".parquet"):
+        handle = pq.ParquetFile(path)
+        held = handle.schema_arrow.names
+        if any(name not in held for name in WATERFALL_FIXED):
+            raise SystemExit(f"{path}: not a cpplink waterfall file")
+        for batch in handle.iter_batches(batch_size=PREDICTION_BATCH):
+            yield pa.Table.from_batches([batch])
+        return
+    reader = pacsv.open_csv(
+        path, convert_options=pacsv.ConvertOptions(column_types=PREDICTION_IDS))
+    if any(name not in reader.schema.names for name in WATERFALL_FIXED):
+        raise SystemExit(f"{path}: not a cpplink waterfall file")
+    for batch in reader:
+        yield pa.Table.from_batches([batch])
+
+
+def read_waterfalls(path, wanted_ids):
+    """(id_a, id_b) -> the wide row, for the pairs naming two wanted records."""
+    wanted = pa.array(sorted(wanted_ids), type=pa.string())
+    found, read = {}, 0
+    for table in waterfall_batches(path):
+        read += table.num_rows
+        table = as_strings(table, ("id_a", "id_b"))
+        keep = pc.and_(pc.is_in(table["id_a"], value_set=wanted),
+                       pc.is_in(table["id_b"], value_set=wanted))
+        for row in table.filter(keep).to_pylist():
+            found[(row["id_a"], row["id_b"])] = row
+    return found, read
+
+
+def ledger(row, levels):
+    """A wide row expanded to the ledger `cpplink explain --json` writes.
+
+    The same shape for both viewers, so the page has one renderer: the prior,
+    one step per comparison with a running total, the two-way corrections, then
+    the totals and the pattern's bracket and zone.
+    """
+    running = row["prior"]
+    steps = []
+    for c in levels["comparisons"]:
+        name = c["name"]
+        level = row[f"{name}_level"]
+        lvl = c["levels"][level] if level < len(c["levels"]) else {"label": str(level)}
+        bits, tf = row[f"{name}_bits"], row[f"{name}_tf"]
+        running += bits + tf
+        steps.append({"name": name, "level": level, "label": lvl["label"],
+                      "m": lvl.get("m"), "u": lvl.get("u"), "bits": bits, "tf": tf,
+                      "frequency": row[f"{name}_frequency"], "running": running})
+    interactions = []
+    for name in levels["interactions"]:
+        bits = row[name.replace(" x ", "_x_") + "_bits"]
+        running += bits
+        interactions.append({"name": name, "bits": bits, "running": running})
+    return {"prior": row["prior"], "records": levels["records"],
+            "threshold": row["threshold"], "steps": steps,
+            "interactions": interactions, "weight": row["match_weight"],
+            "probability": row["match_probability"],
+            "bracket": [row["bracket_low"], row["bracket_high"]],
+            "zone": row["zone"], "emitted": bool(row["emitted"])}
+
+
+class Ledger:
+    """The waterfalls compacted for embedding.
+
+    A level's label, rates and bits are the model's, not the pair's, so they are
+    kept once per (comparison, level) and a pair stores the level it hit, its
+    term-frequency move and the frequency behind it. The page expands that back
+    to the full ledger before drawing, so both viewers draw the same shape.
+    """
+
+    def __init__(self, levels):
+        self.levels = levels
+        self.model = None
+        self.comparisons = [{"name": c["name"], "levels": []}
+                            for c in levels["comparisons"]]
+        self.count = 0
+
+    def add(self, row):
+        w = ledger(row, self.levels)
+        if self.model is None:
+            self.model = {"prior": w["prior"], "records": w["records"],
+                          "threshold": w["threshold"],
+                          "interactions": self.levels["interactions"]}
+        steps = []
+        for c, step in enumerate(w["steps"]):
+            table = self.comparisons[c]["levels"]
+            while len(table) <= step["level"]:
+                table.append(None)
+            if table[step["level"]] is None:
+                table[step["level"]] = {"label": step["label"], "bits": step["bits"],
+                                        "m": step["m"], "u": step["u"]}
+            entry = [step["level"]]
+            if step["tf"]:
+                entry += [step["tf"], step["frequency"]]
+            steps.append(entry)
+        self.count += 1
+        return {"s": steps, "i": [t["bits"] for t in w["interactions"]],
+                "w": w["weight"], "p": w["probability"], "b": w["bracket"],
+                "z": w["zone"]}
+
+    def summary(self):
+        if self.model is None:
+            return None
+        return dict(self.model, comparisons=self.comparisons)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -318,7 +463,14 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--id", action="append", default=[],
                     help="always embed this cluster id; repeatable")
+    ap.add_argument("--waterfalls", help="the csv or parquet cpplink explain "
+                                         "--predictions wrote; embeds each "
+                                         "prediction's waterfall")
+    ap.add_argument("--model", help="the model the run scored with, for the level "
+                                    "labels and rates the waterfall shows")
     args = ap.parse_args()
+    if bool(args.waterfalls) != bool(args.model):
+        ap.error("--waterfalls and --model go together")
 
     id_column, columns = schema_columns(args.schema)
 
@@ -341,18 +493,27 @@ def main():
     truth = read_truth(args.truth, wanted_ids) if args.truth else None
     predictions, predictions_read = ({}, 0)
     by_cluster = {}
+    rejected = []
     if args.predictions:
         predictions, predictions_read = read_predictions(
             args.predictions, wanted_ids,
             {u: rows_by_id[u] for u in wanted_ids if u in rows_by_id})
         # A record is in one cluster, so grouping the predictions once is what
         # keeps the loop below linear in them rather than one pass per cluster.
+        # A prediction whose ends clustering kept apart is kept too: it was
+        # scored above the write threshold and below the clustering one, and
+        # that is the pair a reader most wants explained.
         cluster_of = {uid: cluster
                       for cluster, uids in members.items() for uid in uids}
         for (a, b), weight in predictions.items():
             cluster = cluster_of.get(a)
-            if cluster is not None and cluster == cluster_of.get(b):
+            other = cluster_of.get(b)
+            if cluster is None or other is None or a not in by_id or b not in by_id:
+                continue
+            if cluster == other:
                 by_cluster.setdefault(cluster, []).append((a, b, weight))
+            else:
+                rejected.append((a, b, weight, cluster, other))
 
     payload_clusters = []
     for cluster in chosen:
@@ -366,6 +527,10 @@ def main():
             if truth is not None:
                 group = truth.get(uid, "\x00" + uid)
                 row["t"] = groups_seen.setdefault(group, len(groups_seen))
+                # The label is per cluster; the group is what says "same entity"
+                # for a pair the clustering split across two of them.
+                if uid in truth:
+                    row["g"] = truth[uid]
             rows.append(row)
         entry = {"id": cluster, "rows": rows}
         if sizes[cluster] > len(rows):
@@ -380,12 +545,38 @@ def main():
             entry["edges"] = sorted(found)
         payload_clusters.append(entry)
 
+    payload_rejected = [{"a": a, "b": b, "w": round(weight, 3), "ca": ca, "cb": cb}
+                        for a, b, weight, ca, cb in sorted(rejected)]
+
+    # The waterfalls of the embedded predictions, read from the file the run's
+    # explain wrote and compacted against the model's level table.
+    ledgers = None
+    explained = waterfalls_read = 0
+    if args.waterfalls and args.predictions:
+        ledgers = Ledger(read_model_levels(args.model))
+        found, waterfalls_read = read_waterfalls(args.waterfalls, wanted_ids)
+        for entry in payload_clusters:
+            uid_at = [r["id"] for r in entry["rows"]]
+            for edge in entry.get("edges", []):
+                row = found.get((uid_at[edge[0]], uid_at[edge[1]]))
+                if row is not None:
+                    edge.append(ledgers.add(row))
+                    explained += 1
+        for pair in payload_rejected:
+            row = found.get((pair["a"], pair["b"]))
+            if row is not None:
+                pair["wf"] = ledgers.add(row)
+                explained += 1
+
     payload = {
         "source": ", ".join(os.path.basename(p) for p in args.data),
         "generated": datetime.datetime.now().isoformat(timespec="seconds"),
         "columns": columns,
-        "totals": {"clusters": total_clusters, "shown": len(payload_clusters)},
+        "totals": {"clusters": total_clusters, "shown": len(payload_clusters),
+                   "records": records},
         "clusters": payload_clusters,
+        "rejected": payload_rejected,
+        "model": ledgers.summary() if ledgers else None,
     }
 
     here = os.path.dirname(os.path.abspath(__file__))
@@ -401,8 +592,11 @@ def main():
     print(f"{len(wanted_ids):,} records read from {touched:,} of {groups:,} row "
           f"groups over {records:,} rows")
     if args.predictions:
-        print(f"{len(predictions):,} within-cluster predictions carried, "
-              f"{predictions_read:,} scanned")
+        print(f"{sum(len(c.get('edges', [])) for c in payload_clusters):,} "
+              f"within-cluster predictions carried and {len(payload_rejected):,} "
+              f"across clusters, {predictions_read:,} scanned")
+    if args.waterfalls:
+        print(f"{explained:,} waterfalls embedded, {waterfalls_read:,} scanned")
 
 
 if __name__ == "__main__":

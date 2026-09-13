@@ -8,8 +8,11 @@
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 namespace cpplink {
 namespace {
@@ -169,85 +172,119 @@ std::string Signed(double bits, int precision = 2) {
 
 }  // namespace
 
-void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& comparisons,
-                        const Scorer& scorer, uint64_t a, uint64_t b, std::ostream& out) {
-    const uint32_t gamma = comparisons.Evaluate(a, b);
-    const double prior = scorer.PriorWeight();
+PairWaterfall BuildPairWaterfall(const RecordStore& store,
+                                 const ComparisonSet& comparisons, const Scorer& scorer,
+                                 uint64_t a, uint64_t b, const Model* model) {
+    PairWaterfall w;
+    w.row_a = a;
+    w.row_b = b;
+    const IdColumn& ids = store.ids();
+    if (!ids.offsets.empty()) {
+        w.id_a = std::string(ids.Get(a));
+        w.id_b = std::string(ids.Get(b));
+    }
+    w.records = store.NumRecords();
+    w.gamma = comparisons.Evaluate(a, b);
+    w.prior = scorer.PriorWeight();
 
+    double running = w.prior;
+    for (size_t i = 0; i < comparisons.Size(); ++i) {
+        const BoundComparison& bound = comparisons.at(i);
+        WaterfallStep step;
+        step.name = bound.spec->name;
+        step.level = comparisons.LevelOf(w.gamma, i);
+        step.label = bound.spec->levels[step.level].Describe();
+        step.value_a = ValueOf(bound, a);
+        step.value_b = ValueOf(bound, b);
+        step.m = std::nan("");
+        step.u = std::nan("");
+        if (model != nullptr && i < model->comparisons.size() &&
+            step.level < model->comparisons[i].levels.size()) {
+            step.m = model->comparisons[i].levels[step.level].m;
+            step.u = model->comparisons[i].levels[step.level].u;
+        }
+        step.bits = scorer.LevelWeight(i, step.level);
+        step.tf = scorer.AdjustmentFor(i, w.gamma, a, b);
+        if (step.tf != 0.0) step.frequency = scorer.FrequencyFor(i, w.gamma, a);
+        running += step.bits + step.tf;
+        step.running = running;
+        w.steps.push_back(std::move(step));
+    }
+    // The two-way corrections, where the model carries any. They are part of the
+    // sum the scorer computes, so they have to be part of the ledger that explains
+    // it: a waterfall missing them would total something the run never produced.
+    for (size_t i = 0; i < scorer.InteractionCount(); ++i) {
+        WaterfallInteraction term;
+        term.name = scorer.InteractionName(i);
+        term.bits = scorer.InteractionBits(i, w.gamma);
+        running += term.bits;
+        term.running = running;
+        w.interactions.push_back(std::move(term));
+    }
+
+    w.weight = scorer.Weight(w.gamma, a, b);
+    w.probability = ProbabilityForWeight(w.weight);
+    w.bracket_low = scorer.BaseWeight(w.gamma) + scorer.DeltaMin(w.gamma);
+    w.bracket_high = scorer.BaseWeight(w.gamma) + scorer.DeltaMax(w.gamma);
+    w.threshold = scorer.threshold();
+    w.zone = scorer.Classify(w.gamma);
+    w.emitted = w.weight >= w.threshold;
+    return w;
+}
+
+void PrintPairWaterfall(const PairWaterfall& w, std::ostream& out) {
     out << "\n"
         << std::left << std::setw(18) << "Comparison" << std::setw(22) << "Level"
         << std::right << std::setw(10) << "bits" << std::setw(10) << "tf" << std::setw(12)
         << "running" << "\n";
     out << std::string(72, '-') << "\n";
 
-    double running = prior;
     out << std::left << std::setw(18) << "(prior)" << std::setw(22) << "lambda"
-        << std::right << std::setw(10) << Signed(prior) << std::setw(10) << ""
-        << std::setw(12) << Signed(running) << "\n";
-
-    for (size_t i = 0; i < comparisons.Size(); ++i) {
-        const BoundComparison& bound = comparisons.at(i);
-        const uint8_t level = comparisons.LevelOf(gamma, i);
-        const double bits = scorer.LevelWeight(i, level);
-        const double move = scorer.AdjustmentFor(i, gamma, a, b);
-        running += bits + move;
-        out << std::left << std::setw(18) << Truncate(bound.spec->name, 17)
-            << std::setw(22) << Truncate(bound.spec->levels[level].Describe(), 21)
-            << std::right << std::setw(10) << Signed(bits) << std::setw(10)
-            << (move != 0.0 ? Signed(move) : std::string("")) << std::setw(12)
-            << Signed(running) << "\n";
+        << std::right << std::setw(10) << Signed(w.prior) << std::setw(10) << ""
+        << std::setw(12) << Signed(w.prior) << "\n";
+    for (const WaterfallStep& step : w.steps) {
+        out << std::left << std::setw(18) << Truncate(step.name, 17) << std::setw(22)
+            << Truncate(step.label, 21) << std::right << std::setw(10)
+            << Signed(step.bits) << std::setw(10)
+            << (step.tf != 0.0 ? Signed(step.tf) : std::string("")) << std::setw(12)
+            << Signed(step.running) << "\n";
     }
-    // The two-way corrections, where the model carries any. They are part of the
-    // sum the scorer computes, so they have to be part of the ledger that explains
-    // it: a waterfall missing them would total something the run never produced.
-    for (size_t i = 0; i < scorer.InteractionCount(); ++i) {
-        const double bits = scorer.InteractionBits(i, gamma);
-        running += bits;
+    for (const WaterfallInteraction& term : w.interactions) {
         out << std::left << std::setw(18) << "(interaction)" << std::setw(22)
-            << Truncate(scorer.InteractionName(i), 21) << std::right << std::setw(10)
-            << Signed(bits) << std::setw(10) << "" << std::setw(12) << Signed(running)
-            << "\n";
+            << Truncate(term.name, 21) << std::right << std::setw(10) << Signed(term.bits)
+            << std::setw(10) << "" << std::setw(12) << Signed(term.running) << "\n";
     }
     out << std::string(72, '-') << "\n";
 
-    const double weight = scorer.Weight(gamma, a, b);
-    out << "Match weight   " << std::fixed << std::setprecision(3) << weight
-        << " bits    posterior " << std::setprecision(9) << ProbabilityForWeight(weight)
-        << "\n";
+    out << "Match weight   " << std::fixed << std::setprecision(3) << w.weight
+        << " bits    posterior " << std::setprecision(9) << w.probability << "\n";
 
     // Where the term-frequency moves came from. Without the counts the adjustment
     // is an unexplained number, and this is the report whose job is to explain it.
     bool any = false;
-    for (size_t i = 0; i < comparisons.Size(); ++i) {
-        if (!scorer.HasAdjustment(i)) continue;
-        const double move = scorer.AdjustmentFor(i, gamma, a, b);
-        if (move == 0.0) continue;
+    for (const WaterfallStep& step : w.steps) {
+        if (step.tf == 0.0) continue;
         if (!any) {
             out << "\nTerm frequency, for the comparisons that moved the weight:\n";
             any = true;
         }
-        const uint32_t frequency = scorer.FrequencyFor(i, gamma, a);
-        const double share =
-            store.NumRecords() > 0
-                ? static_cast<double>(frequency) / static_cast<double>(store.NumRecords())
-                : 0.0;
-        out << "  " << std::left << std::setw(18)
-            << Truncate(comparisons.at(i).spec->name, 17) << std::setw(24)
-            << Truncate(ValueOf(comparisons.at(i), a), 23) << std::right << std::setw(12)
-            << frequency << " rows" << std::setw(12) << std::scientific
+        const double share = w.records > 0 ? static_cast<double>(step.frequency) /
+                                                 static_cast<double>(w.records)
+                                           : 0.0;
+        out << "  " << std::left << std::setw(18) << Truncate(step.name, 17)
+            << std::setw(24) << Truncate(step.value_a, 23) << std::right << std::setw(12)
+            << step.frequency << " rows" << std::setw(12) << std::scientific
             << std::setprecision(2) << share << std::setw(10) << std::defaultfloat
-            << Signed(move) << " bits\n";
+            << Signed(step.tf) << " bits\n";
     }
 
     // The same three-way decision `predict` makes, so a pair can be traced from
     // here to whether it would have been emitted.
-    const Zone zone = scorer.Classify(gamma);
-    out << "\nPattern bracket  " << std::fixed << std::setprecision(3)
-        << scorer.BaseWeight(gamma) + scorer.DeltaMin(gamma) << " to "
-        << scorer.BaseWeight(gamma) + scorer.DeltaMax(gamma) << " bits, against a "
-        << "threshold of " << scorer.threshold() << "\n";
-    out << "Zone             " << ZoneName(zone) << " -- ";
-    switch (zone) {
+    out << "\nPattern bracket  " << std::fixed << std::setprecision(3) << w.bracket_low
+        << " to " << w.bracket_high << " bits, against a threshold of " << w.threshold
+        << "\n";
+    out << "Zone             " << ZoneName(w.zone) << " -- ";
+    switch (w.zone) {
         case Zone::kDrop:
             out << "no pair with this pattern can clear the threshold, whatever "
                    "values it carries\n";
@@ -264,8 +301,65 @@ void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& compariso
             out << "no evaluation can produce this pattern\n";
             break;
     }
-    out << (weight >= scorer.threshold() ? "This pair would be emitted.\n"
-                                         : "This pair would not be emitted.\n");
+    out << (w.emitted ? "This pair would be emitted.\n"
+                      : "This pair would not be emitted.\n");
+}
+
+void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& comparisons,
+                        const Scorer& scorer, uint64_t a, uint64_t b, std::ostream& out) {
+    PrintPairWaterfall(BuildPairWaterfall(store, comparisons, scorer, a, b), out);
+}
+
+namespace {
+
+// JSON has no NaN, and a rate the report was not given is absent rather than null.
+void PutRate(nlohmann::json* item, const char* key, double value) {
+    if (!std::isnan(value)) (*item)[key] = value;
+}
+
+}  // namespace
+
+std::string PairWaterfallJson(const PairWaterfall& w) {
+    nlohmann::json root;
+    root["row_a"] = w.row_a;
+    root["row_b"] = w.row_b;
+    if (!w.id_a.empty() || !w.id_b.empty()) {
+        root["id_a"] = w.id_a;
+        root["id_b"] = w.id_b;
+    }
+    root["records"] = w.records;
+    root["gamma"] = w.gamma;
+    root["prior"] = w.prior;
+    root["steps"] = nlohmann::json::array();
+    for (const WaterfallStep& step : w.steps) {
+        nlohmann::json item;
+        item["name"] = step.name;
+        item["level"] = step.level;
+        item["label"] = step.label;
+        item["values"] = {step.value_a, step.value_b};
+        PutRate(&item, "m", step.m);
+        PutRate(&item, "u", step.u);
+        item["bits"] = step.bits;
+        item["tf"] = step.tf;
+        if (step.tf != 0.0) item["frequency"] = step.frequency;
+        item["running"] = step.running;
+        root["steps"].push_back(std::move(item));
+    }
+    root["interactions"] = nlohmann::json::array();
+    for (const WaterfallInteraction& term : w.interactions) {
+        nlohmann::json item;
+        item["name"] = term.name;
+        item["bits"] = term.bits;
+        item["running"] = term.running;
+        root["interactions"].push_back(std::move(item));
+    }
+    root["weight"] = w.weight;
+    root["probability"] = w.probability;
+    root["bracket"] = {w.bracket_low, w.bracket_high};
+    root["threshold"] = w.threshold;
+    root["zone"] = ZoneName(w.zone);
+    root["emitted"] = w.emitted;
+    return root.dump();
 }
 
 }  // namespace cpplink

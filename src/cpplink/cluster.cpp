@@ -22,6 +22,7 @@
 #include <parquet/arrow/reader.h>
 
 #include "cpplink/format.hpp"
+#include "cpplink/id_index.hpp"
 #include "cpplink/merge_edges.hpp"
 #include "cpplink/predict.hpp"
 
@@ -116,38 +117,6 @@ struct EdgeTally {
     uint64_t unresolved = 0;
     double min_weight = 0.0;
     double max_weight = 0.0;
-};
-
-// An id-to-row lookup over the store's id column: one `uint32` per record, kept
-// in the order of the id it names. A merged edge file carries `unique_id`s
-// rather than row indices, so clustering one has to map them back, and a hash
-// map over 20M ids costs an order of magnitude more than the union-find it
-// feeds. This is 4 bytes a record and a handful of string compares an edge.
-class IdIndex {
-   public:
-    explicit IdIndex(const RecordStore& store) : ids_(store.ids()) {
-        order_.resize(static_cast<size_t>(store.NumRecords()));
-        for (size_t row = 0; row < order_.size(); ++row) {
-            order_[row] = static_cast<uint32_t>(row);
-        }
-        std::sort(order_.begin(), order_.end(),
-                  [this](uint32_t a, uint32_t b) { return ids_.Get(a) < ids_.Get(b); });
-    }
-
-    bool Find(std::string_view id, uint32_t* row) const {
-        const auto at =
-            std::lower_bound(order_.begin(), order_.end(), id,
-                             [this](uint32_t candidate, std::string_view key) {
-                                 return ids_.Get(candidate) < key;
-                             });
-        if (at == order_.end() || ids_.Get(*at) != id) return false;
-        *row = *at;
-        return true;
-    }
-
-   private:
-    const IdColumn& ids_;
-    std::vector<uint32_t> order_;
 };
 
 bool ReadBinaryShard(const std::string& path, EdgeTally* tally, std::string* error) {

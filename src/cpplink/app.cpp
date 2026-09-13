@@ -3,13 +3,17 @@
 
 #include "cpplink/app.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <memory>
 #include <ostream>
+#include <string>
+#include <vector>
 
+#include <nlohmann/json.hpp>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -35,6 +39,7 @@
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
 #include "cpplink/simplify.hpp"
+#include "cpplink/waterfall.hpp"
 
 namespace cpplink {
 
@@ -109,9 +114,11 @@ void PrintUsage(std::ostream& out) {
         << "                 [--pair-cap N] [--threads N] [--seed N] [--json]\n"
         << "                 [--mode MODE] <file.parquet>...\n"
         << "cpplink explain --schema <schema.json> --pair <id_a>,<id_b>\n"
-        << "                [--rows <i>,<j>] [--model <model.json>] "
-           "[--threshold BITS]\n"
-        << "                [--tf-damping F] <file.parquet>...\n"
+        << "                [--rows <i>,<j>] [--pairs <file|->] [--row-pairs <file|->]\n"
+        << "                [--predictions <file> --out <file.csv|file.parquet>]\n"
+        << "                [--model <model.json>] [--threshold BITS] [--tf-damping F]\n"
+        << "                [--fuzzy-tf] [--ball-budget N] [--no-interactions] [--json]\n"
+        << "                <file.parquet>...\n"
         << "cpplink explain-blocking --schema <schema.json> [--count] "
            "[--mode MODE]\n"
         << "                [--all-pairs] <file.parquet>...\n"
@@ -608,30 +615,94 @@ bool SplitPair(const std::string& text, std::string* first, std::string* second)
     return true;
 }
 
+void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
+                     const BallOptions& options, BallTables* balls, std::ostream& out);
+
+// Resolves one `<a>,<b>` line of `explain` to two rows, by id or by row index.
+bool ResolvePair(const RecordStore& store, const std::string& text, bool by_row,
+                 uint64_t* row_a, uint64_t* row_b, std::string* error) {
+    std::string first;
+    std::string second;
+    if (!SplitPair(text, &first, &second)) {
+        *error = by_row ? "wants <i>,<j>" : "wants <id_a>,<id_b>";
+        return false;
+    }
+    if (by_row) {
+        char* end_a = nullptr;
+        char* end_b = nullptr;
+        *row_a = std::strtoull(first.c_str(), &end_a, 10);
+        *row_b = std::strtoull(second.c_str(), &end_b, 10);
+        if (*end_a != '\0' || *end_b != '\0') {
+            *error = "wants <i>,<j>";
+            return false;
+        }
+        if (*row_a >= store.NumRecords() || *row_b >= store.NumRecords()) {
+            *error = "row out of range; the file has " +
+                     std::to_string(store.NumRecords()) + " records";
+            return false;
+        }
+        return true;
+    }
+    if (!FindRowById(store, first, row_a)) {
+        *error = "no record with id '" + first + "'";
+        return false;
+    }
+    if (!FindRowById(store, second, row_b)) {
+        *error = "no record with id '" + second + "'";
+        return false;
+    }
+    return true;
+}
+
 int RunExplain(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
     std::vector<std::string> data_paths;
     std::string pair;
     std::string rows;
+    std::string pairs_path;
+    bool pairs_by_row = false;
     std::string model_path;
     std::string value;
     ScoreOptions score;
+    BallOptions ball;
+    WaterfallOptions waterfalls;
+    bool fuzzy_tf = false;
+    bool as_json = false;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
         } else if (args[i] == "--model") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
+        } else if (args[i] == "--predictions") {
+            if (!TakeValue(args, &i, &waterfalls.predictions_path, err)) return 1;
+        } else if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &waterfalls.out_path, err)) return 1;
         } else if (args[i] == "--threshold") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             score.threshold = std::stod(value);
         } else if (args[i] == "--tf-damping") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             score.tf_damping = std::stod(value);
+        } else if (args[i] == "--fuzzy-tf") {
+            fuzzy_tf = true;
+        } else if (args[i] == "--ball-budget") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            ball.budget = std::stoull(value);
+        } else if (args[i] == "--no-interactions") {
+            score.use_interactions = false;
         } else if (args[i] == "--pair") {
             if (!TakeValue(args, &i, &pair, err)) return 1;
         } else if (args[i] == "--rows") {
             if (!TakeValue(args, &i, &rows, err)) return 1;
+        } else if (args[i] == "--pairs") {
+            if (!TakeValue(args, &i, &pairs_path, err)) return 1;
+            pairs_by_row = false;
+        } else if (args[i] == "--row-pairs") {
+            if (!TakeValue(args, &i, &pairs_path, err)) return 1;
+            pairs_by_row = true;
+        } else if (args[i] == "--json") {
+            as_json = true;
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink explain: unknown option '" << args[i] << "'\n";
             return 1;
@@ -644,9 +715,28 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
                "required\n";
         return 1;
     }
-    if (pair.empty() == rows.empty()) {
-        err << "cpplink explain: give exactly one of --pair <id_a>,<id_b> or "
-               "--rows <i>,<j>\n";
+    const bool file_mode = !waterfalls.predictions_path.empty();
+    if ((pair.empty() ? 0 : 1) + (rows.empty() ? 0 : 1) + (pairs_path.empty() ? 0 : 1) +
+            (file_mode ? 1 : 0) !=
+        1) {
+        err << "cpplink explain: give exactly one of --pair <id_a>,<id_b>, "
+               "--rows <i>,<j>, --pairs <file>, --row-pairs <file> or "
+               "--predictions <file>\n";
+        return 1;
+    }
+    // The JSON object and the waterfall file are the waterfall, and there is no
+    // waterfall without a model.
+    if ((as_json || file_mode) && model_path.empty()) {
+        err << "cpplink explain: " << (file_mode ? "--predictions" : "--json")
+            << " needs --model <model.json>\n";
+        return 1;
+    }
+    if (file_mode && waterfalls.out_path.empty()) {
+        err << "cpplink explain: --predictions needs --out <file.csv|file.parquet>\n";
+        return 1;
+    }
+    if (!file_mode && !waterfalls.out_path.empty()) {
+        err << "cpplink explain: --out goes with --predictions <file>\n";
         return 1;
     }
 
@@ -673,55 +763,102 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
         return 1;
     }
 
-    uint64_t row_a = 0;
-    uint64_t row_b = 0;
-    std::string first;
-    std::string second;
-    if (!pair.empty()) {
-        if (!SplitPair(pair, &first, &second)) {
-            err << "cpplink explain: --pair wants <id_a>,<id_b>\n";
-            return 1;
-        }
-        if (!FindRowById(store, first, &row_a)) {
-            err << "cpplink explain: no record with id '" << first << "'\n";
-            return 1;
-        }
-        if (!FindRowById(store, second, &row_b)) {
-            err << "cpplink explain: no record with id '" << second << "'\n";
-            return 1;
-        }
-    } else {
-        if (!SplitPair(rows, &first, &second)) {
-            err << "cpplink explain: --rows wants <i>,<j>\n";
-            return 1;
-        }
-        row_a = std::stoull(first);
-        row_b = std::stoull(second);
-        if (row_a >= store.NumRecords() || row_b >= store.NumRecords()) {
-            err << "cpplink explain: row out of range; the file has "
-                << store.NumRecords() << " records\n";
-            return 1;
-        }
-    }
-
-    PrintGammaLayout(comparisons, out);
-    out << "\n";
-    PrintPairExplanation(store, comparisons, row_a, row_b, out);
-
     // Without a model there is no weight to explain: the levels are the whole
     // story, and the waterfall is simply not printed.
+    Model model;
+    Scorer scorer;
+    BallTables balls;
     if (!model_path.empty()) {
-        Model model;
         if (!LoadModel(model_path, &model, &error)) {
             err << "cpplink: " << error << "\n";
             return 1;
         }
-        Scorer scorer;
-        if (!scorer.Bind(model, comparisons, store, score, &error)) {
+        // In JSON mode `out` carries nothing but the objects, so the ball-table
+        // report goes where a tool reading them will not have to parse it.
+        if (fuzzy_tf)
+            BuildBallTables(comparisons, store, ball, &balls, as_json ? err : out);
+        if (!scorer.Bind(model, comparisons, store, score, &error,
+                         fuzzy_tf ? &balls : nullptr)) {
             err << "cpplink explain: " << error << "\n";
             return 1;
         }
-        PrintPairWaterfall(store, comparisons, scorer, row_a, row_b, out);
+    }
+
+    const auto explain_one = [&](uint64_t row_a, uint64_t row_b) {
+        if (as_json) {
+            out << PairWaterfallJson(BuildPairWaterfall(store, comparisons, scorer, row_a,
+                                                        row_b, &model))
+                << "\n";
+            return;
+        }
+        PrintPairExplanation(store, comparisons, row_a, row_b, out);
+        if (!model_path.empty()) {
+            PrintPairWaterfall(store, comparisons, scorer, row_a, row_b, out);
+        }
+    };
+
+    // Every prediction a run wrote, as one wide row each: the file a viewer
+    // draws from, so the arithmetic never leaves the scorer.
+    if (file_mode) {
+        WaterfallReport report;
+        if (!WriteWaterfalls(store, comparisons, scorer, model, waterfalls, &report,
+                             &error)) {
+            err << "cpplink " << error << "\n";
+            return 1;
+        }
+        PrintWaterfallReport(report, out);
+        return 0;
+    }
+
+    if (pairs_path.empty()) {
+        uint64_t row_a = 0;
+        uint64_t row_b = 0;
+        const bool by_row = pair.empty();
+        if (!ResolvePair(store, by_row ? rows : pair, by_row, &row_a, &row_b, &error)) {
+            err << "cpplink explain: " << (by_row ? "--rows " : "--pair ") << error
+                << "\n";
+            return 1;
+        }
+        if (!as_json) {
+            PrintGammaLayout(comparisons, out);
+            out << "\n";
+        }
+        explain_one(row_a, row_b);
+        return 0;
+    }
+
+    // One pair per line, answered one line at a time and flushed, so a tool that
+    // holds this process open can write a pair and read its answer. The store is
+    // loaded once, which is the whole point: at 20M records the load is the cost,
+    // and the pair is free. A bad line is reported and does not end the batch.
+    std::ifstream file;
+    std::istream* in = &std::cin;
+    if (pairs_path != "-") {
+        file.open(pairs_path);
+        if (!file) {
+            err << "cpplink explain: cannot open " << pairs_path << "\n";
+            return 1;
+        }
+        in = &file;
+    }
+    std::string line;
+    while (std::getline(*in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        uint64_t row_a = 0;
+        uint64_t row_b = 0;
+        if (!ResolvePair(store, line, pairs_by_row, &row_a, &row_b, &error)) {
+            if (as_json) {
+                out << nlohmann::json{{"pair", line}, {"error", error}}.dump() << "\n";
+            } else {
+                out << "Pair " << line << ": " << error << "\n\n";
+            }
+            out.flush();
+            continue;
+        }
+        explain_one(row_a, row_b);
+        if (!as_json) out << "\n";
+        out.flush();
     }
     return 0;
 }
