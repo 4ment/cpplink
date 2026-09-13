@@ -11,6 +11,7 @@
 #include <variant>
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 #include <unistd.h>
 
 #include "cpplink/app.hpp"
@@ -382,14 +383,14 @@ TEST_F(RoundTrip, ListValuesAreSortedAndDeduplicatedPerRow) {
     }
 }
 
-// The boolean column and the email comparison the sample now exists to exercise.
-// gender is the boolean; email_username is derived from the address at load, and
+// The gender column and the email comparison the sample now exists to exercise.
+// gender is a two-valued string; email_username is derived from the address at load, and
 // the comparison ranks an exact address above an exact username above a fuzzy
 // match on either, which is where a duplicate that moved provider lands.
 constexpr const char* kFlagAndEmailSchema = R"({
   "unique_id": "id",
   "columns": [
-    {"name": "gender", "type": "boolean"},
+    {"name": "gender", "type": "string"},
     {"name": "email", "type": "string"},
     {"name": "email_username", "derive": {"from": "email", "transform": "email_username"}},
     {"name": "email_domain", "derive": {"from": "email", "transform": "email_domain"}}
@@ -407,7 +408,7 @@ constexpr const char* kFlagAndEmailSchema = R"({
   ]
 })";
 
-TEST_F(RoundTrip, GenderIsABooleanWithNullsAndBothValues) {
+TEST_F(RoundTrip, GenderIsATwoValuedStringWithNulls) {
     cpplink::SampleOptions options;
     options.rows = 4000;
     options.row_group_size = 1000;
@@ -421,8 +422,8 @@ TEST_F(RoundTrip, GenderIsABooleanWithNullsAndBothValues) {
     cpplink::RecordStore store(schema);
     ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
 
-    const auto& gender = std::get<cpplink::BooleanColumn>(store.column(0));
-    ASSERT_EQ(gender.values.size(), 4000u);
+    const auto& gender = std::get<cpplink::StringColumn>(store.column(0));
+    ASSERT_EQ(gender.ids.size(), 4000u);
     ASSERT_EQ(gender.tf.size(), 2u);
     EXPECT_EQ(store.DistinctValues(0), 2u);
     // Missing on a few percent of rows, and otherwise close to even.
@@ -840,3 +841,51 @@ TEST_F(RoundTrip, UnblockedLinkRunGoesEndToEndWithNoBlockingSection) {
 }
 
 }  // namespace
+
+// The JSON form of explain-blocking carries the same counts as the printed
+// report, source by source, which is what a tool drawing them relies on.
+TEST_F(RoundTrip, ExplainBlockingJsonCarriesTheReportedCounts) {
+    cpplink::SampleOptions options;
+    options.rows = 3000;
+    options.row_group_size = 1000;
+    options.duplicate_rate = 0.1;
+    options.truth_path = truth_;
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+    const std::string schema_path = (dir_ / "schema.json").string();
+    {
+        std::ofstream file(schema_path);
+        file << kSampleSchema;
+    }
+    std::ostringstream out;
+    std::ostringstream err;
+    ASSERT_EQ(cpplink::Run({"explain-blocking", "--schema", schema_path, "--json",
+                            "--count", data_},
+                           out, err),
+              0)
+        << err.str();
+    const nlohmann::json report = nlohmann::json::parse(out.str());
+    EXPECT_EQ(report["records"].get<uint64_t>(), 3000u);
+    EXPECT_TRUE(report["counted_union"].get<bool>());
+    EXPECT_LE(report["candidate_union"].get<uint64_t>(),
+              report["candidate_sum"].get<uint64_t>());
+
+    cpplink::Schema schema;
+    ASSERT_TRUE(cpplink::ParseSchema(kSampleSchema, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
+    cpplink::BlockingPlan plan;
+    ASSERT_TRUE(plan.Build(schema, store, &error)) << error;
+    ASSERT_EQ(report["sources"].size(), plan.Size());
+    uint64_t sum = 0;
+    for (size_t s = 0; s < plan.Size(); ++s) {
+        const nlohmann::json& item = report["sources"][s];
+        EXPECT_EQ(item["name"].get<std::string>(), plan.at(s).name);
+        EXPECT_EQ(item["candidate_pairs"].get<uint64_t>(), plan.CountPairs(s));
+        EXPECT_EQ(item["largest_group"].get<uint64_t>(), plan.LargestGroup(s));
+        EXPECT_EQ(item["em_safe"].get<bool>(), plan.at(s).em_safe);
+        sum += plan.CountPairs(s);
+    }
+    EXPECT_EQ(report["candidate_sum"].get<uint64_t>(), sum);
+    EXPECT_EQ(report["candidate_union"].get<uint64_t>(), plan.CountUnion());
+}

@@ -112,7 +112,7 @@ void PrintUsage(std::ostream& out) {
         << "                [--rows <i>,<j>] [--model <model.json>] "
            "[--threshold BITS]\n"
         << "                [--tf-damping F] <file.parquet>...\n"
-        << "cpplink explain-blocking --schema <schema.json> [--count] "
+        << "cpplink explain-blocking --schema <schema.json> [--count] [--json] "
            "[--mode MODE]\n"
         << "                [--all-pairs] <file.parquet>...\n"
         << "cpplink recall --schema <schema.json> --truth <truth.csv> [--why]\n"
@@ -801,6 +801,7 @@ int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
     std::vector<std::string> data_paths;
     std::string value;
     bool count_union = false;
+    bool as_json = false;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
     bool all_pairs = false;
@@ -815,6 +816,8 @@ int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
             all_pairs = true;
         } else if (args[i] == "--count") {
             count_union = true;
+        } else if (args[i] == "--json") {
+            as_json = true;
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink explain-blocking: unknown option '" << args[i] << "'\n";
             return 1;
@@ -836,7 +839,11 @@ int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
                          &store, &plan, err, all_pairs)) {
         return 1;
     }
-    PrintBlockingReport(plan, *store, count_union, out);
+    if (as_json) {
+        WriteBlockingJson(plan, *store, count_union, out);
+    } else {
+        PrintBlockingReport(plan, *store, count_union, out);
+    }
     return 0;
 }
 

@@ -57,6 +57,7 @@ nav:
       - cluster: commands/cluster.md
       - merge-predictions: commands/merge-predictions.md
       - gen-sample: commands/gen-sample.md
+  - Studio: studio.md
   - Reference:
       - Schema file: reference/schema.md
       - Output formats: reference/output-formats.md

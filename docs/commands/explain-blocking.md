@@ -10,7 +10,7 @@ group emits 5×10⁹ pairs by itself. `explain-blocking` makes that visible in s
 ## Synopsis
 
 ```sh
-cpplink explain-blocking --schema <schema.json> [--count] [--mode MODE]
+cpplink explain-blocking --schema <schema.json> [--count] [--json] [--mode MODE]
                          <file.parquet>...
 ```
 
@@ -18,6 +18,7 @@ cpplink explain-blocking --schema <schema.json> [--count] [--mode MODE]
 | --- | --- |
 | `--schema <file>` | required; must declare `blocking` |
 | `--count` | also compute the exact deduplicated **union** size, not just the per-source sum |
+| `--json` | the same numbers as one JSON object, for a tool that draws them: per source its type, column, knob, EM-safety, candidate pairs and largest group, then the sum, the pair space and the union when counted. A MinHash spec is one entry per band, as the plan holds it |
 | *(positional)* | required; the parquet file |
 | `--mode dedup\|link\|link-and-dedup` | which pairs to enumerate: link when more than one file is given, otherwise dedup; see [linking](../linking.md) |
 | `--all-pairs` | ignore the schema's sources and price the plan that does no blocking: every pair the mode admits. See [no blocking at all](../blocking.md#no-blocking-at-all) |

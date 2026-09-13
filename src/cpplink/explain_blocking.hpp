@@ -16,4 +16,11 @@ namespace cpplink {
 void PrintBlockingReport(const BlockingPlan& plan, const RecordStore& store,
                          bool count_union, std::ostream& out);
 
+// The same numbers as one JSON object, for a tool that draws them rather than
+// reads them: per source its kind, column, knob, EM-safety, candidate pairs and
+// largest group, then the sum, the pair space, and the union when counted. A
+// MinHash spec is one entry per band, as the plan holds it.
+void WriteBlockingJson(const BlockingPlan& plan, const RecordStore& store,
+                       bool count_union, std::ostream& out);
+
 }  // namespace cpplink

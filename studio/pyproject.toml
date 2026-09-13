@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cpplink-studio"
+version = "0.1.0"
+description = "Explore a file, draft its cpplink schema, and price its blocking"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = ["duckdb>=1.0", "pyarrow", "numpy", "pandas", "streamlit>=1.30",
+                "plotly>=5"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+cpplink-studio = "cpplink_studio.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["cpplink_studio*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -22,3 +22,8 @@ DESIGN.md
 site/
 
 notes/
+
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/

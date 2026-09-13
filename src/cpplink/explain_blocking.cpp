@@ -8,7 +8,10 @@
 #include <iomanip>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "cpplink/format.hpp"
 
@@ -95,6 +98,52 @@ void PrintBlockingReport(const BlockingPlan& plan, const RecordStore& store,
     if (!count_union) out << "; pass --count for the union";
     out << ".\nBlocking keeps " << std::scientific << std::setprecision(2) << reduction
         << " of all possible pairs.\n";
+}
+
+void WriteBlockingJson(const BlockingPlan& plan, const RecordStore& store,
+                       bool count_union, std::ostream& out) {
+    nlohmann::json root;
+    root["records"] = store.NumRecords();
+    root["mode"] = PairModeName(plan.mode());
+    root["datasets"] = nlohmann::json::array();
+    for (size_t d = 0; d < store.NumDatasets(); ++d) {
+        root["datasets"].push_back(store.DatasetEnd(d) - store.DatasetStart(d));
+    }
+    root["pair_space"] = static_cast<uint64_t>(store.PairSpace(plan.mode()));
+    root["sources"] = nlohmann::json::array();
+    uint64_t sum = 0;
+    bool unblocked = false;
+    for (size_t s = 0; s < plan.Size(); ++s) {
+        const BoundSource& source = plan.at(s);
+        const uint64_t pairs = plan.CountPairs(s);
+        sum += pairs;
+        nlohmann::json item;
+        item["name"] = source.name;
+        item["type"] = SourceKindName(source.kind);
+        item["column"] = source.column;
+        item["em_safe"] = source.em_safe;
+        item["candidate_pairs"] = pairs;
+        item["largest_group"] = plan.LargestGroup(s);
+        switch (source.kind) {
+            case SourceKind::kRareValue:
+                item["max_frequency"] = source.max_frequency;
+                break;
+            case SourceKind::kSortedNeighbourhood:
+                item["window"] = source.window;
+                break;
+            case SourceKind::kAllPairs:
+                unblocked = true;
+                break;
+            default:
+                break;
+        }
+        root["sources"].push_back(std::move(item));
+    }
+    root["candidate_sum"] = sum;
+    root["unblocked"] = unblocked;
+    root["counted_union"] = count_union;
+    if (count_union) root["candidate_union"] = plan.CountUnion();
+    out << root.dump(2) << "\n";
 }
 
 }  // namespace cpplink

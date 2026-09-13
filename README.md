@@ -327,6 +327,16 @@ What this project claims is narrower, and none of it is a blocking method:
 3. **Exact closed-form candidate pricing** from the term-frequency tables, which prices 8.25 billion pairs without enumerating one.
 4. **The streaming implementation.** γ's sufficiency is Fellegi & Sunter 1969; that a full Fellegi–Sunter pipeline with TF adjustment fits in memory at 20M records, because nothing in it holds a row per pair, is an engineering result rather than a statistical one.
 
+## cpplink studio
+
+[studio/](studio/) is a Streamlit page for the stage before the pipeline runs: open a csv or parquet, see the columns' types, nulls, cardinality and overrepresented values, what pairs of columns share, and draft the schema with the types and roles as dropdowns.
+The blocking editor prices every source live from the value counts, the same closed forms `explain-blocking` uses, draws candidates against the cap and the pairs each group size contributes, and drafts a plan under a candidate budget.
+
+```sh
+pip install -e studio
+cpplink-studio data.parquet
+```
+
 ## Documentation
 
 The full documentation — the model and the EM algorithm, the blocking sources, and a page per command explaining its goal and how to read its output — is built with
