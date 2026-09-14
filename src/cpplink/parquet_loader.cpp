@@ -4,6 +4,7 @@
 #include "cpplink/parquet_loader.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <limits>
 #include <memory>
@@ -18,9 +19,83 @@
 namespace cpplink {
 namespace {
 
-std::string_view ViewOf(const arrow::StringArray& array, int64_t row) {
-    const std::string_view value = array.GetView(row);
-    return value;
+// Calls fn on the array as its concrete integer type, or returns false when the
+// column is not an integer of any width or sign.
+template <typename Fn>
+bool WithIntegerArray(const arrow::Array& array, Fn&& fn) {
+    switch (array.type_id()) {
+        case arrow::Type::INT8:
+            fn(static_cast<const arrow::Int8Array&>(array));
+            return true;
+        case arrow::Type::INT16:
+            fn(static_cast<const arrow::Int16Array&>(array));
+            return true;
+        case arrow::Type::INT32:
+            fn(static_cast<const arrow::Int32Array&>(array));
+            return true;
+        case arrow::Type::INT64:
+            fn(static_cast<const arrow::Int64Array&>(array));
+            return true;
+        case arrow::Type::UINT8:
+            fn(static_cast<const arrow::UInt8Array&>(array));
+            return true;
+        case arrow::Type::UINT16:
+            fn(static_cast<const arrow::UInt16Array&>(array));
+            return true;
+        case arrow::Type::UINT32:
+            fn(static_cast<const arrow::UInt32Array&>(array));
+            return true;
+        case arrow::Type::UINT64:
+            fn(static_cast<const arrow::UInt64Array&>(array));
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Visits every value of a text-like column in order as `visit(value, is_null)`.
+// A file written from Python rarely holds the types the schema names: pandas and
+// polars write `large_string` for text, and a postcode, a year or an id that was
+// numeric in the frame arrives as an integer. Both are the string the user meant,
+// so an integer is visited as its decimal digits and interned like any other
+// value, which is what makes "2000" in one file and 2000 in another the same id.
+template <typename StringArray, typename Visit>
+void VisitStrings(const arrow::Array& array, Visit& visit) {
+    const auto& typed = static_cast<const StringArray&>(array);
+    for (int64_t i = 0; i < typed.length(); ++i) {
+        if (typed.IsNull(i)) {
+            visit(std::string_view(), true);
+        } else {
+            visit(std::string_view(typed.GetView(i)), false);
+        }
+    }
+}
+
+template <typename Visit>
+bool ForEachText(const arrow::Array& array, Visit&& visit, std::string* error) {
+    if (array.type_id() == arrow::Type::STRING) {
+        VisitStrings<arrow::StringArray>(array, visit);
+        return true;
+    }
+    if (array.type_id() == arrow::Type::LARGE_STRING) {
+        VisitStrings<arrow::LargeStringArray>(array, visit);
+        return true;
+    }
+    const bool integer = WithIntegerArray(array, [&](const auto& typed) {
+        char digits[24];  // -9223372036854775808 is 20 characters
+        for (int64_t i = 0; i < typed.length(); ++i) {
+            if (typed.IsNull(i)) {
+                visit(std::string_view(), true);
+                continue;
+            }
+            const auto result =
+                std::to_chars(digits, digits + sizeof(digits), typed.Value(i));
+            visit(std::string_view(digits, result.ptr - digits), false);
+        }
+    });
+    if (integer) return true;
+    *error = "expected a string or integer column, found " + array.type()->ToString();
+    return false;
 }
 
 // Days since the Unix epoch, whatever the column's temporal unit.
@@ -112,42 +187,27 @@ bool AppendBooleans(const arrow::Array& array, BooleanColumn* column,
 }
 
 bool AppendStrings(const arrow::Array& array, StringColumn* column, std::string* error) {
-    if (array.type_id() != arrow::Type::STRING) {
-        *error = "expected a string column, found " + array.type()->ToString();
-        return false;
-    }
-    const auto& typed = static_cast<const arrow::StringArray&>(array);
-    for (int64_t i = 0; i < typed.length(); ++i) {
-        column->ids.push_back(typed.IsNull(i) ? kNullId
-                                              : column->dict.Intern(ViewOf(typed, i)));
-    }
-    return true;
+    return ForEachText(
+        array,
+        [&](std::string_view value, bool is_null) {
+            column->ids.push_back(is_null ? kNullId : column->dict.Intern(value));
+        },
+        error);
 }
 
-bool AppendStringLists(const arrow::Array& array, StringListColumn* column,
-                       std::string* error) {
-    if (array.type_id() != arrow::Type::LIST) {
-        *error = "expected a list column, found " + array.type()->ToString();
-        return false;
-    }
-    const auto& typed = static_cast<const arrow::ListArray&>(array);
-    const auto values = std::static_pointer_cast<arrow::StringArray>(typed.values());
-    if (values->type_id() != arrow::Type::STRING) {
-        *error =
-            "expected a list of strings, found a list of " + values->type()->ToString();
-        return false;
-    }
-    if (column->offsets.empty()) column->offsets.push_back(0);
-
+// Slices the interned elements of a list chunk into one sorted, deduplicated cell
+// per row, whether the offsets are 32-bit (`list`) or 64-bit (`large_list`).
+template <typename ListArray>
+void AppendListRows(const ListArray& lists, const std::vector<uint32_t>& elements,
+                    StringListColumn* column) {
     std::vector<uint32_t> row;
-    for (int64_t i = 0; i < typed.length(); ++i) {
+    for (int64_t i = 0; i < lists.length(); ++i) {
         row.clear();
-        if (!typed.IsNull(i)) {
-            const int64_t begin = typed.value_offset(i);
-            const int64_t end = typed.value_offset(i + 1);
+        if (!lists.IsNull(i)) {
+            const int64_t begin = lists.value_offset(i);
+            const int64_t end = lists.value_offset(i + 1);
             for (int64_t j = begin; j < end; ++j) {
-                if (values->IsNull(j)) continue;
-                row.push_back(column->dict.Intern(values->GetView(j)));
+                if (elements[j] != kNullId) row.push_back(elements[j]);
             }
         }
         // Sorted and deduplicated here so overlap is a linear merge later.
@@ -156,19 +216,53 @@ bool AppendStringLists(const arrow::Array& array, StringListColumn* column,
         column->ids.insert(column->ids.end(), row.begin(), row.end());
         column->offsets.push_back(column->ids.size());
     }
+}
+
+bool AppendStringLists(const arrow::Array& array, StringListColumn* column,
+                       std::string* error) {
+    const bool large = array.type_id() == arrow::Type::LARGE_LIST;
+    if (array.type_id() != arrow::Type::LIST && !large) {
+        *error = "expected a list column, found " + array.type()->ToString();
+        return false;
+    }
+    // The elements are interned first, as one flat run over the child array, so a
+    // list of integers goes through the same visitor a scalar column does; the rows
+    // are then cut out of that run by the list's own offsets.
+    const std::shared_ptr<arrow::Array> values =
+        large ? static_cast<const arrow::LargeListArray&>(array).values()
+              : static_cast<const arrow::ListArray&>(array).values();
+    std::vector<uint32_t> elements;
+    elements.reserve(static_cast<size_t>(values->length()));
+    std::string element_error;
+    const bool ok = ForEachText(
+        *values,
+        [&](std::string_view value, bool is_null) {
+            elements.push_back(is_null ? kNullId : column->dict.Intern(value));
+        },
+        &element_error);
+    if (!ok) {
+        *error = "expected a list of strings or integers, found a list of " +
+                 values->type()->ToString();
+        return false;
+    }
+    if (column->offsets.empty()) column->offsets.push_back(0);
+    if (large) {
+        AppendListRows(static_cast<const arrow::LargeListArray&>(array), elements,
+                       column);
+    } else {
+        AppendListRows(static_cast<const arrow::ListArray&>(array), elements, column);
+    }
     return true;
 }
 
 bool AppendIds(const arrow::Array& array, IdColumn* column, std::string* error) {
-    if (array.type_id() != arrow::Type::STRING) {
-        *error = "expected a string unique_id column, found " + array.type()->ToString();
-        return false;
-    }
-    const auto& typed = static_cast<const arrow::StringArray&>(array);
-    for (int64_t i = 0; i < typed.length(); ++i) {
-        column->Append(typed.IsNull(i) ? std::string_view() : typed.GetView(i));
-    }
-    return true;
+    std::string text_error;
+    const bool ok = ForEachText(
+        array, [&](std::string_view value, bool) { column->Append(value); }, &text_error);
+    if (ok) return true;
+    *error = "expected a string or integer unique_id column, found " +
+             array.type()->ToString();
+    return false;
 }
 
 bool AppendColumn(const arrow::ChunkedArray& chunked, ColumnType type, Column* column,
@@ -196,6 +290,70 @@ bool AppendColumn(const arrow::ChunkedArray& chunked, ColumnType type, Column* c
         if (!ok) return false;
     }
     return true;
+}
+
+bool OpenSchema(const std::string& path, std::shared_ptr<arrow::Schema>* file_schema,
+                std::string* error) {
+    auto input_result = arrow::io::ReadableFile::Open(path);
+    if (!input_result.ok()) {
+        *error = "cannot open " + path + ": " + input_result.status().message();
+        return false;
+    }
+    parquet::arrow::FileReaderBuilder builder;
+    auto status = builder.Open(*input_result);
+    if (!status.ok()) {
+        *error = "cannot read parquet metadata: " + status.message();
+        return false;
+    }
+    auto reader_result = builder.Build();
+    if (!reader_result.ok()) {
+        *error = "cannot open parquet reader: " + reader_result.status().message();
+        return false;
+    }
+    status = (*reader_result)->GetSchema(file_schema);
+    if (!status.ok()) {
+        *error = "cannot read parquet schema: " + status.message();
+        return false;
+    }
+    return true;
+}
+
+// The column type an Arrow type reads as, or false where none does. An integer
+// is text: a postcode, a year or a phone number that was numeric in the frame is
+// still the value it spells, and a writer who wanted a double wrote one.
+bool ColumnTypeOf(const arrow::DataType& type, ColumnType* out) {
+    switch (type.id()) {
+        case arrow::Type::STRING:
+        case arrow::Type::LARGE_STRING:
+        case arrow::Type::INT8:
+        case arrow::Type::INT16:
+        case arrow::Type::INT32:
+        case arrow::Type::INT64:
+        case arrow::Type::UINT8:
+        case arrow::Type::UINT16:
+        case arrow::Type::UINT32:
+        case arrow::Type::UINT64:
+            *out = ColumnType::kString;
+            return true;
+        case arrow::Type::LIST:
+        case arrow::Type::LARGE_LIST:
+            *out = ColumnType::kStringList;
+            return true;
+        case arrow::Type::DATE32:
+        case arrow::Type::DATE64:
+        case arrow::Type::TIMESTAMP:
+            *out = ColumnType::kDate;
+            return true;
+        case arrow::Type::BOOL:
+            *out = ColumnType::kBoolean;
+            return true;
+        case arrow::Type::FLOAT:
+        case arrow::Type::DOUBLE:
+            *out = ColumnType::kDouble;
+            return true;
+        default:
+            return false;
+    }
 }
 
 // Appends one file's rows to the store without finalizing it: several files may
@@ -303,6 +461,31 @@ bool AppendOneFile(const std::string& path, const Schema& schema, RecordStore* s
 }
 
 }  // namespace
+
+bool ResolveColumnTypes(const std::vector<std::string>& paths, Schema* schema,
+                        std::string* error) {
+    if (paths.empty()) {
+        *error = "no parquet file to read the column types from";
+        return false;
+    }
+    std::shared_ptr<arrow::Schema> file_schema;
+    if (!OpenSchema(paths.front(), &file_schema, error)) return false;
+    for (ColumnSpec& spec : schema->columns) {
+        if (spec.type_declared || spec.IsDerived()) continue;
+        const int index = file_schema->GetFieldIndex(spec.name);
+        if (index < 0) {
+            *error = "column \"" + spec.name + "\" is not in " + paths.front();
+            return false;
+        }
+        const auto& type = *file_schema->field(index)->type();
+        if (!ColumnTypeOf(type, &spec.type)) {
+            *error = "column \"" + spec.name + "\" is " + type.ToString() + " in " +
+                     paths.front() + ", which cpplink cannot read; cast it to a string";
+            return false;
+        }
+    }
+    return CheckTypes(schema, error);
+}
 
 bool LoadParquetFiles(const std::vector<std::string>& paths, const Schema& schema,
                       RecordStore* store, LoadStats* stats, std::string* error) {
