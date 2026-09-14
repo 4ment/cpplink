@@ -233,7 +233,7 @@ def main():
         for threshold in thresholds:
             path = os.path.join(out, f"clusters_p{threshold}.csv")
             run(f"cluster@{threshold}", "cluster", "--schema", schema,
-                "--edges", edges, "--out", path, "--probability", repr(threshold),
+                "--predictions", edges, "--out", path, "--probability", repr(threshold),
                 "--min-size", 2, parquet)
             clusters[str(threshold)] = path
 

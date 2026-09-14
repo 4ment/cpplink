@@ -186,6 +186,14 @@ Every source here selects on a single column, which is what makes it usable for 
 ```
 
 ```sh
+# Draft that schema from the file: guess what each column is from its name and
+# its type, and write a default comparison per column, the derived columns a
+# role wants, and the blocking sources a role is strong enough to carry.
+# --role overrides a guess and --id names the record id; without --out the
+# schema is stdout and the report stderr
+cpplink init --out schema.json data.parquet
+cpplink init --role notes=text --role reg_no=national_id data.parquet > schema.json
+
 # Report cardinality, null rates and the memory each structure costs
 cpplink inspect --schema examples/sample_schema.json data.parquet
 
@@ -270,6 +278,7 @@ It plants corrupted copies of earlier rows and records them, so the file also se
 - Pre-model data profiling: what each column can be worth, what a matching pair will score,
   and which columns are the same evidence twice *(done)*
 - Fuzzy thresholds placed from the data rather than by hand *(done)*
+- A schema drafted from the column names and types, with default comparisons and blocking *(done)*
 - Columns derived from other columns at load, once per distinct value *(done)*
 - Merging the comparison levels a run cannot tell apart *(done)*
 - Two-way corrections for the columns that are not conditionally independent *(done)*
