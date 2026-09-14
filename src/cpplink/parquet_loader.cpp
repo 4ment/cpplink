@@ -462,6 +462,21 @@ bool AppendOneFile(const std::string& path, const Schema& schema, RecordStore* s
 
 }  // namespace
 
+bool ReadFileColumns(const std::string& path, std::vector<FileColumn>* columns,
+                     std::string* error) {
+    std::shared_ptr<arrow::Schema> file_schema;
+    if (!OpenSchema(path, &file_schema, error)) return false;
+    columns->clear();
+    for (const auto& field : file_schema->fields()) {
+        FileColumn column;
+        column.name = field->name();
+        column.arrow_type = field->type()->ToString();
+        column.readable = ColumnTypeOf(*field->type(), &column.type);
+        columns->push_back(std::move(column));
+    }
+    return true;
+}
+
 bool ResolveColumnTypes(const std::vector<std::string>& paths, Schema* schema,
                         std::string* error) {
     if (paths.empty()) {

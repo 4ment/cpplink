@@ -20,6 +20,7 @@
 #include "cpplink/estimate.hpp"
 #include "cpplink/explain.hpp"
 #include "cpplink/explain_blocking.hpp"
+#include "cpplink/init.hpp"
 #include "cpplink/inspect.hpp"
 #include "cpplink/levels.hpp"
 #include "cpplink/merge_edges.hpp"
@@ -56,6 +57,8 @@ void PrintUsage(std::ostream& out) {
     out << "usage: cpplink <command> [options]\n"
         << "\n"
         << "commands:\n"
+        << "  init        draft a schema from a parquet file: guess what each column\n"
+        << "              is from its name, and write default comparisons and blocking\n"
         << "  inspect     load a parquet file and report cardinality and memory\n"
         << "  profile     what the columns can be worth, what a matching pair "
            "will\n"
@@ -100,6 +103,8 @@ void PrintUsage(std::ostream& out) {
         << "enough to enumerate that is cheap, and it leaves blocking nothing to\n"
         << "miss. Estimating from it holds no column out; see the documentation.\n"
         << "\n"
+        << "cpplink init [--out <schema.json>] [--id COLUMN] [--role COLUMN=ROLE]...\n"
+        << "             <file.parquet>\n"
         << "cpplink inspect --schema <schema.json> <file.parquet>...\n"
         << "cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]\n"
         << "                [--expected-matches N] [--threads N] [--json] "
@@ -206,6 +211,63 @@ bool ParseMode(const std::string& text, PairMode* mode, std::ostream& err) {
 PairMode DefaultMode(bool given, PairMode mode, size_t inputs) {
     if (given) return mode;
     return inputs > 1 ? PairMode::kCrossDataset : PairMode::kAll;
+}
+
+// The schema goes to --out, or to stdout where there is none so the command can
+// be redirected; the report then goes to stderr, where it is still read but not
+// captured into the file.
+int RunInit(const std::vector<std::string>& args, std::ostream& out, std::ostream& err) {
+    DraftOptions options;
+    std::string out_path;
+    std::string value;
+    std::vector<std::string> data_paths;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &out_path, err)) return 1;
+        } else if (args[i] == "--id") {
+            if (!TakeValue(args, &i, &options.unique_id, err)) return 1;
+        } else if (args[i] == "--role") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            const size_t equals = value.find('=');
+            if (equals == std::string::npos || equals == 0 ||
+                equals + 1 == value.size()) {
+                err << "cpplink init: --role takes COLUMN=ROLE, where ROLE is one of "
+                    << KnownRoles() << "\n";
+                return 1;
+            }
+            options.roles.emplace_back(value.substr(0, equals), value.substr(equals + 1));
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink init: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else {
+            data_paths.push_back(args[i]);
+        }
+    }
+    if (data_paths.size() != 1) {
+        err << "cpplink init: exactly one parquet file is required\n";
+        return 1;
+    }
+
+    DraftReport report;
+    std::string error;
+    if (!DraftSchema(data_paths.front(), options, &report, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    if (out_path.empty()) {
+        PrintDraftReport(report, err);
+        out << report.json;
+        return 0;
+    }
+    std::ofstream file(out_path);
+    if (!file) {
+        err << "cpplink: cannot write " << out_path << "\n";
+        return 1;
+    }
+    file << report.json;
+    PrintDraftReport(report, out);
+    out << "\nWrote " << out_path << "\n";
+    return 0;
 }
 
 int RunInspect(const std::vector<std::string>& args, std::ostream& out,
@@ -1752,6 +1814,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     }
 
     const std::vector<std::string> rest(args.begin() + 1, args.end());
+    if (first == "init") return RunInit(rest, out, err);
     if (first == "inspect") return RunInspect(rest, out, err);
     if (first == "profile") return RunProfile(rest, out, err);
     if (first == "levels") return RunLevels(rest, out, err);

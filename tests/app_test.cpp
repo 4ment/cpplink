@@ -63,8 +63,8 @@ TEST(RunTest, UsageListsEveryCommand) {
     std::ostringstream err;
     EXPECT_EQ(cpplink::Run({"--help"}, out, err), 0);
     for (const char* command :
-         {"inspect", "explain", "explain-blocking", "recall", "estimate", "predict",
-          "rescore", "cluster", "merge-predictions", "gen-sample"}) {
+         {"init", "inspect", "explain", "explain-blocking", "recall", "estimate",
+          "predict", "rescore", "cluster", "merge-predictions", "gen-sample"}) {
         EXPECT_NE(out.str().find(command), std::string::npos) << command;
     }
 }

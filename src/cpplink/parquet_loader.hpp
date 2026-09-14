@@ -18,6 +18,19 @@ struct LoadStats {
     std::vector<uint64_t> dataset_rows;  // rows contributed by each input, in order
 };
 
+// One column of a parquet file as its footer describes it: the name, the Arrow
+// type spelled out, and the column type it reads as, where one does.
+struct FileColumn {
+    std::string name;
+    std::string arrow_type;
+    ColumnType type = ColumnType::kString;
+    bool readable = false;  // false where no column type reads the Arrow type
+};
+
+// Reads the footer of one file and lists its columns in file order.
+bool ReadFileColumns(const std::string& path, std::vector<FileColumn>* columns,
+                     std::string* error);
+
 // Fills in the type of every column the schema left undeclared from the Arrow
 // type the first file holds, then runs the checks those types decide. A parquet
 // file already knows what its columns are, so the schema need not say again;
