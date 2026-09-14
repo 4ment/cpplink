@@ -565,7 +565,7 @@ TEST_F(RoundTrip, WrongDeclaredTypeIsReportedByColumn) {
     cpplink::RecordStore store(schema);
     EXPECT_FALSE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error));
     EXPECT_NE(error.find("latitude"), std::string::npos);
-    EXPECT_NE(error.find("expected a string column"), std::string::npos);
+    EXPECT_NE(error.find("expected a string or integer column"), std::string::npos);
 }
 
 // A planted duplicate is a corruption of another record, so the two rows must

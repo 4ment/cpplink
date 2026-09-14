@@ -42,6 +42,16 @@ const char* const kVersion = "0.1.0";
 
 namespace {
 
+// The schema for a data command: parsed, then given the column types it left to
+// the file. Every command that builds a store from a schema goes through here,
+// because the store's layout is the types and they must be settled first.
+bool LoadSchemaFor(const std::string& schema_path,
+                   const std::vector<std::string>& data_paths, Schema* schema,
+                   std::string* error) {
+    return LoadSchema(schema_path, schema, error) &&
+           ResolveColumnTypes(data_paths, schema, error);
+}
+
 void PrintUsage(std::ostream& out) {
     out << "usage: cpplink <command> [options]\n"
         << "\n"
@@ -220,7 +230,7 @@ int RunInspect(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -301,7 +311,7 @@ int RunProfile(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -410,7 +420,7 @@ int RunLevels(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -527,7 +537,7 @@ int RunSimplify(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -653,7 +663,7 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -759,7 +769,7 @@ bool LoadForBlocking(const std::string& schema_path,
                      BlockingPlan* plan, std::ostream& err, bool all_pairs = false,
                      LoadStats* stats = nullptr) {
     std::string error;
-    if (!LoadSchema(schema_path, schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, schema, &error)) {
         err << "cpplink: " << error << "\n";
         return false;
     }

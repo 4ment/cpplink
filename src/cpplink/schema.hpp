@@ -74,6 +74,11 @@ struct DeriveSpec {
 struct ColumnSpec {
     std::string name;
     ColumnType type = ColumnType::kString;
+    // Whether the schema said what the type is. A parquet file already knows,
+    // so a column that says nothing takes its type from the file at load, and
+    // until then it reads as a string, which is what every in-memory fixture
+    // and every file the schema was written against holds.
+    bool type_declared = false;
     DeriveSpec derive;  // an empty transform list means the column is read
 
     bool IsDerived() const { return !derive.transforms.empty(); }
@@ -122,8 +127,9 @@ bool ParseLevelType(const std::string& name, LevelType* type);
 struct LevelSpec {
     LevelType type = LevelType::kElse;
     double threshold = 0.0;
-    std::string label;   // defaults to a description of type and threshold
-    uint8_t column = 0;  // index into the comparison's columns
+    std::string label;          // defaults to a description of type and threshold
+    uint8_t column = 0;         // index into the comparison's columns
+    bool names_column = false;  // the schema chose `column` rather than defaulting
 
     std::string Describe() const;
 };
@@ -190,6 +196,9 @@ struct Schema {
     const ColumnSpec* Find(const std::string& name) const;
     // The columns a file is actually read for: everything but the derived ones.
     bool IsDerived(const std::string& name) const;
+    // Whether a column's type is settled before any file is opened: declared,
+    // or derived from a column whose type is.
+    bool TypeKnown(const ColumnSpec& spec) const;
     // Total packed width in bits. Must fit in a uint32.
     uint8_t GammaWidth() const;
 };
@@ -202,6 +211,14 @@ struct Schema {
 bool SameSource(const Schema& schema, const std::string& a, const std::string& b);
 
 bool ParseSchema(const std::string& json_text, Schema* schema, std::string* error);
+
+// The checks a column's type decides: which transforms a derivation may chain,
+// which levels a comparison may apply, which columns a source may block on.
+// ParseSchema runs them wherever the types are known, so a mistyped schema still
+// fails before a file is opened; the loader runs them again over every column
+// once the file has supplied the types the schema left to it. Also fills in the
+// type of every derived column from its source's.
+bool CheckTypes(Schema* schema, std::string* error);
 bool LoadSchema(const std::string& path, Schema* schema, std::string* error);
 
 }  // namespace cpplink

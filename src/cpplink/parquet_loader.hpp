@@ -18,6 +18,15 @@ struct LoadStats {
     std::vector<uint64_t> dataset_rows;  // rows contributed by each input, in order
 };
 
+// Fills in the type of every column the schema left undeclared from the Arrow
+// type the first file holds, then runs the checks those types decide. A parquet
+// file already knows what its columns are, so the schema need not say again;
+// what it says is checked against the file, not used instead of it. Reads only
+// the footer. Must run before a store is built from the schema, because the
+// store's column layout is the types.
+bool ResolveColumnTypes(const std::vector<std::string>& paths, Schema* schema,
+                        std::string* error);
+
 // Reads a parquet file into the record store one row group at a time, so the
 // Arrow buffers for a group are released before the next is read and the two
 // representations are never both resident for the whole file.
