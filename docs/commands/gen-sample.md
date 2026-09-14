@@ -53,7 +53,7 @@ declares an `email_username` column derived from `email` at load:
 | `address_tokens` | string_list | ~4.5 elements a row |
 
 That mix is the point: it exercises the near-unique dictionaries that dominate memory, the
-low-cardinality columns that break rare-value blocking, a boolean, a list column, a date, and
+low-cardinality columns that break rare-value blocking, a two-valued string, a list column, a date, and
 a double pair that carries no term frequencies.
 
 An address is a username drawn from the names and a four-digit suffix under one of six
