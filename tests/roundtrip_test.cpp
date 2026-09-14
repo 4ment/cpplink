@@ -382,14 +382,14 @@ TEST_F(RoundTrip, ListValuesAreSortedAndDeduplicatedPerRow) {
     }
 }
 
-// The boolean column and the email comparison the sample now exists to exercise.
-// gender is the boolean; email_username is derived from the address at load, and
+// The two-valued column and the email comparison the sample now exists to exercise.
+// gender is F or M; email_username is derived from the address at load, and
 // the comparison ranks an exact address above an exact username above a fuzzy
 // match on either, which is where a duplicate that moved provider lands.
 constexpr const char* kFlagAndEmailSchema = R"({
   "unique_id": "id",
   "columns": [
-    {"name": "gender", "type": "boolean"},
+    {"name": "gender", "type": "string"},
     {"name": "email", "type": "string"},
     {"name": "email_username", "derive": {"from": "email", "transform": "email_username"}},
     {"name": "email_domain", "derive": {"from": "email", "transform": "email_domain"}}
@@ -407,7 +407,7 @@ constexpr const char* kFlagAndEmailSchema = R"({
   ]
 })";
 
-TEST_F(RoundTrip, GenderIsABooleanWithNullsAndBothValues) {
+TEST_F(RoundTrip, GenderIsATwoValuedStringWithNullsAndBothValues) {
     cpplink::SampleOptions options;
     options.rows = 4000;
     options.row_group_size = 1000;
@@ -421,10 +421,12 @@ TEST_F(RoundTrip, GenderIsABooleanWithNullsAndBothValues) {
     cpplink::RecordStore store(schema);
     ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
 
-    const auto& gender = std::get<cpplink::BooleanColumn>(store.column(0));
-    ASSERT_EQ(gender.values.size(), 4000u);
+    const auto& gender = std::get<cpplink::StringColumn>(store.column(0));
+    ASSERT_EQ(gender.ids.size(), 4000u);
     ASSERT_EQ(gender.tf.size(), 2u);
     EXPECT_EQ(store.DistinctValues(0), 2u);
+    const std::string a(gender.dict.Value(0)), b(gender.dict.Value(1));
+    EXPECT_TRUE((a == "F" && b == "M") || (a == "M" && b == "F")) << a << " " << b;
     // Missing on a few percent of rows, and otherwise close to even.
     const double nulls = static_cast<double>(store.NullCount(0)) / 4000.0;
     EXPECT_GT(nulls, 0.01);
