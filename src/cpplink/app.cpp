@@ -131,8 +131,9 @@ void PrintUsage(std::ostream& out) {
         << "                --out <dir|file.csv|file.parquet>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--no-ceiling]\n"
-        << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
-        << "                [--spill-sample R] [--fuzzy-tf] [--ball-budget N]\n"
+        << "                [--tf-damping F] [--no-signatures] [--no-ladders]\n"
+        << "                [--spill <dir>] [--spill-sample R] [--fuzzy-tf]\n"
+        << "                [--ball-budget N]\n"
         << "                [--no-interactions] [--mode MODE] [--all-pairs]\n"
         << "                [-v | --verbose] <file.parquet>...\n"
         << "cpplink completeness --schema <schema.json> --model <model.json>\n"
@@ -1210,6 +1211,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     bool fuzzy_tf = false;
     bool have_threshold = false;
     bool use_signatures = true;
+    bool use_ladders = true;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
     bool all_pairs = false;
@@ -1284,6 +1286,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             }
         } else if (args[i] == "--no-signatures") {
             use_signatures = false;
+        } else if (args[i] == "--no-ladders") {
+            use_ladders = false;
         } else if (args[i] == "--no-interactions") {
             score.use_interactions = false;
         } else if (!args[i].empty() && args[i][0] == '-') {
@@ -1336,7 +1340,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     }
 
     ComparisonSet comparisons;
-    if (!comparisons.Bind(schema, *store, &error, use_signatures)) {
+    if (!comparisons.Bind(schema, *store, &error, use_signatures, use_ladders)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }

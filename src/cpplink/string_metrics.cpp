@@ -328,22 +328,31 @@ int LevenshteinLowerBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
     return std::max(gap, deficit);
 }
 
-bool JaroWinklerAtLeast(std::string_view a, std::string_view b, double threshold) {
-    const size_t shorter = std::min(a.size(), b.size());
-    const size_t longer = std::max(a.size(), b.size());
-    if (longer == 0) return threshold <= 1.0;
+double JaroWinklerLengthBound(size_t len_a, size_t len_b) {
+    const size_t shorter = std::min(len_a, len_b);
+    const size_t longer = std::max(len_a, len_b);
+    if (longer == 0) return 1.0;
     const double ratio = static_cast<double>(shorter) / static_cast<double>(longer);
-    const double jaro_bound = (2.0 + ratio) / 3.0;
-    if (0.4 + 0.6 * jaro_bound < threshold) return false;
-    // The threshold goes down into the metric, so the match count alone can end the
+    return 0.4 + 0.6 * ((2.0 + ratio) / 3.0);
+}
+
+double JaroWinklerScreened(std::string_view a, std::string_view b, double screen) {
+    // The screen goes down into the metric, so the match count alone can end the
     // call before a transposition is counted. The count is what the signature bound
     // could only bound, since a presence mask knows nothing of position, of
     // multiplicity, or of the match window. Where it does end the call the value
     // that comes back is an over-estimate the metric has already been shown to
-    // score below the threshold, so the same test decides both cases and there is
-    // nothing here that can disagree with `JaroWinkler(a, b) >= threshold`.
-    const double jaro = JaroScreened(a, b, threshold);
-    return ApplyWinkler(a, b, jaro, kPrefixScale, kBoostThreshold) >= threshold;
+    // score below the screen, so the same test decides both cases and there is
+    // nothing here that can disagree with `JaroWinkler(a, b) >= threshold` for any
+    // threshold at or above the screen: the exact value sits below the estimate,
+    // and the Winkler step is monotone in the Jaro it is given.
+    const double jaro = JaroScreened(a, b, screen);
+    return ApplyWinkler(a, b, jaro, kPrefixScale, kBoostThreshold);
+}
+
+bool JaroWinklerAtLeast(std::string_view a, std::string_view b, double threshold) {
+    if (JaroWinklerLengthBound(a.size(), b.size()) < threshold) return false;
+    return JaroWinklerScreened(a, b, threshold) >= threshold;
 }
 
 double HaversineKm(double lat_a, double lon_a, double lat_b, double lon_b) {

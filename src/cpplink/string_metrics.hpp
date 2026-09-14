@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -41,10 +42,22 @@ double JaroWinklerUpperBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
 int LevenshteinLowerBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
                           uint32_t len_b);
 
+// The largest Jaro-Winkler two values of these lengths can reach. Since matches
+// <= min(|a|,|b|) and transpositions >= 0, Jaro is bounded above by (2 + min/max)/3,
+// and the prefix bonus adds at most 0.4(1 - jaro). Two empty values are identical.
+double JaroWinklerLengthBound(size_t len_a, size_t len_b);
+
+// Jaro-Winkler with a screen pushed into the metric: where the similarity is at
+// least `screen` the exact value comes back, and where it is not, some value below
+// `screen` does -- the match count alone can end the call before a transposition is
+// counted. So testing the result against any threshold at or above the screen is
+// the same verdict `JaroWinklerAtLeast` gives against that threshold, which is what
+// lets a ladder of thresholds be answered by one call screened at its loosest rung.
+double JaroWinklerScreened(std::string_view a, std::string_view b, double screen);
+
 // Jaro-Winkler against a threshold, rejecting on length alone where that is
-// already decisive. Since matches <= min(|a|,|b|) and transpositions >= 0, Jaro is
-// bounded above by (2 + min/max)/3, and the prefix bonus adds at most 0.4(1 - jaro).
-// The bound is exact, so this never disagrees with JaroWinkler(a, b) >= threshold.
+// already decisive. The bound is exact and the screen is the threshold itself, so
+// this never disagrees with JaroWinkler(a, b) >= threshold.
 bool JaroWinklerAtLeast(std::string_view a, std::string_view b, double threshold);
 
 // Great-circle distance in kilometres.
