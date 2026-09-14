@@ -230,6 +230,157 @@ TEST(SignatureFilterTest, ChangesNoPattern) {
     }
 }
 
+// A ladder: consecutive fuzzy levels of one type over one column, which the
+// evaluator answers with one metric call. The runs here are two Jaro-Winkler rungs
+// out of order, so the test also covers a ladder that is not monotone, and three
+// Levenshtein rungs; `surname_alone` holds the same rungs each behind an exact
+// level, which breaks every run into a run of one.
+constexpr const char* kLadderConfig = R"({
+  "columns": [
+    {"name": "surname", "type": "string"}
+  ],
+  "comparisons": [
+    {"name": "surname", "columns": ["surname"], "levels": [
+      {"type": "null"},
+      {"type": "exact"},
+      {"type": "levenshtein", "threshold": 1},
+      {"type": "levenshtein", "threshold": 2},
+      {"type": "levenshtein", "threshold": 3},
+      {"type": "jaro_winkler", "threshold": 0.85},
+      {"type": "jaro_winkler", "threshold": 0.92},
+      {"type": "jaro_winkler", "threshold": 0.7},
+      {"type": "else"}]},
+    {"name": "surname_alone", "columns": ["surname"], "levels": [
+      {"type": "null"},
+      {"type": "exact"},
+      {"type": "levenshtein", "threshold": 1},
+      {"type": "exact"},
+      {"type": "levenshtein", "threshold": 2},
+      {"type": "exact"},
+      {"type": "levenshtein", "threshold": 3},
+      {"type": "exact"},
+      {"type": "jaro_winkler", "threshold": 0.85},
+      {"type": "exact"},
+      {"type": "jaro_winkler", "threshold": 0.92},
+      {"type": "exact"},
+      {"type": "jaro_winkler", "threshold": 0.7},
+      {"type": "else"}]}
+  ]
+})";
+
+// The same population as the signature test, held in a store over kLadderConfig.
+void FillLadderStore(cpplink::RecordStore* store, std::vector<std::string>* values,
+                     uint64_t rows) {
+    std::mt19937_64 rng(20260914);
+    const std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    std::uniform_int_distribution<size_t> length(3, 12);
+    std::uniform_int_distribution<int> corrupt(0, 3);
+    auto& surname = std::get<cpplink::StringColumn>(store->mutable_column(0));
+    for (uint64_t row = 0; row < rows; ++row) {
+        std::string value;
+        if (!values->empty() && corrupt(rng) == 0) {
+            value = (*values)[rng() % values->size()];
+            // Zero to three edits, so the pairs land on the exact level and on
+            // every rung of both ladders.
+            const int edits = static_cast<int>(rng() % 4);
+            for (int e = 0; e < edits && !value.empty(); ++e) {
+                value[rng() % value.size()] = alphabet[pick(rng)];
+            }
+            // And sometimes a suffix, which is what carries a pair past three
+            // edits while it still shares a long prefix: the Jaro-Winkler rungs.
+            if (rng() % 3 == 0) {
+                for (size_t i = 1 + rng() % 5; i > 0; --i)
+                    value.push_back(alphabet[pick(rng)]);
+            }
+        } else {
+            for (size_t i = length(rng); i > 0; --i) value.push_back(alphabet[pick(rng)]);
+        }
+        values->push_back(value);
+        surname.ids.push_back(surname.dict.Intern(value));
+    }
+    // One null, so the run sees a missing value too.
+    surname.ids[rows / 2] = cpplink::kNullId;
+    store->set_num_records(rows);
+    store->Finalize();
+}
+
+TEST(LadderTest, BindRecordsTheRuns) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(kLadderConfig, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    std::vector<std::string> values;
+    FillLadderStore(&store, &values, 20);
+
+    cpplink::ComparisonSet ladders;
+    ASSERT_TRUE(ladders.Bind(schema, store, &error, true, true)) << error;
+    const std::vector<uint8_t> run_end = {1, 2, 5, 5, 5, 8, 8, 8, 9};
+    EXPECT_EQ(ladders.at(0).run_end, run_end);
+    EXPECT_EQ(ladders.at(0).run_screen[2], 3.0);  // the widest edit distance
+    EXPECT_EQ(ladders.at(0).run_screen[5], 0.7);  // the loosest similarity
+    EXPECT_EQ(ladders.at(0).run_screen[6], 0.7);  // the run from there down
+    // The split comparison holds no run longer than one.
+    for (size_t i = 0; i < ladders.at(1).run_end.size(); ++i) {
+        EXPECT_EQ(ladders.at(1).run_end[i], i + 1) << i;
+    }
+
+    cpplink::ComparisonSet plain;
+    ASSERT_TRUE(plain.Bind(schema, store, &error, true, false)) << error;
+    for (size_t i = 0; i < plain.at(0).run_end.size(); ++i) {
+        EXPECT_EQ(plain.at(0).run_end[i], i + 1) << i;
+    }
+}
+
+// The ladder is only admissible if it changes nothing: every pair must land on the
+// rung it lands on evaluated one level at a time, with the signature filter on and
+// off, and the same through value ids.
+TEST(LadderTest, ChangesNoPattern) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(kLadderConfig, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    std::vector<std::string> values;
+    constexpr uint64_t kRows = 400;
+    FillLadderStore(&store, &values, kRows);
+    const auto& surname = std::get<cpplink::StringColumn>(store.column(0));
+
+    // Which rung of the ladder each split level stands for.
+    const std::vector<uint8_t> rung = {0, 1, 2, 1, 3, 1, 4, 1, 5, 1, 6, 1, 7, 8};
+
+    for (const bool signatures : {true, false}) {
+        cpplink::ComparisonSet ladders;
+        cpplink::ComparisonSet plain;
+        ASSERT_TRUE(ladders.Bind(schema, store, &error, signatures, true)) << error;
+        ASSERT_TRUE(plain.Bind(schema, store, &error, signatures, false)) << error;
+        std::vector<uint64_t> seen(9, 0);
+        for (uint64_t a = 0; a < kRows; ++a) {
+            for (uint64_t b = a + 1; b < kRows; ++b) {
+                const uint8_t level = ladders.EvaluateOne(0, a, b);
+                ++seen[level];
+                ASSERT_EQ(level, plain.EvaluateOne(0, a, b))
+                    << "'" << values[a] << "' vs '" << values[b] << "'";
+                ASSERT_EQ(level, rung[ladders.EvaluateOne(1, a, b)])
+                    << "'" << values[a] << "' vs '" << values[b] << "'";
+                if (surname.ids[a] == cpplink::kNullId ||
+                    surname.ids[b] == cpplink::kNullId) {
+                    continue;
+                }
+                ASSERT_EQ(level,
+                          ladders.LevelForValues(0, surname.ids[a], surname.ids[b]))
+                    << "'" << values[a] << "' vs '" << values[b] << "'";
+            }
+        }
+        // Every rung that can fire did, or the test checked nothing. The 0.92 rung
+        // sits under 0.85, which implies it, so it is the one that never can; the
+        // 0.7 rung below fires for the pairs between the two.
+        for (const size_t level : {0, 1, 2, 3, 4, 5, 7, 8}) {
+            EXPECT_GT(seen[level], 0u) << "level " << level;
+        }
+        EXPECT_EQ(seen[6], 0u);
+    }
+}
+
 // The pairwise shape: one list column against itself, scored on the *closest*
 // pair of elements rather than the elements the two rows share. Levels in order:
 // null, exact, list_overlap, list_levenshtein, list_jaro_winkler, else -- the
