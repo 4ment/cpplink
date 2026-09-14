@@ -231,9 +231,10 @@ cpplink rescore --schema examples/sample_schema.json --model tuned.json \
                 --spill spill/ --out predictions2/ --threshold 20 data.parquet
 
 # Join those predictions into duplicate clusters, and score the result against
-# known pairs; --predictions takes the merged file or the shard directory
+# known pairs; --predictions takes the merged file or the shard directory, and
+# the extension of --out picks csv or parquet
 cpplink cluster --schema examples/sample_schema.json --predictions predictions.parquet \
-                --out clusters.csv --truth truth.csv data.parquet
+                --out clusters.parquet --truth truth.csv data.parquet
 
 # Combine the shards of an existing run into one file something else can open
 cpplink merge-predictions --schema examples/sample_schema.json --shards predictions/ \

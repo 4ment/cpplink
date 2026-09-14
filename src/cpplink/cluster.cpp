@@ -20,6 +20,7 @@
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <parquet/arrow/reader.h>
+#include <parquet/arrow/writer.h>
 
 #include "cpplink/format.hpp"
 #include "cpplink/merge_edges.hpp"
@@ -457,10 +458,11 @@ bool Cluster(const RecordStore& store, const ClusterOptions& options,
     return true;
 }
 
-bool WriteClusters(const ClusterAssignment& assignment, const RecordStore& store,
-                   const ClusterOptions& options, uint64_t* written, std::string* error) {
-    *written = 0;
-    if (options.out_path.empty()) return true;
+namespace {
+
+bool WriteClustersCsv(const ClusterAssignment& assignment, const RecordStore& store,
+                      const ClusterOptions& options, uint64_t* written,
+                      std::string* error) {
     std::ofstream file(options.out_path);
     if (!file) {
         *error = "cluster: could not write '" + options.out_path + "'";
@@ -490,6 +492,97 @@ bool WriteClusters(const ClusterAssignment& assignment, const RecordStore& store
         return false;
     }
     return true;
+}
+
+// The same three columns as the csv, typed: the ids as strings and the size as a
+// uint64.
+bool WriteClustersParquet(const ClusterAssignment& assignment, const RecordStore& store,
+                          const ClusterOptions& options, uint64_t* written,
+                          std::string* error) {
+    constexpr int64_t kRowGroup = 1 << 20;
+    const auto schema = arrow::schema({
+        arrow::field("unique_id", arrow::utf8()),
+        arrow::field("cluster_id", arrow::utf8()),
+        arrow::field("cluster_size", arrow::uint64()),
+    });
+    auto sink = arrow::io::FileOutputStream::Open(options.out_path);
+    if (!sink.ok()) {
+        *error = "cluster: cannot create '" + options.out_path +
+                 "': " + sink.status().message();
+        return false;
+    }
+    auto props = parquet::WriterProperties::Builder()
+                     .compression(parquet::Compression::SNAPPY)
+                     ->build();
+    auto opened = parquet::arrow::FileWriter::Open(*schema, arrow::default_memory_pool(),
+                                                   *sink, props);
+    if (!opened.ok()) {
+        *error = "cluster: cannot open a parquet writer for '" + options.out_path +
+                 "': " + opened.status().message();
+        return false;
+    }
+    std::unique_ptr<parquet::arrow::FileWriter> writer = std::move(*opened);
+
+    arrow::StringBuilder unique_id, cluster_id;
+    arrow::UInt64Builder cluster_size;
+    int64_t pending = 0;
+    auto flush = [&]() -> bool {
+        if (pending == 0) return true;
+        std::vector<std::shared_ptr<arrow::Array>> arrays(3);
+        arrow::Status status = unique_id.Finish(&arrays[0]);
+        status &= cluster_id.Finish(&arrays[1]);
+        status &= cluster_size.Finish(&arrays[2]);
+        if (status.ok()) {
+            status =
+                writer->WriteTable(*arrow::Table::Make(schema, arrays, pending), pending);
+        }
+        if (!status.ok()) {
+            *error = "cluster: writing a row group to '" + options.out_path +
+                     "': " + status.message();
+            return false;
+        }
+        pending = 0;
+        return true;
+    };
+    for (uint64_t row = 0; row < assignment.root.size(); ++row) {
+        const uint32_t root = assignment.root[static_cast<size_t>(row)];
+        const uint64_t size = assignment.size[root];
+        if (size < options.min_size) continue;
+        arrow::Status status = unique_id.Append(store.ids().Get(row));
+        status &= cluster_id.Append(store.ids().Get(root));
+        status &= cluster_size.Append(size);
+        if (!status.ok()) {
+            *error = "cluster: building a row: " + status.message();
+            return false;
+        }
+        ++*written;
+        if (++pending >= kRowGroup && !flush()) return false;
+    }
+    if (!flush()) return false;
+    const arrow::Status closed = writer->Close();
+    if (!closed.ok()) {
+        *error = "cluster: closing '" + options.out_path + "': " + closed.message();
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool WriteClusters(const ClusterAssignment& assignment, const RecordStore& store,
+                   const ClusterOptions& options, uint64_t* written, std::string* error) {
+    *written = 0;
+    if (options.out_path.empty()) return true;
+    MergeFormat format;
+    if (!MergedFormatOf(options.out_path, &format)) {
+        *error = "cluster: --out '" + options.out_path +
+                 "' names neither a .csv nor a .parquet file";
+        return false;
+    }
+    if (format == MergeFormat::kParquet) {
+        return WriteClustersParquet(assignment, store, options, written, error);
+    }
+    return WriteClustersCsv(assignment, store, options, written, error);
 }
 
 ClusterQuality MeasureClusters(const ClusterAssignment& assignment,

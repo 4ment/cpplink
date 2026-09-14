@@ -56,7 +56,9 @@ struct ClusterOptions {
     // `.parquet` file it was merged into. A merged file names records by
     // `unique_id` rather than by row, so clustering one costs an id index.
     std::string edge_path;
-    std::string out_path;  // empty writes no file
+    // Empty writes no file; the extension picks csv or parquet, as `predict
+    // --out` does.
+    std::string out_path;
     // Edges carry their weight, so clustering at a threshold above the one
     // predict wrote at costs a re-read and no re-scoring.
     double threshold = -std::numeric_limits<double>::infinity();
@@ -123,8 +125,9 @@ bool Cluster(const RecordStore& store, const ClusterOptions& options,
              ClusterAssignment* assignment, ClusterReport* report, std::string* error);
 
 // Writes `unique_id,cluster_id,cluster_size` for every record in a cluster of at
-// least `min_size`. The cluster id is the representative's own unique id, so the
-// output says which record the others collapse onto.
+// least `min_size`, as csv or parquet by the extension of `out_path`. The cluster
+// id is the representative's own unique id, so the output says which record the
+// others collapse onto.
 bool WriteClusters(const ClusterAssignment& assignment, const RecordStore& store,
                    const ClusterOptions& options, uint64_t* written, std::string* error);
 
