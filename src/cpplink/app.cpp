@@ -149,7 +149,7 @@ void PrintUsage(std::ostream& out) {
         << "                <file.parquet>...\n"
         << "cpplink cluster --schema <schema.json>\n"
         << "                --predictions <dir|file.csv|file.parquet>\n"
-        << "                [--out <file.csv>]\n"
+        << "                [--out <file.csv|file.parquet>]\n"
         << "                [--threshold BITS | --probability P] [--truth <file.csv>]\n"
         << "                [--min-size N] <file.parquet>...\n"
         << "cpplink merge-predictions --shards <dir> "

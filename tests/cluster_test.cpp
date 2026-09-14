@@ -11,7 +11,10 @@
 #include <string>
 #include <vector>
 
+#include <arrow/api.h>
+#include <arrow/io/api.h>
 #include <gtest/gtest.h>
+#include <parquet/arrow/reader.h>
 #include <unistd.h>
 
 #include "cpplink/merge_edges.hpp"
@@ -294,6 +297,74 @@ TEST_F(ClusterFixture, WritesTheRepresentativeAndSize) {
     EXPECT_EQ(root, lines[1].substr(lines[1].find(',') + 1));
     EXPECT_EQ(root, lines[2].substr(lines[2].find(',') + 1));
     EXPECT_NE(std::string::npos, lines[0].find(",3"));
+}
+
+// The parquet output is the csv typed, so the two must hold the same rows.
+TEST_F(ClusterFixture, WritesParquetByExtension) {
+    WriteShard("shard-000.bin", {{0, 1, 30.0}, {1, 2, 30.0}, {5, 6, 30.0}});
+    cpplink::ClusterOptions options = Options();
+    cpplink::ClusterAssignment assignment;
+    cpplink::ClusterReport report;
+    std::string error;
+    ASSERT_TRUE(cpplink::Cluster(*store_, options, &assignment, &report, &error));
+
+    options.out_path = (dir_ / "clusters.csv").string();
+    uint64_t csv_written = 0;
+    ASSERT_TRUE(
+        cpplink::WriteClusters(assignment, *store_, options, &csv_written, &error))
+        << error;
+    std::vector<std::string> csv_rows;
+    std::ifstream csv(options.out_path);
+    std::string line;
+    std::getline(csv, line);  // header
+    while (std::getline(csv, line)) csv_rows.push_back(line);
+
+    options.out_path = (dir_ / "clusters.parquet").string();
+    uint64_t parquet_written = 0;
+    ASSERT_TRUE(
+        cpplink::WriteClusters(assignment, *store_, options, &parquet_written, &error))
+        << error;
+    EXPECT_EQ(parquet_written, csv_written);
+
+    auto input = arrow::io::ReadableFile::Open(options.out_path);
+    ASSERT_TRUE(input.ok()) << input.status().message();
+    parquet::arrow::FileReaderBuilder builder;
+    ASSERT_TRUE(builder.Open(*input).ok());
+    auto reader = builder.Build();
+    ASSERT_TRUE(reader.ok()) << reader.status().message();
+    auto read = (*reader)->ReadTable();
+    ASSERT_TRUE(read.ok()) << read.status().message();
+    std::shared_ptr<arrow::Table> table = *read;
+    ASSERT_EQ(table->num_rows(), static_cast<int64_t>(csv_rows.size()));
+    ASSERT_EQ(table->num_columns(), 3);
+    EXPECT_EQ(table->schema()->field(0)->name(), "unique_id");
+    EXPECT_EQ(table->schema()->field(1)->name(), "cluster_id");
+    EXPECT_EQ(table->schema()->field(2)->name(), "cluster_size");
+    EXPECT_TRUE(table->schema()->field(2)->type()->Equals(arrow::uint64()));
+    table = *table->CombineChunks();
+    const auto& ids = static_cast<const arrow::StringArray&>(*table->column(0)->chunk(0));
+    const auto& roots =
+        static_cast<const arrow::StringArray&>(*table->column(1)->chunk(0));
+    const auto& sizes =
+        static_cast<const arrow::UInt64Array&>(*table->column(2)->chunk(0));
+    for (int64_t i = 0; i < table->num_rows(); ++i) {
+        const std::string row = ids.GetString(i) + "," + roots.GetString(i) + "," +
+                                std::to_string(sizes.Value(i));
+        EXPECT_EQ(row, csv_rows[static_cast<size_t>(i)]) << "row " << i;
+    }
+}
+
+TEST_F(ClusterFixture, RefusesAnOutputOfUnknownFormat) {
+    WriteShard("shard-000.bin", {{0, 1, 30.0}});
+    cpplink::ClusterOptions options = Options();
+    options.out_path = (dir_ / "clusters.txt").string();
+    cpplink::ClusterAssignment assignment;
+    cpplink::ClusterReport report;
+    std::string error;
+    ASSERT_TRUE(cpplink::Cluster(*store_, options, &assignment, &report, &error));
+    uint64_t written = 0;
+    EXPECT_FALSE(cpplink::WriteClusters(assignment, *store_, options, &written, &error));
+    EXPECT_NE(error.find("neither a .csv nor a .parquet"), std::string::npos) << error;
 }
 
 TEST_F(ClusterFixture, MinSizeSelectsLargerClustersOnly) {
