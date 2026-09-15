@@ -51,7 +51,17 @@ bool LoadParquet(const std::string& path, const Schema& schema, RecordStore* sto
 // contiguous row range -- which is what makes a link mode's cross-product a nested
 // loop over two ranges rather than a per-row test. Everything downstream sees one
 // store; only the pair mode knows there was more than one file.
+//
+// Each dataset is named by its file's stem (`DatasetNamesFor`), which is what the
+// prediction and cluster files qualify a record's id with when there is more
+// than one input.
 bool LoadParquetFiles(const std::vector<std::string>& paths, const Schema& schema,
                       RecordStore* store, LoadStats* stats, std::string* error);
+
+// The dataset names a list of inputs gets: each file's stem, with a comma or a
+// colon replaced so the name can sit in a csv field and before the `:` of a
+// qualified id, and a stem that repeats an earlier one suffixed with `#` and its
+// position so two inputs never share a name. One file gets no name at all.
+std::vector<std::string> DatasetNamesFor(const std::vector<std::string>& paths);
 
 }  // namespace cpplink

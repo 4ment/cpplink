@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -34,6 +35,9 @@ enum class PairMode : uint8_t {
 };
 
 const char* PairModeName(PairMode mode);
+
+// An id given without its dataset: whichever input holds it, if exactly one does.
+inline constexpr size_t kAnyDataset = static_cast<size_t>(-1);
 
 struct StringColumn {
     Dictionary dict;
@@ -140,6 +144,23 @@ class RecordStore {
         if (dataset_starts_.size() < 3) return num_records_;
         return dataset_starts_[DatasetOf(row) + 1];
     }
+    // What an input is called in every file a run writes and every id a user
+    // types. A record's id is unique within its input and not necessarily across
+    // inputs -- two files that both number their rows from 1 are the common case
+    // linking is for -- so the dataset is the other half of a record's identity,
+    // and `dataset:id` is how a qualified id is written. The loader names an
+    // input by its file's stem; a store built any other way is named by
+    // position. A single input has no name, because nothing needs qualifying.
+    void set_dataset_names(std::vector<std::string> names);
+    std::string DatasetName(size_t dataset) const;
+    // The dataset called `name`, or false when none is.
+    bool DatasetIndex(std::string_view name, size_t* dataset) const;
+    // Splits `dataset:id` into its two halves where the prefix names one of the
+    // store's inputs, and otherwise reads the whole text as an unqualified id
+    // with `*dataset` left as kAnyDataset. A single-input store has no names, so
+    // every id is unqualified there and a colon is part of the id.
+    void SplitQualifiedId(std::string_view text, size_t* dataset,
+                          std::string_view* id) const;
     // How many pairs the mode admits over the whole store: the denominator lambda
     // is put back on, and the number a candidate count is a fraction of.
     double PairSpace(PairMode mode) const;
@@ -158,6 +179,7 @@ class RecordStore {
     std::vector<Column> columns_;
     IdColumn ids_;
     std::vector<uint64_t> dataset_starts_;
+    std::vector<std::string> dataset_names_;
 };
 
 }  // namespace cpplink

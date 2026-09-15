@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <filesystem>
 #include <limits>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -502,6 +504,24 @@ bool ResolveColumnTypes(const std::vector<std::string>& paths, Schema* schema,
     return CheckTypes(schema, error);
 }
 
+std::vector<std::string> DatasetNamesFor(const std::vector<std::string>& paths) {
+    std::vector<std::string> names;
+    if (paths.size() < 2) return names;
+    names.reserve(paths.size());
+    for (size_t i = 0; i < paths.size(); ++i) {
+        std::string name = std::filesystem::path(paths[i]).stem().string();
+        if (name.empty()) name = std::to_string(i);
+        for (char& c : name) {
+            if (c == ',' || c == ':') c = '_';
+        }
+        if (std::find(names.begin(), names.end(), name) != names.end()) {
+            name += "#" + std::to_string(i);
+        }
+        names.push_back(std::move(name));
+    }
+    return names;
+}
+
 bool LoadParquetFiles(const std::vector<std::string>& paths, const Schema& schema,
                       RecordStore* store, LoadStats* stats, std::string* error) {
     const auto started = std::chrono::steady_clock::now();
@@ -520,7 +540,13 @@ bool LoadParquetFiles(const std::vector<std::string>& paths, const Schema& schem
     for (const std::string& path : paths) {
         uint64_t rows = 0;
         int groups = 0;
-        if (!AppendOneFile(path, schema, store, &rows, &groups, error)) return false;
+        if (!AppendOneFile(path, schema, store, &rows, &groups, error)) {
+            // With several inputs the message has to say which one failed; a
+            // column missing from the second file reads the same as one missing
+            // from the first otherwise.
+            if (paths.size() > 1) *error = path + ": " + *error;
+            return false;
+        }
         total += rows;
         row_groups += groups;
         per_file.push_back(rows);
@@ -530,7 +556,10 @@ bool LoadParquetFiles(const std::vector<std::string>& paths, const Schema& schem
     store->set_num_records(total);
     // One dataset is the absence of a boundary, not a boundary at each end: the
     // dedup path then pays no lookup at all.
-    if (paths.size() > 1) store->set_datasets(std::move(starts));
+    if (paths.size() > 1) {
+        store->set_datasets(std::move(starts));
+        store->set_dataset_names(DatasetNamesFor(paths));
+    }
     store->Finalize();
 
     if (stats != nullptr) {

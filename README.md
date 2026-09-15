@@ -250,6 +250,20 @@ cpplink merge-predictions --schema examples/sample_schema.json --shards predicti
 
 # Write a sample file with realistic cardinalities and planted duplicates
 cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
+
+# Link two files instead of deduplicating one: find the rows of census.parquet
+# and tax.parquet that are the same person. Every command takes several parquet
+# files, and two with nothing said means scoring only the pairs with one row in
+# each file; --mode link-and-dedup also scores the pairs inside each file.
+cpplink predict --schema schema.json --model model.json --out predictions.parquet \
+                --threshold 20 census.parquet tax.parquet
+
+# Each file is a dataset named by its stem, and an id need only be unique within
+# its file: both files may number their rows 1, 2, 3, ... Wherever the files
+# share ids a record is named <dataset>:<id>, so census:17 is the row with
+# unique_id 17 in census.parquet. The prediction and cluster files carry the
+# dataset beside the id for the same reason.
+cpplink explain --schema schema.json --pair census:17,tax:17 census.parquet tax.parquet
 ```
 
 `gen-sample` exists because the memory claims above are only worth making if they are measured.

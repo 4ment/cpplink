@@ -27,13 +27,23 @@ enum class EdgeFormat {
     kCsv,     // record ids and the weight, for reading with your eyes.
 };
 
+// The csv header, in its two shapes. A single input writes
+// `id_a,id_b,gamma,match_weight,match_probability`; a run over several inputs
+// writes `dataset_a,id_a,dataset_b,id_b,...`, because an id is unique within its
+// input and not across them, so the dataset is the other half of the record's
+// name. The binary shard names rows and needs neither.
+const char* EdgeCsvHeader(bool datasets);
+
 // One thread's edge output buffer, flushed in bulk so no two threads ever contend
 // on the writer. Public because `rescore` writes the same shards from a spill.
 class EdgeShardWriter {
    public:
-    bool Open(const std::string& path, EdgeFormat format);
+    // `datasets` picks the csv header: true for a store of more than one input.
+    bool Open(const std::string& path, EdgeFormat format, bool datasets = false);
     void WriteBinary(uint32_t a, uint32_t b, uint32_t gamma, double weight);
-    void WriteCsv(std::string_view id_a, std::string_view id_b, uint32_t gamma,
+    // The ids, and the dataset names when the header has them, come from the
+    // store, so a caller cannot write a row the header does not describe.
+    void WriteCsv(const RecordStore& store, uint32_t a, uint32_t b, uint32_t gamma,
                   double weight);
     bool Close();
 
@@ -41,6 +51,7 @@ class EdgeShardWriter {
     void Flush();
 
     EdgeFormat format_ = EdgeFormat::kBinary;
+    bool datasets_ = false;
     std::ofstream file_;
     std::string buffer_;
 };

@@ -74,8 +74,7 @@ class MergeFixture : public ::testing::Test {
             if (format == cpplink::EdgeFormat::kBinary) {
                 writer.WriteBinary(edge.a, edge.b, edge.gamma, edge.weight);
             } else {
-                writer.WriteCsv(store_->ids().Get(edge.a), store_->ids().Get(edge.b),
-                                edge.gamma, edge.weight);
+                writer.WriteCsv(*store_, edge.a, edge.b, edge.gamma, edge.weight);
             }
         }
         ASSERT_TRUE(writer.Close());
