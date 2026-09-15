@@ -525,6 +525,10 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, size_t index,
                 return left != kNullBoolean && left == comparison.booleans->values[b];
             }
             if (comparison.lists != nullptr) return SameSet(*comparison.lists, a, b);
+            if (comparison.numbers != nullptr) {
+                const double left = comparison.numbers->values[a];
+                return !std::isnan(left) && left == comparison.numbers->values[b];
+            }
             return false;
 
         case LevelType::kLevenshtein:
@@ -549,6 +553,19 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, size_t index,
             const double right = comparison.numbers->values[b];
             if (std::isnan(left) || std::isnan(right)) return false;
             return std::abs(left - right) <= level.threshold;
+        }
+
+        case LevelType::kPercentageWithin: {
+            // splink's definition, kept strict and with its denominator: the
+            // larger of the two values, not their mean or the left one. Two
+            // equal values, zero included, are at zero difference and fire.
+            const double left = comparison.numbers->values[a];
+            const double right = comparison.numbers->values[b];
+            if (std::isnan(left) || std::isnan(right)) return false;
+            if (left == right) return true;
+            const double larger = std::max(left, right);
+            if (larger == 0.0) return false;
+            return std::abs(left - right) / larger < level.threshold;
         }
 
         case LevelType::kGeoWithin: {
@@ -619,6 +636,7 @@ bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, size_t index,
         case LevelType::kExact:
         case LevelType::kDateWithin:
         case LevelType::kNumericWithin:
+        case LevelType::kPercentageWithin:
         case LevelType::kListContains:
             // Exact already, and cheaper than any bound would be: two integer
             // lookups and a walk over a cell that holds a handful of ids.

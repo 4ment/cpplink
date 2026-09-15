@@ -97,7 +97,8 @@ A comparison can span more than one column: a coordinate pair is one comparison,
   {"type": "else"}]}
 ```
 
-Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`, `numeric_within`, `geo_within`, `list_overlap`, `list_jaccard`, `list_contains`, `contains_levenshtein`, `contains_jaro_winkler`, `list_levenshtein`, `list_jaro_winkler`, `else`.
+Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`, `numeric_within`, `percentage_within`, `geo_within`, `list_overlap`, `list_jaccard`, `list_contains`, `contains_levenshtein`, `contains_jaro_winkler`, `list_levenshtein`, `list_jaro_winkler`, `else`.
+`percentage_within` is splink's percentage difference, the gap over the larger of the two values and strictly below the threshold, for an amount whose tolerance scales with its size; `exact` on a double is equality to the last digit.
 A configuration that applies a level to a column type it cannot read, omits a trailing `else`, or overflows the 32-bit packed pattern is rejected at parse time, before a file is opened.
 
 A comparison can also name several string columns and let each level say which one it reads, so a field and a key derived from it are ranked inside one comparison rather than counted twice.

@@ -34,6 +34,7 @@ constexpr LevelName kLevelNames[] = {
     {"jaro_winkler", LevelType::kJaroWinkler},
     {"date_within", LevelType::kDateWithin},
     {"numeric_within", LevelType::kNumericWithin},
+    {"percentage_within", LevelType::kPercentageWithin},
     {"geo_within", LevelType::kGeoWithin},
     {"list_overlap", LevelType::kListOverlap},
     {"list_jaccard", LevelType::kListJaccard},
@@ -205,6 +206,8 @@ std::string LevelSpec::Describe() const {
             return "within " + Number(threshold, 0) + " days";
         case LevelType::kNumericWithin:
             return "within " + Number(threshold, 3);
+        case LevelType::kPercentageWithin:
+            return "within " + Number(threshold * 100.0, 1) + "%";
         case LevelType::kGeoWithin:
             return "within " + Number(threshold, 2) + " km";
         case LevelType::kListOverlap:
@@ -310,13 +313,17 @@ bool LevelAcceptsColumn(LevelType level, ColumnType column) {
         case LevelType::kElse:
             return true;
         case LevelType::kExact:
-            return column != ColumnType::kDouble;
+            // On a double it is value equality: no interning, so no term
+            // frequency and no closed-form u, but two amounts being the same to
+            // the cent is a level splink has and a ledger wants.
+            return true;
         case LevelType::kLevenshtein:
         case LevelType::kJaroWinkler:
             return column == ColumnType::kString;
         case LevelType::kDateWithin:
             return column == ColumnType::kDate;
         case LevelType::kNumericWithin:
+        case LevelType::kPercentageWithin:
         case LevelType::kGeoWithin:
             return column == ColumnType::kDouble;
         case LevelType::kListOverlap:
@@ -556,6 +563,13 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                     return false;
                 }
                 level.threshold = entry["threshold"].get<double>();
+                if (level.type == LevelType::kPercentageWithin &&
+                    (level.threshold <= 0.0 || level.threshold > 1.0)) {
+                    *error = "comparison \"" + comparison.name +
+                             "\" level \"percentage_within\" wants a threshold in "
+                             "(0, 1], a fraction rather than a percentage";
+                    return false;
+                }
             }
             if (entry.contains("label") && entry["label"].is_string()) {
                 level.label = entry["label"].get<std::string>();
