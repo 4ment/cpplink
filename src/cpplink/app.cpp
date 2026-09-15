@@ -20,6 +20,7 @@
 #include "cpplink/estimate.hpp"
 #include "cpplink/explain.hpp"
 #include "cpplink/explain_blocking.hpp"
+#include "cpplink/id_index.hpp"
 #include "cpplink/init.hpp"
 #include "cpplink/inspect.hpp"
 #include "cpplink/levels.hpp"
@@ -96,7 +97,11 @@ void PrintUsage(std::ostream& out) {
         << "are read in order into one store and each becomes a dataset, so two\n"
         << "files mean linking: --mode link scores only pairs that cross the two,\n"
         << "--mode dedup (or link-and-dedup) scores every pair of the whole store.\n"
-        << "One file is a deduplication and needs no --mode.\n"
+        << "One file is a deduplication and needs no --mode. A record's id need only\n"
+        << "be unique within its file: each dataset is named by its file's stem, the\n"
+        << "prediction and cluster files carry the dataset beside the id, and an id\n"
+        << "typed or listed in a truth file is qualified as <dataset>:<id> wherever\n"
+        << "the inputs share ids.\n"
         << "\n"
         << "--all-pairs runs the five plan-building commands with no blocking at\n"
         << "all: every pair the mode admits becomes a candidate. On an input small\n"
@@ -307,7 +312,8 @@ int RunInspect(const std::vector<std::string>& args, std::ostream& out,
     for (size_t i = 0; i < data_paths.size(); ++i) {
         out << (i == 0 ? "File         " : "             ") << data_paths[i];
         if (data_paths.size() > 1) {
-            out << "  (dataset " << i << ", " << stats.dataset_rows[i] << " rows)";
+            out << "  (dataset " << store.DatasetName(i) << ", " << stats.dataset_rows[i]
+                << " rows)";
         }
         out << "\n";
     }
@@ -755,14 +761,24 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
             err << "cpplink explain: --pair wants <id_a>,<id_b>\n";
             return 1;
         }
-        if (!FindRowById(store, first, &row_a)) {
-            err << "cpplink explain: no record with id '" << first << "'\n";
-            return 1;
-        }
-        if (!FindRowById(store, second, &row_b)) {
-            err << "cpplink explain: no record with id '" << second << "'\n";
-            return 1;
-        }
+        auto resolve = [&](const std::string& text, uint64_t* row) {
+            const IdLookup found = FindRowById(store, text, row);
+            if (found == IdLookup::kMissing) {
+                err << "cpplink explain: no record with id '" << text << "'\n";
+                return false;
+            }
+            if (found == IdLookup::kAmbiguous) {
+                err << "cpplink explain: more than one record has id '" << text
+                    << "'; name its input as <dataset>:<id>, where the datasets are";
+                for (size_t d = 0; d < store.NumDatasets(); ++d) {
+                    err << (d == 0 ? " " : ", ") << store.DatasetName(d);
+                }
+                err << "\n";
+                return false;
+            }
+            return true;
+        };
+        if (!resolve(first, &row_a) || !resolve(second, &row_b)) return 1;
     } else {
         if (!SplitPair(rows, &first, &second)) {
             err << "cpplink explain: --rows wants <i>,<j>\n";

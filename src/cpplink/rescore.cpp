@@ -96,7 +96,7 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
             (std::filesystem::path(options.out_dir) / (EdgeShardName(t) + suffix))
                 .string();
         auto writer = std::make_unique<EdgeShardWriter>();
-        if (!writer->Open(path, options.format)) {
+        if (!writer->Open(path, options.format, store.NumDatasets() > 1)) {
             *error = "cannot write \"" + path + "\"";
             return false;
         }
@@ -112,7 +112,6 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
     std::vector<std::string> failures(threads);
     const uint64_t limit = options.max_edges;
     const bool csv = options.format == EdgeFormat::kCsv;
-    const IdColumn& ids = store.ids();
 
     auto work = [&](unsigned t) {
         ThreadTally* counts = &tally[t];
@@ -149,7 +148,7 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
                     if (limit > 0 && emitted.fetch_add(1) >= limit) continue;
                     ++counts->edges;
                     if (csv) {
-                        writer->WriteCsv(ids.Get(a), ids.Get(b), gamma, weight);
+                        writer->WriteCsv(store, a, b, gamma, weight);
                     } else {
                         writer->WriteBinary(a, b, gamma, weight);
                     }

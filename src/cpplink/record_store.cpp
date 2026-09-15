@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "cpplink/derive.hpp"
@@ -222,6 +224,50 @@ MemoryReport RecordStore::Memory() const {
 
 void RecordStore::set_datasets(std::vector<uint64_t> starts) {
     dataset_starts_ = std::move(starts);
+}
+
+void RecordStore::set_dataset_names(std::vector<std::string> names) {
+    dataset_names_ = std::move(names);
+}
+
+std::string RecordStore::DatasetName(size_t dataset) const {
+    if (NumDatasets() < 2) return "";
+    if (dataset < dataset_names_.size()) return dataset_names_[dataset];
+    return std::to_string(dataset);
+}
+
+bool RecordStore::DatasetIndex(std::string_view name, size_t* dataset) const {
+    if (NumDatasets() < 2) return false;
+    for (size_t d = 0; d < NumDatasets(); ++d) {
+        if (DatasetName(d) == name) {
+            *dataset = d;
+            return true;
+        }
+    }
+    return false;
+}
+
+void RecordStore::SplitQualifiedId(std::string_view text, size_t* dataset,
+                                   std::string_view* id) const {
+    *dataset = kAnyDataset;
+    *id = text;
+    if (NumDatasets() < 2) return;
+    // The longest name that is a prefix wins, so an input called "a" cannot
+    // claim the ids of one called "a.b".
+    size_t best = std::string_view::npos;
+    for (size_t d = 0; d < NumDatasets(); ++d) {
+        const std::string name = DatasetName(d);
+        if (name.size() + 1 > text.size()) continue;
+        if (text[name.size()] != ':') continue;
+        if (text.substr(0, name.size()) != name) continue;
+        if (best != std::string_view::npos && DatasetName(best).size() >= name.size()) {
+            continue;
+        }
+        best = d;
+    }
+    if (best == std::string_view::npos) return;
+    *dataset = best;
+    *id = text.substr(DatasetName(best).size() + 1);
 }
 
 double RecordStore::PairSpace(PairMode mode) const {

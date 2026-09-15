@@ -46,6 +46,9 @@ struct MergeReport {
     // Binary shards name rows, not records, so without a store the merged file
     // carries row indices and the report says so.
     bool row_indices = false;
+    // Whether the merged rows name each record's dataset beside its id, which a
+    // run over more than one input does.
+    bool datasets = false;
     uint64_t read = 0;
     uint64_t written = 0;
     double seconds = 0.0;
@@ -61,13 +64,32 @@ bool MergeEdges(const RecordStore* store, const MergeOptions& options,
 
 void PrintMergeReport(const MergeReport& report, std::ostream& out);
 
-// Splits one row of the edge csv, the shard format and the merged one alike.
-// The fields are unquoted, so a row is found by counting commas: the last three
-// are the numbers and the first splits the two ids. This is the one parser, so
-// the writer and every reader of that format cannot drift apart. The views point
-// into `line`.
-bool ParseEdgeCsvLine(const std::string& line, std::string_view* id_a,
-                      std::string_view* id_b, uint32_t* gamma, double* weight);
+// One row of the edge csv, the shard format and the merged one alike, or of
+// the merged parquet. The dataset halves are empty where the file has none. The
+// views point into the line or the table they were read from.
+struct EdgeRow {
+    std::string_view dataset_a;
+    std::string_view id_a;
+    std::string_view dataset_b;
+    std::string_view id_b;
+    uint32_t gamma = 0;
+    double weight = 0.0;
+};
+
+// Which of the two csv shapes a file is in, read off its header.
+struct EdgeCsvLayout {
+    bool datasets = false;  // `dataset_a,id_a,dataset_b,id_b,...`
+};
+
+// True when `line` is an edge csv header, setting the layout it announces. A
+// file with no header is read in the single-input shape.
+bool ParseEdgeCsvHeader(const std::string& line, EdgeCsvLayout* layout);
+
+// Splits one row of the edge csv. The fields are unquoted, so a row is found by
+// counting commas: the last three are the numbers and the first two or four
+// name the records. This is the one parser, so the writer and every reader of
+// that format cannot drift apart.
+bool ParseEdgeCsvLine(const std::string& line, const EdgeCsvLayout& layout, EdgeRow* row);
 
 // Folds a staging directory of shards into one file and removes the directory.
 // This is the end of a `predict --out <file>` or `rescore --out <file>` run:

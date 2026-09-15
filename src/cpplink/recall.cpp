@@ -10,7 +10,9 @@
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -59,9 +61,38 @@ bool LoadTruthPairs(const std::string& path, const RecordStore& store, TruthPair
         *error = "cannot open truth file: " + path;
         return false;
     }
+    const IdColumn& ids = store.ids();
+    if (ids.offsets.empty()) {
+        *error = "the schema has no unique_id, so truth pairs cannot be resolved";
+        return false;
+    }
 
-    std::vector<std::pair<std::string, std::string>> named;
-    std::unordered_map<std::string, uint32_t> wanted;
+    // One record the file asks for: the id it wrote, the dataset it qualified it
+    // with or kAnyDataset, and what the pass over the id column found. An id can
+    // be asked for under several qualifications (`a:5` and `b:5`, or `5` alone),
+    // and each is its own slot under the bare id the column is scanned by.
+    struct Slot {
+        size_t dataset = kAnyDataset;
+        uint32_t row = kNoRank;
+        uint32_t matches = 0;
+    };
+    std::unordered_map<std::string, std::vector<Slot>> wanted;
+    auto slot_for = [&](std::string_view text) -> std::pair<std::string, size_t> {
+        size_t dataset = kAnyDataset;
+        std::string_view id;
+        store.SplitQualifiedId(text, &dataset, &id);
+        std::vector<Slot>& slots = wanted[std::string(id)];
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (slots[i].dataset == dataset) return {std::string(id), i};
+        }
+        Slot slot;
+        slot.dataset = dataset;
+        slots.push_back(slot);
+        return {std::string(id), slots.size() - 1};
+    };
+
+    std::vector<std::pair<std::pair<std::string, size_t>, std::pair<std::string, size_t>>>
+        named;
     std::string line;
     bool first = true;
     while (std::getline(in, line)) {
@@ -75,33 +106,38 @@ bool LoadTruthPairs(const std::string& path, const RecordStore& store, TruthPair
         std::string a = line.substr(0, comma);
         std::string b = line.substr(comma + 1);
         while (!b.empty() && (b.back() == '\r' || b.back() == '\n')) b.pop_back();
-        wanted.emplace(a, kNoRank);
-        wanted.emplace(b, kNoRank);
-        named.emplace_back(std::move(a), std::move(b));
+        named.emplace_back(slot_for(a), slot_for(b));
     }
     truth->lines = named.size();
 
-    const IdColumn& ids = store.ids();
-    if (ids.offsets.empty()) {
-        *error = "the schema has no unique_id, so truth pairs cannot be resolved";
-        return false;
-    }
+    // One pass over the id column against the set of wanted ids, rather than an
+    // index over every id. A slot counts every record that answers to it, so an
+    // id two records share is seen as ambiguous rather than taken as the first.
     for (uint64_t row = 0; row < store.NumRecords(); ++row) {
         auto it = wanted.find(std::string(ids.Get(row)));
-        if (it != wanted.end() && it->second == kNoRank) {
-            it->second = static_cast<uint32_t>(row);
+        if (it == wanted.end()) continue;
+        for (Slot& slot : it->second) {
+            if (slot.dataset != kAnyDataset && store.DatasetOf(row) != slot.dataset) {
+                continue;
+            }
+            if (slot.matches++ == 0) slot.row = static_cast<uint32_t>(row);
         }
     }
 
     truth->rows.reserve(named.size());
     for (const auto& pair : named) {
-        const uint32_t a = wanted[pair.first];
-        const uint32_t b = wanted[pair.second];
-        if (a == kNoRank || b == kNoRank || a == b) {
+        const Slot& a = wanted[pair.first.first][pair.first.second];
+        const Slot& b = wanted[pair.second.first][pair.second.second];
+        if (a.matches > 1 || b.matches > 1) {
+            ++truth->ambiguous;
             ++truth->unresolved;
             continue;
         }
-        truth->rows.emplace_back(a, b);
+        if (a.matches == 0 || b.matches == 0 || a.row == b.row) {
+            ++truth->unresolved;
+            continue;
+        }
+        truth->rows.emplace_back(a.row, b.row);
     }
     return true;
 }
@@ -111,6 +147,7 @@ RecallMetrics MeasureRecall(const BlockingPlan& plan, const RecordStore& store,
     RecallMetrics metrics;
     metrics.truth_pairs = truth.rows.size();
     metrics.unresolved = truth.unresolved;
+    metrics.ambiguous = truth.ambiguous;
     metrics.pair_space = store.PairSpace(plan.mode());
 
     // A link run scores only pairs that cross its inputs, so a known pair inside
@@ -160,6 +197,11 @@ void PrintRecallReport(const RecallMetrics& metrics, std::ostream& out) {
         out << ", " << metrics.unresolved << " unresolved";
     }
     out << "\n";
+    if (metrics.ambiguous > 0) {
+        out << "             " << metrics.ambiguous
+            << " of the unresolved name an id more than one record carries; write "
+               "it as dataset:id\n";
+    }
     if (metrics.out_of_scope > 0) {
         out << "             " << metrics.out_of_scope
             << " known pairs lie inside one input and are out of scope\n";
@@ -222,6 +264,7 @@ void WriteRecallJson(const RecallMetrics& metrics, std::ostream& out) {
     nlohmann::json root;
     root["truth_pairs"] = metrics.truth_pairs;
     root["unresolved"] = metrics.unresolved;
+    root["ambiguous"] = metrics.ambiguous;
     root["out_of_scope"] = metrics.out_of_scope;
     root["pair_space"] = metrics.pair_space;
     root["union_found"] = metrics.union_found;

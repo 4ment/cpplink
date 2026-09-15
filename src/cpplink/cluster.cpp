@@ -23,6 +23,7 @@
 #include <parquet/arrow/writer.h>
 
 #include "cpplink/format.hpp"
+#include "cpplink/id_index.hpp"
 #include "cpplink/merge_edges.hpp"
 #include "cpplink/predict.hpp"
 
@@ -115,41 +116,28 @@ struct EdgeTally {
     uint64_t read = 0;
     uint64_t used = 0;
     uint64_t unresolved = 0;
+    uint64_t ambiguous = 0;
     double min_weight = 0.0;
     double max_weight = 0.0;
 };
 
-// An id-to-row lookup over the store's id column: one `uint32` per record, kept
-// in the order of the id it names. A merged edge file carries `unique_id`s
-// rather than row indices, so clustering one has to map them back, and a hash
-// map over 20M ids costs an order of magnitude more than the union-find it
-// feeds. This is 4 bytes a record and a handful of string compares an edge.
-class IdIndex {
-   public:
-    explicit IdIndex(const RecordStore& store) : ids_(store.ids()) {
-        order_.resize(static_cast<size_t>(store.NumRecords()));
-        for (size_t row = 0; row < order_.size(); ++row) {
-            order_[row] = static_cast<uint32_t>(row);
-        }
-        std::sort(order_.begin(), order_.end(),
-                  [this](uint32_t a, uint32_t b) { return ids_.Get(a) < ids_.Get(b); });
+// Maps one named record of a merged file to its row. With a dataset the lookup
+// is exact; without one it is answered only where a single record carries the
+// id, and a file that names records held by several inputs without saying which
+// is counted as ambiguous rather than guessed at.
+bool Resolve(const IdIndex& index, const RecordStore& store, std::string_view dataset,
+             std::string_view id, uint32_t* row, EdgeTally* tally) {
+    IdLookup found = IdLookup::kMissing;
+    if (dataset.empty()) {
+        found = index.Find(id, row);
+    } else {
+        size_t which = 0;
+        if (store.DatasetIndex(dataset, &which)) found = index.Find(which, id, row);
     }
-
-    bool Find(std::string_view id, uint32_t* row) const {
-        const auto at =
-            std::lower_bound(order_.begin(), order_.end(), id,
-                             [this](uint32_t candidate, std::string_view key) {
-                                 return ids_.Get(candidate) < key;
-                             });
-        if (at == order_.end() || ids_.Get(*at) != id) return false;
-        *row = *at;
-        return true;
-    }
-
-   private:
-    const IdColumn& ids_;
-    std::vector<uint32_t> order_;
-};
+    if (found == IdLookup::kFound) return true;
+    if (found == IdLookup::kAmbiguous) ++tally->ambiguous;
+    return false;
+}
 
 bool ReadBinaryShard(const std::string& path, EdgeTally* tally, std::string* error) {
     std::ifstream file(path, std::ios::binary);
@@ -192,8 +180,8 @@ bool ReadBinaryShard(const std::string& path, EdgeTally* tally, std::string* err
     return true;
 }
 
-bool ReadCsvEdges(const std::string& path, const IdIndex& index, EdgeTally* tally,
-                  std::string* error) {
+bool ReadCsvEdges(const std::string& path, const RecordStore& store, const IdIndex& index,
+                  EdgeTally* tally, std::string* error) {
     std::ifstream file(path);
     if (!file) {
         *error = "cluster: could not open '" + path + "'";
@@ -201,36 +189,36 @@ bool ReadCsvEdges(const std::string& path, const IdIndex& index, EdgeTally* tall
     }
     std::string line;
     uint64_t number = 0;
+    EdgeCsvLayout layout;
     while (std::getline(file, line)) {
         ++number;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        if (number == 1 && line.rfind("id_a,", 0) == 0) continue;
-        std::string_view id_a;
-        std::string_view id_b;
-        uint32_t gamma = 0;
-        double weight = 0.0;
-        if (!ParseEdgeCsvLine(line, &id_a, &id_b, &gamma, &weight)) {
+        if (number == 1 && ParseEdgeCsvHeader(line, &layout)) continue;
+        EdgeRow edge;
+        if (!ParseEdgeCsvLine(line, layout, &edge)) {
             *error = "cluster: '" + path + "' line " + std::to_string(number) +
                      " is not a cpplink prediction row";
             return false;
         }
         uint32_t a = 0;
         uint32_t b = 0;
-        if (!index.Find(id_a, &a) || !index.Find(id_b, &b)) {
+        if (!Resolve(index, store, edge.dataset_a, edge.id_a, &a, tally) ||
+            !Resolve(index, store, edge.dataset_b, edge.id_b, &b, tally)) {
             ++tally->read;
             ++tally->unresolved;
             continue;
         }
-        tally->Use(a, b, weight);
+        tally->Use(a, b, edge.weight);
     }
     return true;
 }
 
-// One row group at a time, and only the three columns clustering reads: the
-// pattern and the posterior are in the file for whoever else opens it.
-bool ReadParquetEdges(const std::string& path, const IdIndex& index, EdgeTally* tally,
-                      std::string* error) {
+// One row group at a time, and only the columns clustering reads -- the ids, the
+// weight, and the datasets where the file has them: the pattern and the
+// posterior are in the file for whoever else opens it.
+bool ReadParquetEdges(const std::string& path, const RecordStore& store,
+                      const IdIndex& index, EdgeTally* tally, std::string* error) {
     auto input = arrow::io::ReadableFile::Open(path);
     if (!input.ok()) {
         *error = "cluster: cannot open " + path + ": " + input.status().message();
@@ -267,6 +255,17 @@ bool ReadParquetEdges(const std::string& path, const IdIndex& index, EdgeTally* 
         }
         indices.push_back(at);
     }
+    const bool datasets = schema->GetFieldIndex("dataset_a") >= 0;
+    if (datasets) {
+        for (const char* name : {"dataset_a", "dataset_b"}) {
+            const int at = schema->GetFieldIndex(name);
+            if (at < 0) {
+                *error = "cluster: '" + path + "' has dataset_a but no " + name;
+                return false;
+            }
+            indices.push_back(at);
+        }
+    }
 
     for (int group = 0; group < reader->num_row_groups(); ++group) {
         auto group_result = reader->ReadRowGroup(group, indices);
@@ -279,6 +278,8 @@ bool ReadParquetEdges(const std::string& path, const IdIndex& index, EdgeTally* 
         const auto ids_a = table->GetColumnByName("id_a");
         const auto ids_b = table->GetColumnByName("id_b");
         const auto weights = table->GetColumnByName("match_weight");
+        const auto sets_a = datasets ? table->GetColumnByName("dataset_a") : nullptr;
+        const auto sets_b = datasets ? table->GetColumnByName("dataset_b") : nullptr;
         for (int chunk = 0; chunk < ids_a->num_chunks(); ++chunk) {
             const auto a_array =
                 std::dynamic_pointer_cast<arrow::StringArray>(ids_a->chunk(chunk));
@@ -286,23 +287,37 @@ bool ReadParquetEdges(const std::string& path, const IdIndex& index, EdgeTally* 
                 std::dynamic_pointer_cast<arrow::StringArray>(ids_b->chunk(chunk));
             const auto weight_array =
                 std::dynamic_pointer_cast<arrow::DoubleArray>(weights->chunk(chunk));
-            if (a_array == nullptr || b_array == nullptr || weight_array == nullptr) {
+            std::shared_ptr<arrow::StringArray> set_a;
+            std::shared_ptr<arrow::StringArray> set_b;
+            if (datasets) {
+                set_a =
+                    std::dynamic_pointer_cast<arrow::StringArray>(sets_a->chunk(chunk));
+                set_b =
+                    std::dynamic_pointer_cast<arrow::StringArray>(sets_b->chunk(chunk));
+            }
+            if (a_array == nullptr || b_array == nullptr || weight_array == nullptr ||
+                (datasets && (set_a == nullptr || set_b == nullptr))) {
                 *error = "cluster: '" + path +
-                         "' holds id_a, id_b or match_weight in a type a cpplink "
-                         "prediction file does not use";
+                         "' holds id_a, id_b, dataset_a, dataset_b or match_weight in "
+                         "a type a cpplink prediction file does not use";
                 return false;
             }
             for (int64_t row = 0; row < a_array->length(); ++row) {
                 if (a_array->IsNull(row) || b_array->IsNull(row) ||
-                    weight_array->IsNull(row)) {
+                    weight_array->IsNull(row) ||
+                    (datasets && (set_a->IsNull(row) || set_b->IsNull(row)))) {
                     ++tally->read;
                     ++tally->unresolved;
                     continue;
                 }
+                const std::string_view dataset_a =
+                    datasets ? set_a->GetView(row) : std::string_view();
+                const std::string_view dataset_b =
+                    datasets ? set_b->GetView(row) : std::string_view();
                 uint32_t a = 0;
                 uint32_t b = 0;
-                if (!index.Find(a_array->GetView(row), &a) ||
-                    !index.Find(b_array->GetView(row), &b)) {
+                if (!Resolve(index, store, dataset_a, a_array->GetView(row), &a, tally) ||
+                    !Resolve(index, store, dataset_b, b_array->GetView(row), &b, tally)) {
                     ++tally->read;
                     ++tally->unresolved;
                     continue;
@@ -373,9 +388,16 @@ bool Cluster(const RecordStore& store, const ClusterOptions& options,
         index_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                                       index_started)
                             .count();
-        const bool read = format == MergeFormat::kParquet
-                              ? ReadParquetEdges(options.edge_path, index, &tally, error)
-                              : ReadCsvEdges(options.edge_path, index, &tally, error);
+        // An id two records of one input share names neither of them, so no row
+        // of the file can be trusted to mean what it says.
+        if (!index.Unique(error)) {
+            *error = "cluster: " + *error;
+            return false;
+        }
+        const bool read =
+            format == MergeFormat::kParquet
+                ? ReadParquetEdges(options.edge_path, store, index, &tally, error)
+                : ReadCsvEdges(options.edge_path, store, index, &tally, error);
         if (!read) return false;
         edge_file = options.edge_path;
     }
@@ -418,6 +440,7 @@ bool Cluster(const RecordStore& store, const ClusterOptions& options,
         report->min_weight = min_weight;
         report->max_weight = max_weight;
         report->unresolved = tally.unresolved;
+        report->ambiguous = tally.ambiguous;
         report->shards = std::move(shards);
         report->edge_file = std::move(edge_file);
         report->index_seconds = index_seconds;
@@ -458,6 +481,11 @@ bool Cluster(const RecordStore& store, const ClusterOptions& options,
     return true;
 }
 
+const char* ClusterCsvHeader(bool datasets) {
+    return datasets ? "dataset,unique_id,cluster_id,cluster_size"
+                    : "unique_id,cluster_id,cluster_size";
+}
+
 namespace {
 
 bool WriteClustersCsv(const ClusterAssignment& assignment, const RecordStore& store,
@@ -468,14 +496,20 @@ bool WriteClustersCsv(const ClusterAssignment& assignment, const RecordStore& st
         *error = "cluster: could not write '" + options.out_path + "'";
         return false;
     }
-    std::string buffer = "unique_id,cluster_id,cluster_size\n";
+    const bool datasets = store.NumDatasets() > 1;
+    std::string buffer = ClusterCsvHeader(datasets);
+    buffer.push_back('\n');
     for (uint64_t row = 0; row < assignment.root.size(); ++row) {
         const uint32_t root = assignment.root[static_cast<size_t>(row)];
         const uint64_t size = assignment.size[root];
         if (size < options.min_size) continue;
+        if (datasets) {
+            buffer.append(store.DatasetName(store.DatasetOf(row)));
+            buffer.push_back(',');
+        }
         buffer.append(store.ids().Get(row));
         buffer.push_back(',');
-        buffer.append(store.ids().Get(root));
+        buffer.append(QualifiedId(store, root));
         buffer.push_back(',');
         buffer.append(std::to_string(size));
         buffer.push_back('\n');
@@ -494,17 +528,19 @@ bool WriteClustersCsv(const ClusterAssignment& assignment, const RecordStore& st
     return true;
 }
 
-// The same three columns as the csv, typed: the ids as strings and the size as a
+// The same columns as the csv, typed: the names as strings and the size as a
 // uint64.
 bool WriteClustersParquet(const ClusterAssignment& assignment, const RecordStore& store,
                           const ClusterOptions& options, uint64_t* written,
                           std::string* error) {
     constexpr int64_t kRowGroup = 1 << 20;
-    const auto schema = arrow::schema({
-        arrow::field("unique_id", arrow::utf8()),
-        arrow::field("cluster_id", arrow::utf8()),
-        arrow::field("cluster_size", arrow::uint64()),
-    });
+    const bool datasets = store.NumDatasets() > 1;
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    if (datasets) fields.push_back(arrow::field("dataset", arrow::utf8()));
+    fields.push_back(arrow::field("unique_id", arrow::utf8()));
+    fields.push_back(arrow::field("cluster_id", arrow::utf8()));
+    fields.push_back(arrow::field("cluster_size", arrow::uint64()));
+    const auto schema = arrow::schema(fields);
     auto sink = arrow::io::FileOutputStream::Open(options.out_path);
     if (!sink.ok()) {
         *error = "cluster: cannot create '" + options.out_path +
@@ -523,15 +559,22 @@ bool WriteClustersParquet(const ClusterAssignment& assignment, const RecordStore
     }
     std::unique_ptr<parquet::arrow::FileWriter> writer = std::move(*opened);
 
-    arrow::StringBuilder unique_id, cluster_id;
+    arrow::StringBuilder dataset, unique_id, cluster_id;
     arrow::UInt64Builder cluster_size;
     int64_t pending = 0;
     auto flush = [&]() -> bool {
         if (pending == 0) return true;
-        std::vector<std::shared_ptr<arrow::Array>> arrays(3);
-        arrow::Status status = unique_id.Finish(&arrays[0]);
-        status &= cluster_id.Finish(&arrays[1]);
-        status &= cluster_size.Finish(&arrays[2]);
+        std::vector<std::shared_ptr<arrow::Array>> arrays;
+        arrow::Status status;
+        auto take = [&](arrow::ArrayBuilder* builder) {
+            std::shared_ptr<arrow::Array> array;
+            status &= builder->Finish(&array);
+            arrays.push_back(std::move(array));
+        };
+        if (datasets) take(&dataset);
+        take(&unique_id);
+        take(&cluster_id);
+        take(&cluster_size);
         if (status.ok()) {
             status =
                 writer->WriteTable(*arrow::Table::Make(schema, arrays, pending), pending);
@@ -548,8 +591,10 @@ bool WriteClustersParquet(const ClusterAssignment& assignment, const RecordStore
         const uint32_t root = assignment.root[static_cast<size_t>(row)];
         const uint64_t size = assignment.size[root];
         if (size < options.min_size) continue;
-        arrow::Status status = unique_id.Append(store.ids().Get(row));
-        status &= cluster_id.Append(store.ids().Get(root));
+        arrow::Status status;
+        if (datasets) status &= dataset.Append(store.DatasetName(store.DatasetOf(row)));
+        status &= unique_id.Append(store.ids().Get(row));
+        status &= cluster_id.Append(QualifiedId(store, root));
         status &= cluster_size.Append(size);
         if (!status.ok()) {
             *error = "cluster: building a row: " + status.message();
@@ -656,6 +701,12 @@ void PrintClusterReport(const ClusterReport& report, std::ostream& out) {
         out << "WARNING: " << WithThousands(report.unresolved)
             << " predictions name a record this data file does not hold ("
             << Percent(report.unresolved, report.edges_read) << "); they were skipped\n";
+    }
+    if (report.ambiguous > 0) {
+        out << "WARNING: " << WithThousands(report.ambiguous)
+            << " of those ids are held by more than one input and the file does not "
+               "say which;\na prediction file written from these inputs carries "
+               "dataset_a and dataset_b\n";
     }
     if (report.edges_used != report.edges_read) {
         out << "Kept " << WithThousands(report.edges_used) << " above the clustering "

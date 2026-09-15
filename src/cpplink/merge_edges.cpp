@@ -32,19 +32,14 @@ namespace {
 constexpr size_t kReadEdges = 4096;
 constexpr size_t kFlushBytes = 1u << 20;
 
-// One row of the merged file, however it was read. Both shard formats are turned
-// into this before anything is written, so the two writers see one shape.
-struct MergedEdge {
-    std::string_view id_a;
-    std::string_view id_b;
-    uint32_t gamma = 0;
-    double weight = 0.0;
-};
-
+// Both shard formats are turned into an EdgeRow before anything is written, so
+// the two writers see one shape. Whether the rows carry datasets is decided once,
+// before the sink opens: from the store for binary shards, from the header of
+// the first shard for csv ones.
 class EdgeSink {
    public:
     virtual ~EdgeSink() = default;
-    virtual bool Write(const MergedEdge& edge, std::string* error) = 0;
+    virtual bool Write(const EdgeRow& edge, std::string* error) = 0;
     virtual bool Close(std::string* error) = 0;
 };
 
@@ -52,6 +47,8 @@ class EdgeSink {
 // the same thing to whatever reads them.
 class CsvSink : public EdgeSink {
    public:
+    explicit CsvSink(bool datasets) : datasets_(datasets) {}
+
     bool Open(const std::string& path, std::string* error) {
         path_ = path;
         file_.open(path, std::ios::binary | std::ios::trunc);
@@ -59,16 +56,25 @@ class CsvSink : public EdgeSink {
             *error = "merging predictions: could not write '" + path + "'";
             return false;
         }
-        buffer_ = "id_a,id_b,gamma,match_weight,match_probability\n";
+        buffer_ = EdgeCsvHeader(datasets_);
+        buffer_.push_back('\n');
         return true;
     }
 
-    bool Write(const MergedEdge& edge, std::string* error) override {
+    bool Write(const EdgeRow& edge, std::string* error) override {
         char numbers[64];
         std::snprintf(numbers, sizeof(numbers), ",%u,%.6f,%.9f", edge.gamma, edge.weight,
                       ProbabilityForWeight(edge.weight));
+        if (datasets_) {
+            buffer_.append(edge.dataset_a);
+            buffer_.push_back(',');
+        }
         buffer_.append(edge.id_a);
         buffer_.push_back(',');
+        if (datasets_) {
+            buffer_.append(edge.dataset_b);
+            buffer_.push_back(',');
+        }
         buffer_.append(edge.id_b);
         buffer_.append(numbers);
         buffer_.push_back('\n');
@@ -98,25 +104,31 @@ class CsvSink : public EdgeSink {
         return true;
     }
 
+    bool datasets_;
     std::string path_;
     std::ofstream file_;
     std::string buffer_;
 };
 
-std::shared_ptr<arrow::Schema> MergedArrowSchema() {
-    return arrow::schema({
-        arrow::field("id_a", arrow::utf8()),
-        arrow::field("id_b", arrow::utf8()),
-        arrow::field("gamma", arrow::uint32()),
-        arrow::field("match_weight", arrow::float64()),
-        arrow::field("match_probability", arrow::float64()),
-    });
+// The csv columns, typed, in the same order and under the same names.
+std::shared_ptr<arrow::Schema> MergedArrowSchema(bool datasets) {
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    if (datasets) fields.push_back(arrow::field("dataset_a", arrow::utf8()));
+    fields.push_back(arrow::field("id_a", arrow::utf8()));
+    if (datasets) fields.push_back(arrow::field("dataset_b", arrow::utf8()));
+    fields.push_back(arrow::field("id_b", arrow::utf8()));
+    fields.push_back(arrow::field("gamma", arrow::uint32()));
+    fields.push_back(arrow::field("match_weight", arrow::float64()));
+    fields.push_back(arrow::field("match_probability", arrow::float64()));
+    return arrow::schema(fields);
 }
 
 class ParquetSink : public EdgeSink {
    public:
-    explicit ParquetSink(size_t batch_rows)
-        : batch_rows_(batch_rows == 0 ? 1 : batch_rows), schema_(MergedArrowSchema()) {}
+    ParquetSink(size_t batch_rows, bool datasets)
+        : batch_rows_(batch_rows == 0 ? 1 : batch_rows),
+          datasets_(datasets),
+          schema_(MergedArrowSchema(datasets)) {}
 
     bool Open(const std::string& path, std::string* error) {
         path_ = path;
@@ -140,9 +152,13 @@ class ParquetSink : public EdgeSink {
         return true;
     }
 
-    bool Write(const MergedEdge& edge, std::string* error) override {
+    bool Write(const EdgeRow& edge, std::string* error) override {
         arrow::Status status = id_a_.Append(edge.id_a);
         status &= id_b_.Append(edge.id_b);
+        if (datasets_) {
+            status &= dataset_a_.Append(edge.dataset_a);
+            status &= dataset_b_.Append(edge.dataset_b);
+        }
         status &= gamma_.Append(edge.gamma);
         status &= weight_.Append(edge.weight);
         status &= probability_.Append(ProbabilityForWeight(edge.weight));
@@ -168,12 +184,21 @@ class ParquetSink : public EdgeSink {
    private:
     bool Flush(std::string* error) {
         if (pending_ == 0) return true;
-        std::vector<std::shared_ptr<arrow::Array>> arrays(5);
-        arrow::Status status = id_a_.Finish(&arrays[0]);
-        status &= id_b_.Finish(&arrays[1]);
-        status &= gamma_.Finish(&arrays[2]);
-        status &= weight_.Finish(&arrays[3]);
-        status &= probability_.Finish(&arrays[4]);
+        std::vector<std::shared_ptr<arrow::Array>> arrays;
+        arrays.reserve(7);
+        arrow::Status status;
+        auto take = [&](arrow::ArrayBuilder* builder) {
+            std::shared_ptr<arrow::Array> array;
+            status &= builder->Finish(&array);
+            arrays.push_back(std::move(array));
+        };
+        if (datasets_) take(&dataset_a_);
+        take(&id_a_);
+        if (datasets_) take(&dataset_b_);
+        take(&id_b_);
+        take(&gamma_);
+        take(&weight_);
+        take(&probability_);
         if (!status.ok()) {
             *error = "merging predictions: finishing a batch: " + status.message();
             return false;
@@ -191,8 +216,9 @@ class ParquetSink : public EdgeSink {
     }
 
     size_t batch_rows_;
+    bool datasets_;
     std::shared_ptr<arrow::Schema> schema_;
-    arrow::StringBuilder id_a_, id_b_;
+    arrow::StringBuilder dataset_a_, dataset_b_, id_a_, id_b_;
     arrow::UInt32Builder gamma_;
     arrow::DoubleBuilder weight_, probability_;
     size_t pending_ = 0;
@@ -263,9 +289,12 @@ bool ReadBinaryShard(const std::string& path, const RecordStore* store,
         return false;
     }
     const uint64_t records = store == nullptr ? 0 : store->NumRecords();
+    const bool datasets = store != nullptr && store->NumDatasets() > 1;
     std::vector<char> buffer(kReadEdges * kEdgeBytes);
     char row_a[16];
     char row_b[16];
+    std::string dataset_a;
+    std::string dataset_b;
     while (file) {
         file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const size_t got = static_cast<size_t>(file.gcount());
@@ -276,7 +305,7 @@ bool ReadBinaryShard(const std::string& path, const RecordStore* store,
         for (size_t at = 0; at < got; at += kEdgeBytes) {
             uint32_t a = 0;
             uint32_t b = 0;
-            MergedEdge edge;
+            EdgeRow edge;
             std::memcpy(&a, buffer.data() + at, 4);
             std::memcpy(&b, buffer.data() + at + 4, 4);
             std::memcpy(&edge.gamma, buffer.data() + at + 8, 4);
@@ -297,6 +326,12 @@ bool ReadBinaryShard(const std::string& path, const RecordStore* store,
                 }
                 edge.id_a = store->ids().Get(a);
                 edge.id_b = store->ids().Get(b);
+                if (datasets) {
+                    dataset_a = store->DatasetName(store->DatasetOf(a));
+                    dataset_b = store->DatasetName(store->DatasetOf(b));
+                    edge.dataset_a = dataset_a;
+                    edge.dataset_b = dataset_b;
+                }
             }
             if (!sink->Write(edge, error)) return false;
             ++report->written;
@@ -305,12 +340,27 @@ bool ReadBinaryShard(const std::string& path, const RecordStore* store,
     return true;
 }
 
-bool ParseCsvEdge(const std::string& line, MergedEdge* edge) {
-    return ParseEdgeCsvLine(line, &edge->id_a, &edge->id_b, &edge->gamma, &edge->weight);
+// The header of a csv shard, which is what says whether its rows carry datasets.
+// Read before the sink opens, because the merged file's own header has to agree
+// with every shard's.
+bool CsvShardLayout(const std::string& path, EdgeCsvLayout* layout, std::string* error) {
+    std::ifstream file(path);
+    if (!file) {
+        *error = "merging predictions: could not open '" + path + "'";
+        return false;
+    }
+    std::string line;
+    *layout = EdgeCsvLayout();
+    if (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        ParseEdgeCsvHeader(line, layout);
+    }
+    return true;
 }
 
-bool ReadCsvShard(const std::string& path, const MergeOptions& options, EdgeSink* sink,
-                  MergeReport* report, std::string* error) {
+bool ReadCsvShard(const std::string& path, const MergeOptions& options,
+                  const EdgeCsvLayout& expected, EdgeSink* sink, MergeReport* report,
+                  std::string* error) {
     std::ifstream file(path);
     if (!file) {
         *error = "merging predictions: could not open '" + path + "'";
@@ -318,13 +368,24 @@ bool ReadCsvShard(const std::string& path, const MergeOptions& options, EdgeSink
     }
     std::string line;
     uint64_t number = 0;
+    EdgeCsvLayout layout;
     while (std::getline(file, line)) {
         ++number;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        if (number == 1 && line.rfind("id_a,", 0) == 0) continue;
-        MergedEdge edge;
-        if (!ParseCsvEdge(line, &edge)) {
+        if (number == 1 && ParseEdgeCsvHeader(line, &layout)) {
+            if (layout.datasets != expected.datasets) {
+                *error = "merging predictions: '" + path + "' " +
+                         (layout.datasets ? "carries" : "lacks") +
+                         " dataset columns where the first shard " +
+                         (expected.datasets ? "carries" : "lacks") +
+                         " them; these shards are not one run";
+                return false;
+            }
+            continue;
+        }
+        EdgeRow edge;
+        if (!ParseEdgeCsvLine(line, expected, &edge)) {
             *error = "merging predictions: '" + path + "' line " +
                      std::to_string(number) + " is not a cpplink prediction row";
             return false;
@@ -357,13 +418,24 @@ bool MergeEdges(const RecordStore* store, const MergeOptions& options,
     report->out_path = options.out_path;
     report->row_indices = source == MergeSource::kBinary && store == nullptr;
 
+    // Whether the merged rows name their datasets: a store of several inputs
+    // says so for binary shards, and csv shards say so themselves.
+    EdgeCsvLayout layout;
+    if (source == MergeSource::kBinary) {
+        layout.datasets = store != nullptr && store->NumDatasets() > 1;
+    } else if (!CsvShardLayout(report->shards.front(), &layout, error)) {
+        return false;
+    }
+    report->datasets = layout.datasets;
+
     std::unique_ptr<EdgeSink> sink;
     if (options.format == MergeFormat::kParquet) {
-        auto parquet_sink = std::make_unique<ParquetSink>(options.batch_rows);
+        auto parquet_sink =
+            std::make_unique<ParquetSink>(options.batch_rows, layout.datasets);
         if (!parquet_sink->Open(options.out_path, error)) return false;
         sink = std::move(parquet_sink);
     } else {
-        auto csv_sink = std::make_unique<CsvSink>();
+        auto csv_sink = std::make_unique<CsvSink>(layout.datasets);
         if (!csv_sink->Open(options.out_path, error)) return false;
         sink = std::move(csv_sink);
     }
@@ -372,7 +444,7 @@ bool MergeEdges(const RecordStore* store, const MergeOptions& options,
         const bool read =
             source == MergeSource::kBinary
                 ? ReadBinaryShard(path, store, options, sink.get(), report, error)
-                : ReadCsvShard(path, options, sink.get(), report, error);
+                : ReadCsvShard(path, options, layout, sink.get(), report, error);
         if (!read) return false;
     }
     if (!sink->Close(error)) return false;
@@ -382,22 +454,49 @@ bool MergeEdges(const RecordStore* store, const MergeOptions& options,
     return true;
 }
 
-bool ParseEdgeCsvLine(const std::string& line, std::string_view* id_a,
-                      std::string_view* id_b, uint32_t* gamma, double* weight) {
+bool ParseEdgeCsvHeader(const std::string& line, EdgeCsvLayout* layout) {
+    if (line == EdgeCsvHeader(true)) {
+        layout->datasets = true;
+        return true;
+    }
+    if (line == EdgeCsvHeader(false)) {
+        layout->datasets = false;
+        return true;
+    }
+    return false;
+}
+
+bool ParseEdgeCsvLine(const std::string& line, const EdgeCsvLayout& layout,
+                      EdgeRow* row) {
     const size_t probability = line.rfind(',');
     if (probability == std::string::npos || probability == 0) return false;
     const size_t at_weight = line.rfind(',', probability - 1);
     if (at_weight == std::string::npos || at_weight == 0) return false;
     const size_t at_gamma = line.rfind(',', at_weight - 1);
     if (at_gamma == std::string::npos || at_gamma == 0) return false;
-    const size_t between = line.find(',');
-    if (between == std::string::npos || between >= at_gamma) return false;
-    *id_a = std::string_view(line.data(), between);
-    *id_b = std::string_view(line.data() + between + 1, at_gamma - between - 1);
+    // The naming fields, left to right, each ending at the next comma and the
+    // last at the gamma's.
+    std::string_view* fields[4];
+    size_t count = 0;
+    if (layout.datasets) fields[count++] = &row->dataset_a;
+    fields[count++] = &row->id_a;
+    if (layout.datasets) fields[count++] = &row->dataset_b;
+    fields[count++] = &row->id_b;
+    size_t begin = 0;
+    for (size_t f = 0; f < count; ++f) {
+        const size_t end = f + 1 == count ? at_gamma : line.find(',', begin);
+        if (end == std::string::npos || end > at_gamma) return false;
+        *fields[f] = std::string_view(line.data() + begin, end - begin);
+        begin = end + 1;
+    }
+    if (!layout.datasets) {
+        row->dataset_a = std::string_view();
+        row->dataset_b = std::string_view();
+    }
     // strtod and strtoul stop at the delimiter, so no field has to be copied out.
-    *gamma =
+    row->gamma =
         static_cast<uint32_t>(std::strtoul(line.c_str() + at_gamma + 1, nullptr, 10));
-    *weight = std::strtod(line.c_str() + at_weight + 1, nullptr);
+    row->weight = std::strtod(line.c_str() + at_weight + 1, nullptr);
     return true;
 }
 
@@ -459,6 +558,10 @@ void PrintMergeReport(const MergeReport& report, std::ostream& out) {
         out << "Rows are named by index: binary shards carry no ids, so pass "
                "--schema and\nthe parquet input to write the record ids "
                "instead\n";
+    }
+    if (report.datasets) {
+        out << "Each record is named by its dataset and its id (dataset_a, id_a, "
+               "dataset_b, id_b),\nbecause the run had more than one input\n";
     }
     out << "Wrote " << WithThousands(report.written) << " predictions to "
         << report.out_path << " ("
