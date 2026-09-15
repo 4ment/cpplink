@@ -93,10 +93,13 @@ enum class LevelType {
     kJaroWinkler,    // similarity >= threshold
     kDateWithin,     // |difference| <= threshold days
     kNumericWithin,  // |difference| <= threshold
-    kGeoWithin,      // great-circle distance <= threshold km
-    kListOverlap,    // intersection size >= threshold
-    kListJaccard,    // Jaccard similarity >= threshold
-    kListContains,   // one row's scalar value is an element of the other's list
+    // |difference| / max(a, b) < threshold: splink's PercentageDifferenceLevel,
+    // for an amount whose tolerance scales with its size. Strict, as splink's is.
+    kPercentageWithin,
+    kGeoWithin,     // great-circle distance <= threshold km
+    kListOverlap,   // intersection size >= threshold
+    kListJaccard,   // Jaccard similarity >= threshold
+    kListContains,  // one row's scalar value is an element of the other's list
     // The two pairwise levels: the closest pair of elements over the cross
     // product of the two rows' lists, rather than the elements they share. A set
     // of email addresses agreeing up to a typo is evidence that an intersection

@@ -124,10 +124,19 @@ TEST_F(ComparisonConfig, RejectsALevelTheColumnTypeCannotSupport) {
     EXPECT_FALSE(Parse(R"([{"columns":["dob"],
         "levels":[{"type":"jaro_winkler","threshold":0.9},{"type":"else"}]}])"));
     EXPECT_NE(error_.find("cannot read"), std::string::npos);
-    // A double never agrees exactly in a useful way.
-    EXPECT_FALSE(Parse(R"([{"columns":["lat"],
-        "levels":[{"type":"exact"},{"type":"else"}]}])"));
+    // A double may agree exactly -- two amounts the same to the cent -- so exact
+    // is allowed on one; a percentage difference is what a double alone reads.
+    EXPECT_TRUE(Parse(R"([{"columns":["lat"],
+        "levels":[{"type":"exact"},{"type":"percentage_within","threshold":0.1},
+                  {"type":"else"}]}])"))
+        << error_;
+    EXPECT_FALSE(Parse(R"([{"columns":["surname"],
+        "levels":[{"type":"percentage_within","threshold":0.1},{"type":"else"}]}])"));
     EXPECT_NE(error_.find("cannot read"), std::string::npos);
+    // The threshold is a fraction: 10 is a percentage written in the wrong unit.
+    EXPECT_FALSE(Parse(R"([{"columns":["lat"],
+        "levels":[{"type":"percentage_within","threshold":10},{"type":"else"}]}])"));
+    EXPECT_NE(error_.find("(0, 1]"), std::string::npos);
 }
 
 TEST_F(ComparisonConfig, GeoNeedsExactlyTwoColumns) {

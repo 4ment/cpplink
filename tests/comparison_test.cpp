@@ -124,6 +124,45 @@ TEST_F(Fixture, GeoLevelReadsBothColumnsAsOneComparison) {
     EXPECT_EQ(comparisons_.EvaluateOne(2, 0, 5), 2);  // Sydney to Melbourne
 }
 
+// An amount is compared as splink's PercentageDifferenceLevel does: the absolute
+// difference over the larger value, strictly below the threshold, with an exact
+// level above it for two values the same to the cent.
+TEST(Amount, PercentageDifferenceIsOverTheLargerValueAndStrict) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(R"({
+      "columns": [{"name": "amount", "type": "double"}],
+      "comparisons": [{"name": "amount", "columns": ["amount"], "levels": [
+        {"type": "null"},
+        {"type": "exact"},
+        {"type": "percentage_within", "threshold": 0.01},
+        {"type": "percentage_within", "threshold": 0.1},
+        {"type": "else"}]}]})",
+                                     &schema, &error))
+        << error;
+    cpplink::RecordStore store(schema);
+    auto& amount = std::get<cpplink::DoubleColumn>(store.mutable_column(0));
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    //             0       1       2       3      4      5    6    7
+    amount.values = {100.0, 100.0, 100.5, 109.0, 110.0, 90.0, nan, 0.0};
+    store.set_num_records(8);
+    store.Finalize();
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 1), 1);  // exact
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 2), 2);  // 0.5 / 100.5 < 1%
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 3), 3);  // 9 / 109 = 8.3% < 10%
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 4), 3);  // 10 / 110 = 9.1% < 10%
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 5), 4);  // 10 / 100 = 10%, strict: else
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 6), 0);  // null
+    EXPECT_EQ(comparisons.EvaluateOne(0, 7, 7), 1);  // 0 == 0 is exact, not 0/0
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 7), 4);  // 100 / 100 = 1 >= 10%
+    // The order of the two rows does not matter: the denominator is the larger.
+    EXPECT_EQ(comparisons.EvaluateOne(0, 3, 0), 3);
+    EXPECT_EQ(comparisons.EvaluateOne(0, 5, 0), comparisons.EvaluateOne(0, 0, 5));
+}
+
 // A null is not a value: it must never agree with anything, including another null.
 TEST_F(Fixture, NullsAgreeWithNothingIncludingOtherNulls) {
     EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 4), 0);
