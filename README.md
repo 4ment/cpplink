@@ -259,6 +259,9 @@ cpplink merge-predictions --schema examples/sample_schema.json --shards predicti
 
 # Write a sample file with realistic cardinalities and planted duplicates
 cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
+# ... or split across files for a link fixture: originals to --out, every planted
+# duplicate to one of the --out-b files, so every recorded pair crosses them
+cpplink gen-sample --out a.parquet --out-b b.parquet --out-b c.parquet --rows 100000 --truth truth.csv
 
 # Link two files instead of deduplicating one: find the rows of census.parquet
 # and tax.parquet that are the same person. Every command takes several parquet

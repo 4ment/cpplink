@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace cpplink {
 
@@ -14,11 +15,13 @@ struct SampleOptions {
     double duplicate_rate = 0.08;  // fraction of rows that are corrupted copies
     int64_t row_group_size = 200000;
     std::string truth_path;  // optional sidecar of planted duplicate pairs
-    // A second output. When set, originals go to the first file and every planted
-    // duplicate to this one, so each recorded pair crosses the two files and the
-    // link path has something to be measured against. `duplicate_rate` then sets
-    // how large the second file is relative to the first.
-    std::string link_path;
+    // Further outputs. When any is set, originals go to the first file and every
+    // planted duplicate to one of these, drawn uniformly, so each recorded pair
+    // crosses the files and the link path has something to be measured against;
+    // with several, the extra files also hold pairs of duplicates of one base,
+    // which the truth file leaves to the closure. `duplicate_rate` then sets how
+    // large the extra files are, together, relative to the first.
+    std::vector<std::string> link_paths;
 };
 
 // Writes a parquet file with the column mix cpplink is aimed at: high-cardinality

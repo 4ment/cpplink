@@ -180,7 +180,7 @@ void PrintUsage(std::ostream& out) {
            "[<file.parquet>...]\n"
         << "cpplink gen-sample --out <file.parquet> [--rows N] [--seed N]\n"
         << "                   [--duplicate-rate F] [--truth <file.csv>]\n"
-        << "                   [--out-b <file.parquet>]\n";
+        << "                   [--out-b <file.parquet>]...\n";
 }
 
 // Reads "--name value" pairs. Returns false and reports on a missing value.
@@ -1794,7 +1794,11 @@ int RunGenSample(const std::vector<std::string>& args, std::ostream& out,
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.duplicate_rate = std::stod(value);
         } else if (args[i] == "--out-b") {
-            if (!TakeValue(args, &i, &options.link_path, err)) return 1;
+            // Repeatable: each names one more file the planted duplicates are
+            // spread across, so three of them make a four-way link fixture.
+            std::string link_path;
+            if (!TakeValue(args, &i, &link_path, err)) return 1;
+            options.link_paths.push_back(link_path);
         } else if (args[i] == "--truth") {
             if (!TakeValue(args, &i, &options.truth_path, err)) return 1;
         } else {
