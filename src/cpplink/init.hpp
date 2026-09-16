@@ -90,6 +90,11 @@ struct DraftReport {
 // what it is worth and `levels` fits the thresholds it guessed.
 bool DraftSchema(const std::string& path, const DraftOptions& options,
                  DraftReport* report, std::string* error);
+// The same over the inputs of a link: the draft is from the first file, and each
+// later file is checked to hold the first's columns at types that read the same
+// way, so the schema written here loads over all of them.
+bool DraftSchema(const std::vector<std::string>& paths, const DraftOptions& options,
+                 DraftReport* report, std::string* error);
 
 // Every draft is re-parsed before it is returned, so what comes out is a file
 // the other commands accept, not a fragment.

@@ -541,6 +541,18 @@ void PrintPredictPlan(const RecordStore& store, const BlockingPlan& plan,
             out << WithThousands(store.DatasetEnd(d) - store.DatasetStart(d));
         }
         out << " rows), mode " << PairModeName(plan.mode()) << "\n";
+        bool adjusted = false;
+        for (size_t c = 0; c < comparisons.Size(); ++c) {
+            adjusted = adjusted || scorer.HasAdjustment(c);
+        }
+        if (adjusted) {
+            // Said once per run, because it is an approximation the run makes and
+            // not a property of the data: a value's rarity is read across every
+            // input together, which is exact when the inputs are drawn from one
+            // population and is what linking them assumes.
+            out << "Term frequency pools the inputs: a value is as rare as it is across "
+                   "all of them\n";
+        }
     }
     out << "Threshold      " << std::fixed << std::setprecision(3) << scorer.threshold()
         << " bits  (posterior " << std::setprecision(6)

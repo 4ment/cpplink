@@ -5,10 +5,15 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
+#include <arrow/api.h>
+#include <arrow/io/api.h>
 #include <gtest/gtest.h>
+#include <parquet/arrow/writer.h>
 #include <unistd.h>
 
 #include "cpplink/app.hpp"
@@ -239,6 +244,72 @@ TEST_F(DraftFixture, RefusesWhatItCannotPlace) {
     options.unique_id = "nope";
     EXPECT_FALSE(cpplink::DraftSchema(path_, options, &report, &error));
     EXPECT_NE(error.find("--id"), std::string::npos);
+}
+
+// A link's draft is from the first input, and the others must be able to run it:
+// the same columns, at types that read the same way. The check is made here from
+// the footers rather than left to the loader, which would fail on the second file
+// after the schema had already been written.
+TEST_F(DraftFixture, DraftsALinkFromTheFirstInputAndChecksTheOthers) {
+    const std::string second = (dir_ / "second.parquet").string();
+    cpplink::SampleOptions options;
+    options.rows = 500;
+    options.seed = 9;
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(second, options, &error)) << error;
+
+    cpplink::DraftReport alone;
+    cpplink::DraftReport linked;
+    ASSERT_TRUE(cpplink::DraftSchema(path_, cpplink::DraftOptions(), &alone, &error))
+        << error;
+    ASSERT_TRUE(cpplink::DraftSchema(std::vector<std::string>{path_, second},
+                                     cpplink::DraftOptions(), &linked, &error))
+        << error;
+    EXPECT_EQ(linked.json, alone.json);
+
+    // A second input missing a column the first holds, and one holding it at a
+    // type that reads differently, are both refused by name.
+    const std::string narrow = (dir_ / "narrow.parquet").string();
+    const std::string retyped = (dir_ / "retyped.parquet").string();
+    {
+        arrow::StringBuilder ids;
+        arrow::StringBuilder dobs;
+        ASSERT_TRUE(ids.Append("x1").ok());
+        ASSERT_TRUE(dobs.Append("1980-01-02").ok());
+        std::shared_ptr<arrow::Array> id_array;
+        std::shared_ptr<arrow::Array> dob_array;
+        ASSERT_TRUE(ids.Finish(&id_array).ok());
+        ASSERT_TRUE(dobs.Finish(&dob_array).ok());
+        auto write = [&](const std::string& path,
+                         const std::vector<std::shared_ptr<arrow::Field>>& fields,
+                         const std::vector<std::shared_ptr<arrow::Array>>& arrays) {
+            auto table = arrow::Table::Make(arrow::schema(fields), arrays);
+            auto sink = arrow::io::FileOutputStream::Open(path);
+            ASSERT_TRUE(sink.ok());
+            ASSERT_TRUE(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(),
+                                                   *sink, 1024)
+                            .ok());
+        };
+        write(narrow, {arrow::field("id", arrow::utf8())}, {id_array});
+        std::vector<cpplink::FileColumn> columns;
+        ASSERT_TRUE(cpplink::ReadFileColumns(path_, &columns, &error)) << error;
+        // Every column of the sample, with dob as text rather than a date.
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        std::vector<std::shared_ptr<arrow::Array>> arrays;
+        for (const cpplink::FileColumn& column : columns) {
+            fields.push_back(arrow::field(column.name, arrow::utf8()));
+            arrays.push_back(column.name == "dob" ? dob_array : id_array);
+        }
+        write(retyped, fields, arrays);
+    }
+    cpplink::DraftReport report;
+    EXPECT_FALSE(cpplink::DraftSchema(std::vector<std::string>{path_, narrow},
+                                      cpplink::DraftOptions(), &report, &error));
+    EXPECT_NE(error.find("but not in " + narrow), std::string::npos) << error;
+    EXPECT_FALSE(cpplink::DraftSchema(std::vector<std::string>{path_, retyped},
+                                      cpplink::DraftOptions(), &report, &error));
+    EXPECT_NE(error.find("\"dob\""), std::string::npos) << error;
+    EXPECT_NE(error.find("cast one"), std::string::npos) << error;
 }
 
 TEST_F(DraftFixture, RunWritesTheDraftAndTheReport) {

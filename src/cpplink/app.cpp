@@ -109,7 +109,7 @@ void PrintUsage(std::ostream& out) {
         << "miss. Estimating from it holds no column out; see the documentation.\n"
         << "\n"
         << "cpplink init [--out <schema.json>] [--id COLUMN] [--role COLUMN=ROLE]...\n"
-        << "             <file.parquet>\n"
+        << "             <file.parquet>...\n"
         << "cpplink inspect --schema <schema.json> <file.parquet>...\n"
         << "cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]\n"
         << "                [--expected-matches N] [--threads N] [--json] "
@@ -248,14 +248,14 @@ int RunInit(const std::vector<std::string>& args, std::ostream& out, std::ostrea
             data_paths.push_back(args[i]);
         }
     }
-    if (data_paths.size() != 1) {
-        err << "cpplink init: exactly one parquet file is required\n";
+    if (data_paths.empty()) {
+        err << "cpplink init: a parquet file is required\n";
         return 1;
     }
 
     DraftReport report;
     std::string error;
-    if (!DraftSchema(data_paths.front(), options, &report, &error)) {
+    if (!DraftSchema(data_paths, options, &report, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -822,7 +822,13 @@ void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
                      const BallOptions& options, BallTables* balls, std::ostream& out) {
     balls->Build(comparisons, store.NumRecords(), options);
     out << "Neighbourhood masses in " << std::fixed << std::setprecision(1)
-        << balls->seconds << " s\n";
+        << balls->seconds << " s";
+    if (store.NumDatasets() > 1) {
+        out << ", over the " << store.NumDatasets()
+            << " inputs pooled: a value's neighbourhood is as heavy as it is across all "
+               "of them";
+    }
+    out << "\n";
     for (size_t c = 0; c < comparisons.Size(); ++c) {
         out << "  " << comparisons.at(c).spec->name << ": ";
         if (balls->Has(c)) {

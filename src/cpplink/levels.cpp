@@ -706,7 +706,15 @@ void PrintLevelsReport(const LevelsReport& report, std::ostream& out) {
         << "Mode         " << PairModeName(report.mode) << "\n"
         << "Anchor rows  " << WithThousands(report.anchor_rows) << "\n"
         << "Time         " << Fixed(report.seconds, 1) << " s  (" << report.threads
-        << " threads)\n\n";
+        << " threads)\n";
+    if (report.mode == PairMode::kCrossDataset) {
+        // The u curve is the dictionary self-join, which reads the pooled term
+        // frequencies: two random rows of the inputs together rather than one of
+        // each, exact when the inputs share a population. The m curve is the
+        // anchor pairs, which are cross pairs here.
+        out << "Note         u(t) is over the inputs pooled, m(t) over cross pairs\n";
+    }
+    out << "\n";
 
     size_t proposed = 0;
     for (const ComparisonLevels& item : report.comparisons) {

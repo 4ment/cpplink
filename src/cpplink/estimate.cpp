@@ -606,6 +606,17 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         *error = "the schema declares no comparisons to estimate";
         return false;
     }
+    if (options.fuzzy_u && plan.mode() == PairMode::kCrossDataset) {
+        // The dictionary self-join counts value pairs over the pooled term
+        // frequencies, and u over cross pairs needs how each value splits between
+        // the inputs, which those tables do not hold. Skipping quietly would hand
+        // back a sampled u under a flag that promised an exact one.
+        *error =
+            "--fuzzy-u is a closed form over one input's term frequencies; in link mode "
+            "the fuzzy levels' u needs each value's count per input, which the pooled "
+            "tables do not hold. Drop --fuzzy-u to sample those levels instead";
+        return false;
+    }
     if (store.NumRecords() < 2) {
         *error = "estimation needs at least two records";
         return false;
@@ -644,9 +655,10 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
 
     // The dictionary self-join, which turns the fuzzy levels' u from a sampled
     // number into an exact one. Term frequencies pool the inputs, so this is a
-    // dedup-only closed form for the same reason the exact level's is.
+    // dedup-only closed form for the same reason the exact level's is, and link
+    // mode was refused above rather than skipped here.
     BallTables balls;
-    if (options.fuzzy_u && plan.mode() != PairMode::kCrossDataset) {
+    if (options.fuzzy_u) {
         // The self-join is threaded by the same knob as everything else here:
         // --threads is the whole command's budget, not the pair walk's alone.
         BallOptions ball = options.ball;
