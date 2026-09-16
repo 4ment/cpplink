@@ -488,24 +488,25 @@ Best F1 over the grid, with the threshold it sits at:
 | symmetric | cpplink | 0.1 | 38,353 | 0.8095 | 0.6850 | 0.7421 |
 | symmetric | splink | 0.1 | 42,332 | 0.7533 | 0.7036 | 0.7276 |
 | native | cpplink | 0.1 | 45,041 | 0.7678 | 0.7630 | 0.7654 |
-| unblocked | cpplink | 0.1 | 42,440 | 0.8006 | 0.7497 | 0.7743 |
+| unblocked | cpplink | 0.1 | 43,746 | 0.7886 | 0.7611 | 0.7746 |
 
 F1 at every threshold:
 
 | track | tool | 0.001 | 0.01 | 0.1 | 0.5 | 0.9 | 0.99 | 0.999 |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| demo | cpplink | 0.2448 | 0.6223 | 0.7742 | 0.7311 | 0.6613 | 0.4916 | 0.1961 |
+| demo | cpplink | 0.2438 | 0.6156 | 0.7742 | 0.7361 | 0.6882 | 0.4916 | 0.1961 |
 | demo | splink | 0.2436 | 0.6150 | 0.7730 | 0.7339 | 0.6613 | 0.4916 | 0.1961 |
-| matched | cpplink | 0.2448 | 0.6222 | 0.7741 | 0.7311 | 0.6613 | 0.4916 | 0.1961 |
+| matched | cpplink | 0.2437 | 0.6155 | 0.7741 | 0.7361 | 0.6882 | 0.4916 | 0.1961 |
 | matched | splink | 0.2436 | 0.6149 | 0.7730 | 0.7339 | 0.6613 | 0.4916 | 0.1961 |
-| symmetric | cpplink | 0.2936 | 0.5315 | 0.7421 | 0.7088 | 0.6606 | 0.4915 | 0.1873 |
+| symmetric | cpplink | 0.2936 | 0.5315 | 0.7421 | 0.7088 | 0.6606 | 0.4915 | 0.1961 |
 | symmetric | splink | 0.2922 | 0.5315 | 0.7276 | 0.7134 | 0.6606 | 0.4915 | 0.1873 |
-| native | cpplink | 0.2334 | 0.6069 | 0.7654 | 0.7304 | 0.6612 | 0.4916 | 0.1961 |
-| unblocked | cpplink | 0.5274 | 0.6223 | 0.7743 | 0.7311 | 0.6736 | 0.4916 | 0.1873 |
+| native | cpplink | 0.2325 | 0.6005 | 0.7654 | 0.7335 | 0.6879 | 0.4916 | 0.1961 |
+| unblocked | cpplink | 0.2443 | 0.6218 | 0.7746 | 0.7282 | 0.6882 | 0.4916 | 0.1961 |
 
-**The parity test passes to the pair.**
-On the matched track the two tools emit the same number of predictions with the same number of true positives at 0.9 (22,536 with 22,438 true), 0.99 (14,790 with 14,777) and 0.999 (4,927 with 4,927), and at 0.001 they find the same 43,724 true pairs.
-Best F1 is 0.7741 against 0.7730, and the two are within 0.008 at 0.01 and within 0.003 at every threshold from 0.1 up.
+**The parity test passes, and at the top of the scale to the pair.**
+On the matched track the two tools find the same 43,724 true pairs at 0.001, and emit the same predictions with the same true positives at 0.99 (14,790 with 14,777) and 0.999 (4,927 with 4,927).
+Best F1 is 0.7741 against 0.7730, and the two are within 0.003 at every threshold from 0.001 to 0.5.
+At 0.9 they part by 0.027: cpplink emits 24,092 predictions with 23,887 true against splink's 22,536 with 22,438, one pattern of about 1,500 pairs sitting on either side of the threshold under the two tools' sampled `u`, and it is back to the pair at 0.99.
 The same holds on the demo track, where cpplink's blocking is a superset of splink's on two rules and the cheat is in both: 0.7742 against 0.7730.
 
 **The models agree with each other and with the truth.**
@@ -513,29 +514,31 @@ Every true pair is known, so the match rate of each level can be read off the 45
 
 | comparison | level | truth m | cpplink m | splink m | cpplink unblocked m |
 |---|---|---:|---:|---:|---:|
-| amount | exact | 0.2537 | 0.2482 | 0.2474 | 0.2652 |
-|  | within 1% | 0.1962 | 0.1989 | 0.1981 | 0.1885 |
-|  | within 3% | 0.3190 | 0.3189 | 0.3177 | 0.3238 |
-|  | within 10% | 0.2308 | 0.2326 | 0.2315 | 0.2219 |
+| amount | exact | 0.2537 | 0.2482 | 0.2474 | 0.2703 |
+|  | within 1% | 0.1962 | 0.1987 | 0.1981 | 0.1845 |
+|  | within 3% | 0.3190 | 0.3188 | 0.3177 | 0.3216 |
+|  | within 10% | 0.2308 | 0.2326 | 0.2315 | 0.2231 |
 |  | within 30% | 0.0004 | 0.0001 | 0.0004 | 0.0002 |
-|  | else | 0.0000 | 0.0012 | 0.0049 | 0.0002 |
-| memo | exact | 0.4380 | 0.4278 | 0.4273 | 0.4712 |
-|  | levenshtein <= 2 | 0.1050 | 0.1086 | 0.1086 | 0.1070 |
-|  | levenshtein <= 6 | 0.2621 | 0.2616 | 0.2613 | 0.2560 |
-|  | levenshtein <= 10 | 0.1454 | 0.1477 | 0.1476 | 0.1655 |
-|  | else | 0.0496 | 0.0543 | 0.0552 | **0.0002** |
-| date | within 1 day after | 0.3872 | 0.3887 | 0.3890 | 0.3955 |
-|  | within 4 days after | 0.4655 | 0.4658 | 0.4658 | 0.4774 |
-|  | within 10 days after | 0.0957 | 0.0961 | 0.0961 | 0.0954 |
-|  | within 30 days after | 0.0516 | 0.0492 | 0.0490 | **0.0315** |
+|  | else | 0.0000 | 0.0016 | 0.0049 | 0.0002 |
+| memo | exact | 0.4380 | 0.4277 | 0.4273 | 0.4435 |
+|  | levenshtein <= 2 | 0.1050 | 0.1086 | 0.1086 | 0.0991 |
+|  | levenshtein <= 6 | 0.2621 | 0.2614 | 0.2613 | 0.2375 |
+|  | levenshtein <= 10 | 0.1454 | 0.1477 | 0.1476 | 0.1663 |
+|  | else | 0.0496 | 0.0547 | 0.0552 | **0.0536** |
+| date | within 1 day after | 0.3872 | 0.3888 | 0.3890 | 0.3929 |
+|  | within 4 days after | 0.4655 | 0.4659 | 0.4658 | 0.4764 |
+|  | within 10 days after | 0.0957 | 0.0961 | 0.0961 | 0.0967 |
+|  | within 30 days after | 0.0516 | 0.0492 | 0.0490 | **0.0337** |
 |  | else | 0.0000 | 0.0001 | 0.0001 | 0.0002 |
 
 The two tools' blocked sessions agree to 0.001 on thirteen of sixteen levels and both sit within 0.011 of the truth everywhere, mean absolute error 0.002 and 0.003.
-The unblocked estimate is the one to read: 5.0% of matches have a memo more than ten edits from its partner and it puts that level at 0.02%, at the floor, with the report saying so ("m at the floor: no matching pair reached this level"); 5.2% are 10 to 30 days apart and it reads 3.2%.
-A hundred million sampled pairs hold about 2,200 matches and about 110 of them sit at memo `else`, but so do 88% of the non-matches, and with nothing held out and λ at 2 x 10^-5 the responsibility EM gives such a pair is too small to keep the level alive; a session blocked on the amount sees the same pairs at a within-block match rate several orders of magnitude higher and keeps them.
-That is the case for the blocked session, and it is a case about `m` rather than about this F1: at the optimum the unblocked model scores 0.7743, because pricing memo `else` at -12 bits rather than -4 refuses the 5% of matches there along with the bulk of the non-matches, and on this threshold sweep the two cancel.
-A user who wanted those matches would not get them, and the model's own report says why.
-What the refusal cost in wall clock is in the cost table.
+The unblocked estimate is the one to watch, and what it shows is instability rather than a fixed bias.
+5.0% of matches have a memo more than ten edits from its partner; in this run the unblocked session reads that level at 0.0536, and in the run before it, identical but for the `u` sample being redrawn, it read 0.0002, at the floor, with the report saying so ("m at the floor: no matching pair reached this level").
+The blocked sessions read 0.054 and 0.055 in both runs.
+The mechanism is what makes the level fragile: a hundred million sampled pairs hold about 2,200 matches and about 110 of them sit at memo `else`, but so do 88% of the non-matches, and with nothing held out and λ at 2 x 10^-5 the responsibility EM gives such a pair is small enough that whether the level survives depends on where the iteration starts, which the sampled `u` sets.
+A session blocked on the amount sees the same pairs at a within-block match rate several orders of magnitude higher, and keeps them from any start.
+The date's 10-to-30-day level, 5.2% of matches, reads 0.034 unblocked against 0.049 blocked in this run for the same reason.
+At the F1 optimum the two estimators score alike, 0.7746 against 0.7741, because the pairs a collapsed level loses are mostly ones the threshold would have refused anyway; the difference is a model whose report says what it could not see against one that saw it, and 30 s against 0.8.
 
 **The direction of the date is worth 0.032 to 0.045 F1.**
 The `symmetric` track is `matched` with the date window either side in both tools: cpplink 0.7741 to 0.7421, splink 0.7730 to 0.7276.
@@ -554,22 +557,22 @@ The pairs it adds are the ones the keys were right to leave out.
 
 | track | tool | candidates | blocking recall | estimate s | predict s | pipeline s | peak RSS |
 |---|---|---:|---:|---:|---:|---:|---:|
-| demo | cpplink | 4,459,444 | 1.0000 | 1.10 | 0.89 | 1.99 | 98.4 MiB |
-| demo | splink |  |  | 3.65 | 4.73 | 8.49 | 625.2 MiB |
-| matched | cpplink | 4,459,417 | 0.9994 | 0.87 | 0.86 | 1.74 | 94.5 MiB |
-| matched | splink | 4,459,417 | 0.9994 | 3.62 | 12.98 | 16.73 | 1.2 GiB |
-| symmetric | cpplink | 4,459,417 | 0.9994 | 0.87 | 0.83 | 1.72 | 93.5 MiB |
-| symmetric | splink | 4,459,417 | 0.9994 | 3.34 | 13.01 | 16.51 | 1.2 GiB |
-| native | cpplink | 5,065,389 | 0.9998 | 0.95 | 1.02 | 1.98 | 94.5 MiB |
-| unblocked | cpplink | 4,459,417 | 0.9994 | 30.15 | 0.78 | 30.93 | 96.0 MiB |
+| demo | cpplink | 4,459,444 | 1.0000 | 1.01 | 0.89 | 1.90 | 99.2 MiB |
+| demo | splink |  |  | 3.49 | 4.56 | 8.15 | 654.8 MiB |
+| matched | cpplink | 4,459,417 | 0.9994 | 0.83 | 0.87 | 1.70 | 94.7 MiB |
+| matched | splink | 4,459,417 | 0.9994 | 3.52 | 12.73 | 16.35 | 1.1 GiB |
+| symmetric | cpplink | 4,459,417 | 0.9994 | 0.84 | 0.88 | 1.72 | 95.1 MiB |
+| symmetric | splink | 4,459,417 | 0.9994 | 3.33 | 13.24 | 16.73 | 1.1 GiB |
+| native | cpplink | 5,065,389 | 0.9998 | 0.88 | 1.05 | 1.94 | 93.2 MiB |
+| unblocked | cpplink | 4,459,417 | 0.9994 | 29.68 | 0.91 | 30.59 | 94.4 MiB |
 
 splink's estimate column is its `u` sampling plus its two EM sessions; its load is about 0.1 s and is left out.
 
-**On identical candidates and the same two sessions, the same quality costs cpplink 1.74 s and 94.5 MiB against splink's 16.73 s and 1.2 GiB.**
-Scoring is 0.86 s against 12.98 s and estimation 0.87 s against 3.62 s, on one thread each.
+**On identical candidates and the same two sessions, the same quality costs cpplink 1.70 s and 94.7 MiB against splink's 16.35 s and 1.1 GiB.**
+Scoring is 0.87 s against 12.73 s and estimation 0.83 s against 3.52 s, on one thread each.
 That is the shape the deduplication benchmark measured, on a link.
 
-**The unblocked estimator is the same quality for seventeen times the wall clock.**
+**The unblocked estimator is the same quality for eighteen times the wall clock.**
 Sampling a hundred million pairs of a two-billion-pair cross product means enumerating all two billion, about 13 s on one thread before a comparison is made, and comparing the sample is the rest; the two blocked sessions compare 53k and 37k pairs.
 It is what cpplink had to do when a two-free-comparison session was refused, and it is still the right estimator where a schema's columns are tied to each other and no session can hold the tie out, which this schema's are not.
 
