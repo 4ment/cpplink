@@ -95,6 +95,11 @@ main { flex: 1; display: flex; min-height: 0; }
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
 }
 .controls .row { display: flex; gap: 8px; align-items: center; }
+.controls .row select, .controls .row input { min-width: 0; }
+.controls #field { width: 118px; flex: 0 0 118px; }
+.controls #dir { flex: none; padding: 4px 8px; font-family: var(--mono); }
+.controls #qnote { font-size: 11px; }
+.controls #qnote .missing { color: var(--warn); }
 .controls label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 #list { overflow-y: auto; flex: 1; }
 .item {
@@ -219,6 +224,8 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
 .net g.node:hover circle { stroke: var(--ink); stroke-width: 2; }
 tr.lit td, tr.pin td { background: var(--accent-soft); }
 tr.lit td.odd, tr.pin td.odd { background: var(--warn-soft); }
+/* what the search matched: a record the id search named, or a cell a column search hit */
+tr.hit td.id, td.val.hit { box-shadow: inset 0 -2px 0 var(--accent); }
 tr.pin td { box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
 .toggle {
   font-size: 12px; color: var(--muted); display: flex; gap: 5px;
@@ -246,10 +253,15 @@ kbd {
 <main>
   <div id="side">
     <div class="controls">
-      <input id="q" type="search" placeholder="search id or any value">
+      <div class="row">
+        <select id="field" title="which field the search reads"></select>
+        <input id="q" type="search" placeholder="search any value">
+      </div>
+      <div class="note" id="qnote" hidden></div>
       <div class="row">
         <label for="sort">sort</label>
         <select id="sort"></select>
+        <button class="ghost" id="dir" title="flip the order"></button>
       </div>
       <div class="row">
         <label for="only">show</label>
@@ -286,11 +298,18 @@ let current = null;      // the selected cluster id
 let tab = 'cluster';     // which tab of the detail pane is open: cluster or pairs
 let pick = null;         // {a, b}: the pair open on the pairs tab
 let pairSort = { key: 'w', desc: false };  // the pairs table's order, kept across clusters
+let sortDesc = true;     // the list's direction; each sort key has its own default
+let search = { field: 'any', q: '', ids: [], col: -1 };  // the search as last parsed
 let details = new Map();
 let token = 0;           // guards against a slow response for an old query
 
-const SORTS = [['discord', 'most disagreement'], ['size', 'size'],
-               ['weakest', 'weakest edge'], ['id', 'id']];
+// Sort keys with the direction each starts in: the fragile clusters lead on
+// edge strength, the big and the split ones on size and disagreement.
+const SORTS = [['discord', 'most disagreement', true], ['size', 'size', true],
+               ['weakest', 'edge strength', false], ['id', 'cluster id', false]];
+// The field a search reads: everything, a record id (a comma-separated list of
+// them, matched whole), the cluster id, or one column, each as a substring.
+const FIELDS = [['any', 'any field'], ['id', 'record id'], ['cluster', 'cluster id']];
 const ONLYS = [['all', 'every cluster'], ['split', 'columns that disagree'],
                ['transitive', 'transitive-only links'], ['mixed', 'mixed against truth']];
 const pairKey = (a, b) => a + '\u0000' + b;
@@ -478,48 +497,141 @@ async function loadPage(reset) {
     if (reset) { entries = []; exhausted = false; matched = 0; }
     if (exhausted) return;
     const mine = ++token;
-    const query = { q: $('#q').value.trim(), sort: $('#sort').value,
-                    only: $('#only').value, offset: entries.length, limit: PAGE };
+    search = parseSearch();
+    const query = { field: search.field, q: search.q, sort: $('#sort').value,
+                    dir: sortDesc ? 'desc' : 'asc', only: $('#only').value,
+                    offset: entries.length, limit: PAGE };
+    if (search.field === 'col') query.column = COLS[search.col];
+    let found = null;  // id search: the ids that name a record
     if (LIVE) {
         const page = await api('/api/list', query);
         if (mine !== token) return;
         entries = entries.concat(page.clusters);
         matched = page.matched;
         exhausted = entries.length >= matched;
+        found = page.found || null;
     } else {
         const all = EMBEDDED.clusters.filter(c => passes(c, query));
         matched = all.length;
-        sortLocal(all, query.sort);
+        sortLocal(all, query.sort, sortDesc);
         entries = all.slice(0, entries.length + PAGE);
         exhausted = entries.length >= matched;
+        if (search.field === 'id') found = search.ids.filter(id => EMBEDDED.records.has(id));
     }
+    searchNote(found);
+}
+
+// The search box against the field selector: the text lowered for a substring
+// match, or split on commas into whole ids when the field is the record id.
+function parseSearch() {
+    const field = $('#field').value;
+    const text = $('#q').value.trim();
+    const out = { field: 'any', q: text.toLowerCase(), ids: [], col: -1 };
+    if (!text) return out;
+    if (field === 'id') {
+        out.field = 'id';
+        out.ids = [...new Set(text.split(',').map(s => s.trim()).filter(s => s))];
+        out.q = out.ids.join(',');
+    } else if (field === 'cluster') {
+        out.field = 'cluster';
+    } else if (field.startsWith('col:')) {
+        out.field = 'col';
+        out.col = +field.slice(4);
+    }
+    return out;
+}
+
+// Under the box, for an id search: how many of the ids named a record, and
+// which did not, since "nothing matches" on five ids hides which one is wrong.
+function searchNote(found) {
+    const note = $('#qnote');
+    if (search.field !== 'id' || !search.ids.length || found === null) {
+        note.hidden = true;
+        return;
+    }
+    const have = new Set(found);
+    const missing = search.ids.filter(id => !have.has(id));
+    const n = search.ids.length;
+    let text = `${n} id${n === 1 ? '' : 's'} &middot; ${have.size} found`;
+    if (missing.length) {
+        text += ` &middot; <span class="missing">missing: ${missing.map(esc).join(', ')}</span>`;
+    }
+    note.innerHTML = text;
+    note.hidden = false;
+}
+
+// `field:text` typed into the box picks the field, so a keyboard user need not
+// reach for the selector; only a prefix that names a field counts, so a value
+// holding a colon is left alone.
+function shortcut() {
+    const box = $('#q');
+    const m = box.value.match(/^\s*([^:]+?)\s*:(.*)$/);
+    if (!m) return;
+    const name = m[1].toLowerCase();
+    const alias = { any: 'any', id: 'id', 'record id': 'id', cluster: 'cluster',
+                    'cluster id': 'cluster' };
+    let value = alias[name];
+    if (value === undefined) {
+        const i = COLS.findIndex(c => c.toLowerCase() === name);
+        if (i < 0) return;
+        value = `col:${i}`;
+    }
+    $('#field').value = value;
+    box.value = m[2].replace(/^\s+/, '');
+    placeholder();
+}
+
+function placeholder() {
+    const field = $('#field').value;
+    $('#q').placeholder = field === 'id' ? 'record ids, comma separated'
+        : field === 'cluster' ? 'cluster id contains'
+        : field.startsWith('col:') ? `${COLS[+field.slice(4)]} contains`
+        : 'search any value';
 }
 
 function passes(c, query) {
     if (query.only === 'split' && !c.discord) return false;
     if (query.only === 'transitive' && !(c.size * (c.size - 1) / 2 > c.edge_count)) return false;
     if (query.only === 'mixed' && !(c.entities > 1)) return false;
-    return !query.q || c.hay.includes(query.q.toLowerCase());
+    if (!query.q) return true;
+    switch (query.field) {
+        case 'id': return c.rows.some(r => search.ids.includes(r.id));
+        case 'cluster': return c.id.toLowerCase().includes(query.q);
+        case 'col': return c.rows.some(r => cellHit(r.v[search.col], query.q));
+        default: return c.hay.includes(query.q);
+    }
+}
+
+const cellHit = (v, q) => v !== null && v !== undefined && String(v).toLowerCase().includes(q);
+
+function compare(ka, kb) {
+    for (let i = 0; i < ka.length; i++) {
+        if (ka[i] < kb[i]) return -1;
+        if (ka[i] > kb[i]) return 1;
+    }
+    return 0;
 }
 
 function sortBy(list, key) {
-    list.sort((a, b) => {
-        const ka = key(a), kb = key(b);
-        for (let i = 0; i < ka.length; i++) {
-            if (ka[i] < kb[i]) return -1;
-            if (ka[i] > kb[i]) return 1;
-        }
-        return 0;
-    });
+    list.sort((a, b) => compare(key(a), key(b)));
 }
 
-function sortLocal(list, sort) {
-    sortBy(list, {
-        discord: c => [-c.discord, -c.size],
-        size: c => [-c.size, -c.discord],
-        weakest: c => [c.weakest === null ? Infinity : c.weakest, -c.size],
-        id: c => [c.id],
-    }[sort]);
+// The list's order: the chosen key in the chosen direction, a cluster with no
+// value for it (no predictions, so no weakest edge) last either way, and the
+// ties broken the same way whichever direction the key runs.
+function sortLocal(list, sort, desc) {
+    const primary = { discord: c => c.discord, size: c => c.size,
+                      weakest: c => c.weakest, id: c => c.id }[sort];
+    const ties = { discord: c => [-c.size, c.id], size: c => [-c.discord, c.id],
+                   weakest: c => [-c.size, c.id], id: c => [] }[sort];
+    const sign = desc ? -1 : 1;
+    list.sort((a, b) => {
+        const pa = primary(a), pb = primary(b);
+        const na = pa === null || pa === undefined, nb = pb === null || pb === undefined;
+        if (na !== nb) return na ? 1 : -1;
+        if (!na && pa !== pb) return (pa < pb ? -1 : 1) * sign;
+        return compare(ties(a), ties(b));
+    });
 }
 
 async function detail(id) {
@@ -604,7 +716,13 @@ function renderList() {
         if (e.entities > 1) pills += `<span class="pill bad">${e.entities} entities</span>`;
         if (e.discord) pills += `<span class="pill">${e.discord} split</span>`;
         else pills += `<span class="pill ok">all agree</span>`;
+        // The sort key's value is shown so the order can be read without
+        // opening anything; size and the split count are already there, so
+        // only the weakest edge needs adding.
+        const key = $('#sort').value === 'weakest' && e.weakest !== null && e.weakest !== undefined
+            ? `${e.weakest.toFixed(1)} bits` : '';
         el.innerHTML = `<span class="cid">${esc(e.id)}</span>${pills}` +
+            (key ? `<span class="sz">${key}</span>` : '') +
             `<span class="sz">${e.size.toLocaleString()}</span>`;
         el.onclick = () => select(e.id);
         list.appendChild(el);
@@ -625,12 +743,14 @@ function renderList() {
 }
 
 function fillSelect(el, options) {
-    el.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
+    el.innerHTML = options.map(([v, label]) =>
+        `<option value="${esc(v)}">${esc(label)}</option>`).join('');
 }
 
 async function rebuild(reset) {
     await loadPage(reset !== false);
     renderList();
+    remember();
     if (!entries.some(e => e.id === current)) {
         await select(entries.length ? entries[0].id : null);
     }
@@ -652,12 +772,15 @@ function recordsTable(rows, stats, opts) {
             if (v === null || v === '') return '<td class="val miss">&mdash;</td>';
             // Two rows have no majority, so both sides of a difference are marked.
             const odd = s.distinct > 1 && (opts && opts.both ? true : v !== s.top);
-            return `<td class="val${odd ? ' odd' : ''}">${esc(v)}</td>`;
+            const hit = search.field === 'col' && search.col === i && cellHit(v, search.q);
+            return `<td class="val${odd ? ' odd' : ''}${hit ? ' hit' : ''}">${esc(v)}</td>`;
         }).join('');
         const colour = truthColors[(r.t || 0) % truthColors.length];
         const t = truthy ? `<td><span class="truth" style="background:${colour}22;` +
             `color:${colour}">${r.t + 1}</span></td>` : '';
-        return `<tr data-i="${i}"><td class="id">${esc(r.id)}</td>${t}${cells}</tr>`;
+        const hit = search.field === 'id' && search.ids.includes(r.id);
+        return `<tr data-i="${i}"${hit ? ' class="hit"' : ''}><td class="id">${esc(r.id)}</td>` +
+            `${t}${cells}</tr>`;
     }).join('');
     return `<div class="tablewrap"><table><thead><tr>${head}</tr></thead>` +
         `<tbody>${body}</tbody></table></div>`;
@@ -665,12 +788,49 @@ function recordsTable(rows, stats, opts) {
 
 // The address names what is open, so a cluster or a pair can be linked to:
 // #cluster=<id>, or #pair=<a>,<b> for a pair open on its cluster's pairs tab.
+// The search and the order go in the query string, defaults left out, so a
+// search is a link too.
 function remember() {
     const hash = !current ? ''
         : tab === 'pairs' && pick
             ? `#pair=${encodeURIComponent(pick.a)},${encodeURIComponent(pick.b)}`
             : `#cluster=${encodeURIComponent(current)}`;
-    history.replaceState(null, '', location.pathname + location.search + hash);
+    const params = new URLSearchParams();
+    const field = $('#field').value, q = $('#q').value.trim();
+    if (q) {
+        if (field !== 'any') params.set('field', field === 'id' || field === 'cluster'
+            ? field : COLS[+field.slice(4)]);
+        params.set('q', q);
+    }
+    const sort = $('#sort').value;
+    const [, , defaultDesc] = SORTS.find(([k]) => k === sort);
+    if (sort !== SORTS[0][0]) params.set('sort', sort);
+    if (sortDesc !== defaultDesc) params.set('dir', sortDesc ? 'desc' : 'asc');
+    if ($('#only').value !== 'all') params.set('only', $('#only').value);
+    const query = params.toString();
+    try {
+        history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + hash);
+    } catch (e) {}  // a file:// page may refuse a new query string; the hash still works
+}
+
+// The controls from the query string, before the first list is drawn.
+function recall() {
+    const params = new URLSearchParams(location.search);
+    const field = params.get('field');
+    if (field === 'id' || field === 'cluster') $('#field').value = field;
+    else if (field !== null) {
+        const i = COLS.indexOf(field);
+        if (i >= 0) $('#field').value = `col:${i}`;
+    }
+    $('#q').value = params.get('q') || '';
+    const sort = SORTS.find(([k]) => k === params.get('sort'));
+    if (sort) $('#sort').value = sort[0];
+    sortDesc = SORTS.find(([k]) => k === $('#sort').value)[2];
+    if (params.get('dir') === 'asc') sortDesc = false;
+    if (params.get('dir') === 'desc') sortDesc = true;
+    if (ONLYS.some(([k]) => k === params.get('only'))) $('#only').value = params.get('only');
+    placeholder();
+    direction();
 }
 
 // Open one cluster in the detail pane: its heading, the two tabs, and both
@@ -1109,11 +1269,24 @@ document.addEventListener('keydown', e => {
 
 let typing = null;
 $('#q').addEventListener('input', () => {
+    shortcut();
     clearTimeout(typing);
     typing = setTimeout(() => rebuild(true), 200);
 });
-$('#sort').addEventListener('change', () => rebuild(true));
+$('#field').addEventListener('change', () => { placeholder(); rebuild(true); });
+$('#sort').addEventListener('change', () => {
+    sortDesc = SORTS.find(([k]) => k === $('#sort').value)[2];
+    direction();
+    rebuild(true);
+});
+$('#dir').addEventListener('click', () => { sortDesc = !sortDesc; direction(); rebuild(true); });
 $('#only').addEventListener('change', () => rebuild(true));
+
+function direction() {
+    const b = $('#dir');
+    b.textContent = sortDesc ? '\u2193' : '\u2191';
+    b.title = sortDesc ? 'descending; click for ascending' : 'ascending; click for descending';
+}
 $('#list').addEventListener('scroll', async e => {
     const el = e.target;
     if (exhausted || el.scrollTop + el.clientHeight < el.scrollHeight - 200) return;
@@ -1191,8 +1364,10 @@ $('#theme').onclick = () => {
         TOTALS.pairs = predictions;
     }
     try { tab = localStorage.getItem('cpplink.tab') === 'pairs' ? 'pairs' : 'cluster'; } catch (e) {}
+    fillSelect($('#field'), FIELDS.concat(COLS.map((name, i) => [`col:${i}`, name])));
     fillSelect($('#sort'), SORTS);
     fillSelect($('#only'), ONLYS);
+    recall();
     const hash = decodeURIComponent(location.hash.slice(1));
     let open = null;
     if (hash.startsWith('pair=')) {

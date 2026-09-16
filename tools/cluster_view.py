@@ -460,6 +460,9 @@ def main():
     ap.add_argument("--max-rows", type=int, default=200,
                     help="members embedded per cluster; the rest are counted only")
     ap.add_argument("--max-size", type=int, default=0, help="0 = no ceiling")
+    ap.add_argument("--threshold", type=float,
+                    help="keep only the predictions whose match_weight is at "
+                         "least this; the default keeps every one the run wrote")
     ap.add_argument("--sort", default="size", choices=["size", "id", "random"],
                     help="which clusters to embed when --limit cuts the list")
     ap.add_argument("--seed", type=int, default=1)
@@ -500,6 +503,9 @@ def main():
         predictions, predictions_read = read_predictions(
             args.predictions, wanted_ids,
             {u: rows_by_id[u] for u in wanted_ids if u in rows_by_id})
+        if args.threshold is not None:
+            predictions = {pair: weight for pair, weight in predictions.items()
+                           if weight >= args.threshold}
         # A record is in one cluster, so grouping the predictions once is what
         # keeps the loop below linear in them rather than one pass per cluster.
         # A prediction whose ends clustering kept apart is kept too: it was

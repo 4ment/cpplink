@@ -73,7 +73,8 @@ def scan(path, types):
 
 def fingerprint(args, columns):
     """What the cache was built from, so a changed input rebuilds it."""
-    parts = [CACHE_VERSION, columns, args.max_rows]
+    parts = [CACHE_VERSION, columns, args.max_rows, args.min_size, args.max_size,
+             args.threshold]
     for path in [args.clusters, args.truth, args.waterfalls] + list(args.data):
         if path:
             parts.append([os.path.abspath(path), os.path.getmtime(path),
@@ -123,13 +124,14 @@ def build(conn, args, id_column, columns, say):
     picked = ", ".join(quoted(c) for c in columns)
 
     say("reading the cluster assignment")
+    ceiling = f" AND cluster_size <= {args.max_size}" if args.max_size else ""
     conn.execute(f"""
         CREATE TABLE members AS
         SELECT CAST(unique_id AS VARCHAR) AS uid,
                CAST(cluster_id AS VARCHAR) AS cluster_id,
                CAST(cluster_size AS BIGINT) AS size
         FROM {scan(args.clusters, ("unique_id", "cluster_id"))}
-        WHERE cluster_size >= {args.min_size}
+        WHERE cluster_size >= {args.min_size}{ceiling}
     """)
 
     say("reading the clustered records")
@@ -175,14 +177,17 @@ def build(conn, args, id_column, columns, say):
         # outside every one. A pair across two clusters is kept with both
         # cluster ids, since it is the prediction clustering overruled and the
         # one most worth explaining; a pair with an end no cluster holds has no
-        # record to show and is dropped.
-        conn.execute("""
+        # record to show and is dropped. `--threshold` drops the predictions
+        # below it here, so the cache never holds them.
+        floor = (f" WHERE e.weight >= {args.threshold}"
+                 if args.threshold is not None else "")
+        conn.execute(f"""
             CREATE TABLE pairs AS
             SELECT e.a, e.b, e.weight, ra.cluster_id AS cluster_a,
                    rb.cluster_id AS cluster_b
             FROM named_edges e
             JOIN records ra ON ra.uid = e.a
-            JOIN records rb ON rb.uid = e.b
+            JOIN records rb ON rb.uid = e.b{floor}
         """)
         conn.execute("DROP TABLE named_edges")
         conn.execute("""
@@ -256,12 +261,26 @@ def build(conn, args, id_column, columns, say):
     conn.execute("CREATE INDEX records_by_uid ON records (uid)")
 
 
+# The list's order: the chosen key in either direction, a cluster with no
+# value for it (no predictions, so no weakest edge) last either way, and the
+# ties broken the same way whichever direction the key runs.
 ORDERS = {
-    "discord": "discord DESC, size DESC, id",
-    "size": "size DESC, discord DESC, id",
-    "weakest": "weakest NULLS LAST, size DESC, id",
-    "id": "id",
+    "discord": ("discord", "size DESC, id"),
+    "size": ("size", "discord DESC, id"),
+    "weakest": ("weakest", "size DESC, id"),
+    "id": ("id", ""),
 }
+
+
+def order_clause(sort, desc):
+    key, ties = ORDERS.get(sort, ORDERS["discord"])
+    clause = f"{key} {'DESC' if desc else 'ASC'} NULLS LAST"
+    return clause + (", " + ties if ties else "")
+
+
+def like_pattern(text):
+    return "%" + text.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
 
 FILTERS = {
     "all": "TRUE",
@@ -361,23 +380,51 @@ class Viewer:
         answer["waterfall"] = self.waterfall(a, b)
         return answer
 
-    def listing(self, q, sort, only, offset, limit):
+    def listing(self, q, field, column, sort, desc, only, offset, limit):
+        """One page of the cluster list.
+
+        `field` says what `q` is read against: `any` is a substring of the
+        concatenated record, `cluster` of the cluster id, `col` of the named
+        column, and `id` a comma-separated list of record ids matched whole, in
+        which case the answer also says which of them named a record.
+        """
         where = FILTERS.get(only, "TRUE")
         params = []
-        if q:
+        found = None
+        if q and field == "id":
+            ids = list(dict.fromkeys(s.strip() for s in q.split(",") if s.strip()))
+            marks = ", ".join("?" * len(ids))
+            where += (f" AND id IN (SELECT cluster_id FROM records "
+                      f"WHERE CAST(uid AS VARCHAR) IN ({marks}))")
+            params.extend(ids)
+            found = [r[0] for r in self.query(
+                f"SELECT DISTINCT CAST(uid AS VARCHAR) FROM records "
+                f"WHERE CAST(uid AS VARCHAR) IN ({marks})", ids)]
+        elif q and field == "cluster":
+            where += " AND lower(id) LIKE ? ESCAPE '\\'"
+            params.append(like_pattern(q))
+        elif q and field == "col":
+            if column not in self.columns:
+                raise ValueError(f"no column {column!r}")
+            where += (f" AND id IN (SELECT cluster_id FROM records "
+                      f"WHERE lower(CAST({quoted(column)} AS VARCHAR)) LIKE ? ESCAPE '\\')")
+            params.append(like_pattern(q))
+        elif q:
             where += (" AND id IN (SELECT cluster_id FROM records "
                       "WHERE text LIKE ? ESCAPE '\\')")
-            params.append("%" + q.lower().replace("\\", "\\\\")
-                          .replace("%", "\\%").replace("_", "\\_") + "%")
+            params.append(like_pattern(q))
         matched = self.query(f"SELECT count(*) FROM stats WHERE {where}", params)[0][0]
         rows = self.query(
             f"SELECT id, size, discord, edge_count, weakest, entities FROM stats "
-            f"WHERE {where} ORDER BY {ORDERS.get(sort, ORDERS['discord'])} "
+            f"WHERE {where} ORDER BY {order_clause(sort, desc)} "
             f"LIMIT {int(limit)} OFFSET {int(offset)}", params)
-        return {"matched": matched,
-                "clusters": [{"id": r[0], "size": r[1], "discord": r[2],
-                              "edge_count": r[3], "weakest": r[4], "entities": r[5]}
-                             for r in rows]}
+        answer = {"matched": matched,
+                  "clusters": [{"id": r[0], "size": r[1], "discord": r[2],
+                                "edge_count": r[3], "weakest": r[4], "entities": r[5]}
+                               for r in rows]}
+        if found is not None:
+            answer["found"] = found
+        return answer
 
     def cluster(self, cluster_id):
         head = self.query("SELECT id, size, discord, edge_count, weakest, entities "
@@ -451,9 +498,10 @@ def handler_for(viewer, page):
                     self.send_json(viewer.summary())
                 elif url.path == "/api/list":
                     self.send_json(viewer.listing(
-                        query.get("q", ""), query.get("sort", "discord"),
-                        query.get("only", "all"), int(query.get("offset", 0)),
-                        min(int(query.get("limit", 100)), 500)))
+                        query.get("q", ""), query.get("field", "any"),
+                        query.get("column", ""), query.get("sort", "discord"),
+                        query.get("dir", "desc") == "desc", query.get("only", "all"),
+                        int(query.get("offset", 0)), min(int(query.get("limit", 100)), 500)))
                 elif url.path == "/api/cluster":
                     found = viewer.cluster(query.get("id", ""))
                     self.send_json(found or {"error": "no such cluster"},
@@ -491,6 +539,10 @@ def main():
     ap.add_argument("--cache", default="cluster_view.duckdb")
     ap.add_argument("--rebuild", action="store_true", help="rebuild the cache first")
     ap.add_argument("--min-size", type=int, default=2)
+    ap.add_argument("--max-size", type=int, default=0, help="0 = no ceiling")
+    ap.add_argument("--threshold", type=float,
+                    help="keep only the predictions whose match_weight is at "
+                         "least this; the default keeps every one the run wrote")
     ap.add_argument("--max-rows", type=int, default=200,
                     help="members shown per cluster; the rest are counted only")
     ap.add_argument("--memory", default="4GB",
