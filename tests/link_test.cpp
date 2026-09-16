@@ -387,6 +387,64 @@ TEST_F(LinkFixture, ClosedFormUIsTheCrossPairRateExactly) {
     }
 }
 
+// The sampled u is uniform over the cross pairs however many inputs there are and
+// however unequal. Three inputs of 1,000, 20 and 20 rows: the two small ones make
+// 400 of the 40,400 cross pairs, 0.99%, and only those pairs clear the fuzzy level.
+// Drawing a row and then a partner outside its input would reach that block on
+// 1.9% of draws, twice its share; a draw uniform over positions reaches it on its
+// share, and the sampled u lands on the exact rate within sampling error.
+TEST(LinkSampling, RandomCrossPairsAreUniformOverThreeUnequalInputs) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(R"({
+      "columns":[{"name":"city","type":"string"}],
+      "comparisons":[{"name":"city","columns":["city"],
+        "levels":[{"type":"jaro_winkler","threshold":0.9},{"type":"else"}]}],
+      "blocking":[{"type":"all_pairs"}]})",
+                                     &schema, &error))
+        << error;
+    constexpr uint64_t kBig = 1000;
+    constexpr uint64_t kSmall = 20;
+    cpplink::RecordStore store(schema);
+    auto& city = std::get<cpplink::StringColumn>(store.mutable_column(0));
+    const uint32_t far = city.dict.Intern("aaaaaa");
+    const uint32_t near_a = city.dict.Intern("bbbbbb");
+    const uint32_t near_b = city.dict.Intern("bbbbbc");
+    city.ids.assign(kBig, far);
+    city.ids.insert(city.ids.end(), kSmall, near_a);
+    city.ids.insert(city.ids.end(), kSmall, near_b);
+    store.set_num_records(kBig + 2 * kSmall);
+    store.set_datasets({0, kBig, kBig + kSmall, kBig + 2 * kSmall});
+    store.Finalize();
+
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+    ASSERT_EQ(comparisons.EvaluateOne(0, kBig, kBig + kSmall), 0);  // bbbbbb ~ bbbbbc
+    ASSERT_EQ(comparisons.EvaluateOne(0, 0, kBig), 1);              // aaaaaa vs bbbbbb
+    cpplink::BlockingPlan plan;
+    ASSERT_TRUE(plan.Build(schema, store, cpplink::PairMode::kCrossDataset, &error))
+        << error;
+
+    cpplink::EstimateOptions options;
+    options.u_sample = 400000;
+    options.threads = 3;
+    options.seed = 5;
+    options.session_pairs = 1000;  // the session is not what this test reads
+    cpplink::Model model;
+    cpplink::EstimateReport report;
+    ASSERT_TRUE(
+        cpplink::Estimate(store, comparisons, plan, options, &model, &report, &error))
+        << error;
+    EXPECT_EQ(report.u_inputs, 3u);
+
+    const double cross = static_cast<double>(kBig * kSmall * 2 + kSmall * kSmall);
+    const double exact = static_cast<double>(kSmall * kSmall) / cross;
+    EXPECT_NEAR(model.comparisons[0].levels[0].u, exact, 0.001);
+    EXPECT_NEAR(model.comparisons[0].levels[1].u, 1.0 - exact, 0.001);
+    // The old draw would have read about twice the exact rate.
+    EXPECT_LT(model.comparisons[0].levels[0].u, 1.5 * exact);
+}
+
 // The dedup path must be untouched by all of this: a store with one input carries
 // no boundaries at all, and kAll over two inputs is link-and-dedup, which is the
 // same enumeration a single concatenated file would have given.

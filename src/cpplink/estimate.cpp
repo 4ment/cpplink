@@ -303,6 +303,35 @@ void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparison
     std::vector<JointTables> joints(joint != nullptr ? threads : 0,
                                     joint != nullptr ? *joint : JointTables());
 
+    // The cross pair space, laid out so one draw is one pair: the inputs' pairs
+    // (d, e) with d < e in order, each owning a block of N_d * N_e positions, and
+    // a position inside a block naming a row of each. Uniform over positions is
+    // uniform over cross pairs however many inputs there are and however unequal.
+    // Drawing a row and then a partner outside its input is not: with three
+    // inputs of 1M, 1k and 1k rows it reaches the small pair of inputs on two
+    // draws in a million where the space holds five hundred times that.
+    struct CrossBlock {
+        uint64_t first;    // position of the block's first pair
+        uint64_t start_d;  // rows of input d begin here
+        uint64_t start_e;
+        uint64_t size_e;  // rows in input e, the block's minor stride
+    };
+    std::vector<CrossBlock> blocks;
+    uint64_t cross_pairs = 0;
+    if (cross) {
+        const size_t datasets = store.NumDatasets();
+        for (size_t d = 0; d < datasets; ++d) {
+            for (size_t e = d + 1; e < datasets; ++e) {
+                const uint64_t size_d = store.DatasetEnd(d) - store.DatasetStart(d);
+                const uint64_t size_e = store.DatasetEnd(e) - store.DatasetStart(e);
+                if (size_d == 0 || size_e == 0) continue;
+                blocks.push_back(
+                    {cross_pairs, store.DatasetStart(d), store.DatasetStart(e), size_e});
+                cross_pairs += size_d * size_e;
+            }
+        }
+    }
+
     std::vector<std::thread> workers;
     workers.reserve(threads);
     for (unsigned t = 0; t < threads; ++t) {
@@ -313,23 +342,26 @@ void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparison
             uint64_t taken = 0;
             std::vector<uint8_t> levels(comparisons.Size(), 0);
             for (uint64_t i = 0; i < share; ++i) {
-                state = Mix64(state);
-                const uint64_t a = state % records;
-                state = Mix64(state);
-                uint64_t b = state % records;
+                uint64_t a = 0;
+                uint64_t b = 0;
                 if (cross) {
-                    // Draw the partner from the rows outside a's own input, by
-                    // picking a position in what is left once that input is taken
-                    // out and stepping over the hole. With two inputs -- the case
-                    // linking is about -- this is exactly uniform over cross pairs;
-                    // with more it favours the smaller inputs slightly, which is
-                    // why the number of inputs is reported beside u.
-                    const uint64_t start = store.DatasetStart(store.DatasetOf(a));
-                    const uint64_t end = store.DatasetEndFor(a);
-                    const uint64_t outside = records - (end - start);
-                    if (outside == 0) continue;
-                    b = state % outside;
-                    if (b >= start) b += end - start;
+                    if (cross_pairs == 0) break;
+                    state = Mix64(state);
+                    const uint64_t position = state % cross_pairs;
+                    // The block holding the position: the last whose first
+                    // position is not past it. A handful of inputs is a handful
+                    // of blocks, so a walk is the search.
+                    size_t which = blocks.size() - 1;
+                    while (blocks[which].first > position) --which;
+                    const CrossBlock& block = blocks[which];
+                    const uint64_t inside = position - block.first;
+                    a = block.start_d + inside / block.size_e;
+                    b = block.start_e + inside % block.size_e;
+                } else {
+                    state = Mix64(state);
+                    a = state % records;
+                    state = Mix64(state);
+                    b = state % records;
                 }
                 if (a == b) continue;  // a pair is two distinct records
                 const uint32_t gamma = comparisons.Evaluate(a, b);
@@ -681,6 +713,7 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         }
     }
     report->u_pairs = drawn;
+    report->u_inputs = plan.mode() == PairMode::kCrossDataset ? store.NumDatasets() : 1;
     report->u_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - u_started)
             .count();
@@ -1020,8 +1053,11 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
 }
 
 void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
-    out << "u from " << WithThousands(report.u_pairs) << " random pairs in " << std::fixed
-        << std::setprecision(1) << report.u_seconds << " s, plus "
+    out << "u from " << WithThousands(report.u_pairs) << " random pairs";
+    if (report.u_inputs > 1) {
+        out << " drawn uniformly across " << report.u_inputs << " inputs";
+    }
+    out << " in " << std::fixed << std::setprecision(1) << report.u_seconds << " s, plus "
         << report.u_exact_levels << " levels in closed form from the term "
         << "frequencies\n";
     if (report.tie_seconds > 0.0) {

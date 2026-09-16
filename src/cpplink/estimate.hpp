@@ -105,6 +105,9 @@ struct BallReport {
 
 struct EstimateReport {
     uint64_t u_pairs = 0;
+    // Inputs the random pairs were drawn across: one for a dedup, the store's
+    // count for a link, where a draw is uniform over the whole cross space.
+    size_t u_inputs = 1;
     double u_seconds = 0.0;
     uint64_t u_exact_levels = 0;
     uint64_t u_ball_levels = 0;
