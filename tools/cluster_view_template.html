@@ -224,8 +224,10 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
 .net g.node:hover circle { stroke: var(--ink); stroke-width: 2; }
 tr.lit td, tr.pin td { background: var(--accent-soft); }
 tr.lit td.odd, tr.pin td.odd { background: var(--warn-soft); }
-/* what the search matched: a record the id search named, or a cell a column search hit */
-tr.hit td.id, td.val.hit { box-shadow: inset 0 -2px 0 var(--accent); }
+/* what the search matched: the row holding it, tinted whole so it reads as one
+   row (a disagreeing cell keeps its orange text), and the cell or id the query is in */
+tr.hit td, tr.hit td.odd { background: var(--accent-soft); }
+td.id.hit, td.val.hit { box-shadow: inset 0 -2px 0 var(--accent); }
 tr.pin td { box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
 .toggle {
   font-size: 12px; color: var(--muted); display: flex; gap: 5px;
@@ -604,6 +606,22 @@ function passes(c, query) {
 
 const cellHit = (v, q) => v !== null && v !== undefined && String(v).toLowerCase().includes(q);
 
+// What the search matched in one row: its id, and the columns the query is a
+// substring of. A cluster-id search names no row.
+function rowHits(r) {
+    const hits = { id: false, cols: new Set() };
+    if (!search.q) return hits;
+    switch (search.field) {
+        case 'id': hits.id = search.ids.includes(r.id); break;
+        case 'cluster': break;
+        case 'col': if (cellHit(r.v[search.col], search.q)) hits.cols.add(search.col); break;
+        default:
+            hits.id = cellHit(r.id, search.q);
+            r.v.forEach((v, i) => { if (cellHit(v, search.q)) hits.cols.add(i); });
+    }
+    return hits;
+}
+
 function compare(ka, kb) {
     for (let i = 0; i < ka.length; i++) {
         if (ka[i] < kb[i]) return -1;
@@ -751,9 +769,11 @@ async function rebuild(reset) {
     await loadPage(reset !== false);
     renderList();
     remember();
-    if (!entries.some(e => e.id === current)) {
-        await select(entries.length ? entries[0].id : null);
-    }
+    // The open cluster is redrawn either way: a search that still matches it
+    // may match different rows, and the table marks the rows it matched.
+    const keep = entries.some(e => e.id === current);
+    await select(keep ? current : entries.length ? entries[0].id : null,
+                 keep ? { tab, pair: pick } : undefined);
 }
 
 // The rows of a cluster, or of a pair, as one table: a cell differing from the
@@ -767,20 +787,22 @@ function recordsTable(rows, stats, opts) {
             return `<th>${esc(name)}${d}</th>`;
         })).join('');
     const body = rows.map((r, i) => {
+        const hits = rowHits(r);
         const cells = COLS.map((_, i) => {
             const s = stats[i], v = r.v[i];
             if (v === null || v === '') return '<td class="val miss">&mdash;</td>';
             // Two rows have no majority, so both sides of a difference are marked.
             const odd = s.distinct > 1 && (opts && opts.both ? true : v !== s.top);
-            const hit = search.field === 'col' && search.col === i && cellHit(v, search.q);
+            const hit = hits.cols.has(i);
             return `<td class="val${odd ? ' odd' : ''}${hit ? ' hit' : ''}">${esc(v)}</td>`;
         }).join('');
         const colour = truthColors[(r.t || 0) % truthColors.length];
         const t = truthy ? `<td><span class="truth" style="background:${colour}22;` +
             `color:${colour}">${r.t + 1}</span></td>` : '';
-        const hit = search.field === 'id' && search.ids.includes(r.id);
-        return `<tr data-i="${i}"${hit ? ' class="hit"' : ''}><td class="id">${esc(r.id)}</td>` +
-            `${t}${cells}</tr>`;
+        // The row the search matched is lit, so it is the one the eye lands on.
+        const hit = hits.id || hits.cols.size > 0;
+        return `<tr data-i="${i}"${hit ? ' class="hit"' : ''}>` +
+            `<td class="id${hits.id ? ' hit' : ''}">${esc(r.id)}</td>${t}${cells}</tr>`;
     }).join('');
     return `<div class="tablewrap"><table><thead><tr>${head}</tr></thead>` +
         `<tbody>${body}</tbody></table></div>`;
@@ -971,6 +993,9 @@ async function select(id, opts) {
     renderPairTable(c);
     showTab(tab);
     d.scrollTop = 0;
+    // A cluster opened by a search scrolls to the first row it matched.
+    const hit = tab === 'cluster' && table.querySelector('tr.hit');
+    if (hit) hit.scrollIntoView({ block: 'nearest' });
 }
 
 function showTab(name) {
