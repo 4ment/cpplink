@@ -14,9 +14,11 @@
 
 Reads the cluster assignment, pulls each member's column values back out of the
 parquet, and writes one HTML file holding the clusters it selected. Open it in a
-browser: the left pane lists clusters, the right one shows the members side by
-side with every disagreeing cell highlighted, so what a cluster has in common is
-the part that is not highlighted.
+browser: the left pane lists clusters and the right one has two tabs for the
+cluster picked. The Cluster tab shows the members side by side with every
+disagreeing cell highlighted, so what a cluster has in common is the part that is
+not highlighted; the Pairs tab lists every prediction touching the cluster and
+draws the one picked.
 
 The `network` checkbox in the header draws the selected cluster's predictions as
 a graph, which is where a chain shows itself as a chain. It is off by default and
@@ -25,13 +27,13 @@ does and most clusters are read without it.
 
 With `--waterfalls`, every embedded prediction also carries its waterfall: the
 prior, then what each comparison charged and its term-frequency move, ending at
-the match weight. The page lists the pairs beside the clusters and draws the
-ledger for the one picked. The file is what `cpplink explain --predictions
-<file> --out <file>` writes, one wide row per prediction, and nothing here
-recomputes a bit of it: the chart is the scorer's own arithmetic, read back. The
-level labels and rates come from `--model`, since they are the model's and not
-the pair's. Predictions the run made between two records that clustering then
-put in different clusters are kept as well, since a pair scored above the write
+the match weight, drawn under the pairs table for the pair picked. The file is
+what `cpplink explain --predictions <file> --out <file>` writes, one wide row
+per prediction, and nothing here recomputes a bit of it: the chart is the
+scorer's own arithmetic, read back. The level labels and rates come from
+`--model`, since they are the model's and not the pair's. Predictions the run
+made between two records that clustering then put in different clusters are
+kept as well and listed under both clusters, since a pair scored above the write
 threshold and below the clustering one is the pair most worth reading.
 
 A run ends with single files, so `--clusters` and `--predictions` each name one

@@ -26,7 +26,7 @@ wide row per prediction; it is loaded into the cache beside the predictions and
 a click is one lookup, so the ledger is the scorer's own arithmetic and nothing
 is computed or spawned here. The level labels and rates come from `--model`.
 Predictions clustering kept apart -- above the write threshold, below the
-clustering one -- are kept and listed as `rejected`.
+clustering one -- are kept and listed under both of their clusters as `rejected`.
 """
 
 import argparse
@@ -49,7 +49,7 @@ from cluster_view import (EDGE_DTYPE, EDGE_MAGIC, cell, ledger,  # noqa: E402
                           read_model_levels, read_truth, schema_columns)
 
 EDGE_CHUNK = 1 << 20
-CACHE_VERSION = 5
+CACHE_VERSION = 6
 
 
 def quoted(name):
@@ -191,7 +191,9 @@ def build(conn, args, id_column, columns, say):
             WHERE cluster_a = cluster_b
         """)
         conn.execute("CREATE INDEX edges_by_cluster ON edges (cluster_id)")
-        conn.execute("CREATE INDEX pairs_by_weight ON pairs (weight)")
+        # A rejected pair is asked for from either of its clusters.
+        conn.execute("CREATE INDEX pairs_by_cluster_a ON pairs (cluster_a)")
+        conn.execute("CREATE INDEX pairs_by_cluster_b ON pairs (cluster_b)")
         conn.execute("CREATE INDEX pairs_by_a ON pairs (a)")
         conn.execute("CREATE INDEX pairs_by_b ON pairs (b)")
         if args.waterfalls:
@@ -268,17 +270,7 @@ FILTERS = {
     "mixed": "entities > 1",
 }
 
-PAIR_ORDERS = {
-    "weakest": "weight, a, b",
-    "strongest": "weight DESC, a, b",
-    "id": "a, b",
-}
-
-PAIR_FILTERS = {
-    "all": "TRUE",
-    "within": "cluster_a = cluster_b",
-    "rejected": "cluster_a <> cluster_b",
-}
+REJECTED_LIMIT = 1000  # rejected predictions listed per cluster, weakest first
 
 
 class Viewer:
@@ -322,25 +314,27 @@ class Viewer:
             return None
         return ledger(dict(zip(self.waterfall_columns, rows[0])), self.levels)
 
-    def pairs(self, q, sort, only, offset, limit):
-        where = PAIR_FILTERS.get(only, "TRUE")
-        params = []
-        if q:
-            # Either record's text, since a pair is read by either of its ends.
-            like = ("%" + q.lower().replace("\\", "\\\\")
-                    .replace("%", "\\%").replace("_", "\\_") + "%")
-            where += (" AND (a IN (SELECT uid FROM records WHERE text LIKE ? "
-                      "ESCAPE '\\') OR b IN (SELECT uid FROM records WHERE text "
-                      "LIKE ? ESCAPE '\\'))")
-            params += [like, like]
-        matched = self.query(f"SELECT count(*) FROM pairs WHERE {where}", params)[0][0]
+    def rejected(self, cluster_id):
+        """The predictions clustering overruled that touch one cluster.
+
+        Each names the other cluster its second record went to, and the truth's
+        verdict where there is one, so the page can list them beside the
+        cluster's own edges without a lookup per row.
+        """
         rows = self.query(
-            f"SELECT a, b, weight, cluster_a, cluster_b FROM pairs WHERE {where} "
-            f"ORDER BY {PAIR_ORDERS.get(sort, PAIR_ORDERS['weakest'])} "
-            f"LIMIT {int(limit)} OFFSET {int(offset)}", params)
-        return {"matched": matched,
-                "pairs": [{"a": r[0], "b": r[1], "w": round(r[2], 3),
-                           "ca": r[3], "cb": r[4]} for r in rows]}
+            "SELECT p.a, p.b, p.weight, p.cluster_a, p.cluster_b, ta.grp, tb.grp "
+            "FROM pairs p LEFT JOIN truth ta ON ta.uid = p.a "
+            "LEFT JOIN truth tb ON tb.uid = p.b "
+            "WHERE (p.cluster_a = ? OR p.cluster_b = ?) AND p.cluster_a <> p.cluster_b "
+            f"ORDER BY p.weight, p.a, p.b LIMIT {REJECTED_LIMIT + 1}",
+            [cluster_id, cluster_id])
+        more = max(0, len(rows) - REJECTED_LIMIT)
+        found = []
+        for a, b, w, ca, cb, ga, gb in rows[:REJECTED_LIMIT]:
+            same = (ga is not None and ga == gb) if self.has_truth else None
+            found.append({"a": a, "b": b, "w": round(w, 3),
+                          "other": cb if ca == cluster_id else ca, "same": same})
+        return found, more
 
     def pair(self, a, b):
         head = self.query("SELECT a, b, weight, cluster_a, cluster_b FROM pairs "
@@ -423,6 +417,9 @@ class Viewer:
         if self.has_truth:
             for row in answer["rows"]:
                 row["t"] = labels[groups.get(row["id"], "x" + row["id"])]
+        answer["rejected"], more = self.rejected(cluster_id)
+        if more:
+            answer["rejected_more"] = more
         return answer
 
 
@@ -461,11 +458,6 @@ def handler_for(viewer, page):
                     found = viewer.cluster(query.get("id", ""))
                     self.send_json(found or {"error": "no such cluster"},
                                    200 if found else 404)
-                elif url.path == "/api/pairs":
-                    self.send_json(viewer.pairs(
-                        query.get("q", ""), query.get("sort", "weakest"),
-                        query.get("only", "all"), int(query.get("offset", 0)),
-                        min(int(query.get("limit", 100)), 500)))
                 elif url.path == "/api/pair":
                     found = viewer.pair(query.get("a", ""), query.get("b", ""))
                     self.send_json(found or {"error": "no such prediction"},

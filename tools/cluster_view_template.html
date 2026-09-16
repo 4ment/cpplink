@@ -90,13 +90,6 @@ main { flex: 1; display: flex; min-height: 0; }
   background: var(--panel); display: flex; flex-direction: column; min-height: 0;
 }
 .controls { padding: 10px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 8px; }
-.modes { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.modes button {
-  flex: 1; font: inherit; font-size: 12px; padding: 4px 0; border: none; cursor: pointer;
-  background: var(--bg); color: var(--muted);
-}
-.modes button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.modes button:disabled { opacity: 0.45; cursor: default; }
 .controls input, .controls select {
   font: inherit; font-size: 13px; width: 100%; padding: 5px 8px; color: var(--ink);
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
@@ -123,7 +116,35 @@ main { flex: 1; display: flex; min-height: 0; }
 .pill.ok { background: var(--accent-soft); color: var(--accent); }
 #detail { flex: 1; overflow: auto; padding: 16px 20px 60px; min-width: 0; }
 #detail h2 { font-family: var(--mono); font-size: 15px; font-weight: 600; margin: 0 0 2px; }
-.sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+.sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.tabs button {
+  font: inherit; font-size: 13px; padding: 7px 14px; border: none; background: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--muted); cursor: pointer;
+}
+.tabs button:hover { color: var(--ink); }
+.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs .count {
+  font-size: 11px; font-weight: 400; color: var(--muted); background: var(--line-soft);
+  border-radius: 999px; padding: 0 6px; margin-left: 5px; font-variant-numeric: tabular-nums;
+}
+.tabs .count.warn { background: var(--warn-soft); color: var(--warn); }
+.pairlist { max-height: 38vh; overflow: auto; }
+table.pairs tr.row { cursor: pointer; }
+table.pairs tr.row:hover td { background: var(--sel); }
+table.pairs tr.row.pin td { background: var(--accent-soft); box-shadow: none; }
+table.pairs td.n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+table.pairs td.rej { color: var(--warn); }
+table.pairs td.rej button.ghost { font-family: var(--mono); font-size: 11px; padding: 1px 6px; }
+table.pairs td.same { color: var(--accent); }
+table.pairs td.differ { color: var(--bad); }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--ink); }
+th.sortable.on { color: var(--ink); }
+th.sortable.on::after { content: " \2193"; }
+th.sortable.on.desc::after { content: " \2191"; }
+.pairhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 18px 0 4px; }
+.pairhead h3 { font-family: var(--mono); font-size: 14px; font-weight: 600; margin: 0; }
 .section { margin-bottom: 22px; }
 .section > h3 {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
@@ -160,7 +181,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
 .matrix td.weak { background: var(--warn-soft); color: var(--warn); }
 .matrix th.rowhead { text-align: left; font-family: var(--mono); text-transform: none; letter-spacing: 0; }
 .note { color: var(--muted); font-size: 12px; }
-.links { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.links { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .links button.ghost { font-family: var(--mono); }
 .matrix td.pair, .matrix td.pair:hover { cursor: pointer; }
 .matrix td.pair:hover { background: var(--sel); color: var(--ink); }
@@ -216,7 +237,7 @@ kbd {
   <h1>cpplink clusters</h1>
   <span class="meta" id="hmeta"></span>
   <span class="spacer"></span>
-  <span class="meta"><kbd>j</kbd> <kbd>k</kbd> move &middot; <kbd>/</kbd> search</span>
+  <span class="meta"><kbd>j</kbd> <kbd>k</kbd> cluster &middot; <kbd>n</kbd> <kbd>p</kbd> pair &middot; <kbd>/</kbd> search</span>
   <label class="toggle" title="draw the predictions of the selected cluster as a graph">
     <input type="checkbox" id="net"> network
   </label>
@@ -225,10 +246,6 @@ kbd {
 <main>
   <div id="side">
     <div class="controls">
-      <div class="modes">
-        <button data-mode="clusters" class="on">clusters</button>
-        <button data-mode="pairs" title="the run's predictions, one row per pair">pairs</button>
-      </div>
       <input id="q" type="search" placeholder="search id or any value">
       <div class="row">
         <label for="sort">sort</label>
@@ -241,7 +258,7 @@ kbd {
     </div>
     <div id="list"></div>
   </div>
-  <div id="detail"><div class="empty-state">Pick a cluster or a pair.</div></div>
+  <div id="detail"><div class="empty-state">Pick a cluster.</div></div>
 </main>
 <script type="application/json" id="payload">__CLUSTER_DATA__</script>
 <script>
@@ -262,31 +279,25 @@ let TOTALS = { clusters: 0, records: 0, pairs: 0 };
 let HAS_TRUTH = false;
 let HAS_MODEL = false;
 let MODEL = null;        // embedded mode: the per-level table the ledgers expand from
-let mode = 'clusters';   // what the sidebar lists: clusters, or the run's predictions
-let entries = [];        // the list, as far as it has been loaded
+let entries = [];        // the cluster list, as far as it has been loaded
 let matched = 0;         // entries the current filter matches
 let exhausted = false;
-let current = null;      // {kind: 'cluster', id} or {kind: 'pair', a, b}
+let current = null;      // the selected cluster id
+let tab = 'cluster';     // which tab of the detail pane is open: cluster or pairs
+let pick = null;         // {a, b}: the pair open on the pairs tab
+let pairSort = { key: 'w', desc: false };  // the pairs table's order, kept across clusters
 let details = new Map();
 let token = 0;           // guards against a slow response for an old query
 
-// The sidebar's sort and filter are per mode; the same two selects carry both.
-const SORTS = {
-    clusters: [['discord', 'most disagreement'], ['size', 'size'],
-               ['weakest', 'weakest edge'], ['id', 'id']],
-    pairs: [['weakest', 'weakest first'], ['strongest', 'strongest first'], ['id', 'id']],
-};
-const ONLYS = {
-    clusters: [['all', 'every cluster'], ['split', 'columns that disagree'],
-               ['transitive', 'transitive-only links'], ['mixed', 'mixed against truth']],
-    pairs: [['all', 'every prediction'], ['within', 'inside a cluster'],
-            ['rejected', 'rejected by clustering']],
-};
+const SORTS = [['discord', 'most disagreement'], ['size', 'size'],
+               ['weakest', 'weakest edge'], ['id', 'id']];
+const ONLYS = [['all', 'every cluster'], ['split', 'columns that disagree'],
+               ['transitive', 'transitive-only links'], ['mixed', 'mixed against truth']];
 const pairKey = (a, b) => a + '\u0000' + b;
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s === null || s === undefined ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 async function api(path, params) {
     const url = new URL(path, location.href);
@@ -470,17 +481,15 @@ async function loadPage(reset) {
     const query = { q: $('#q').value.trim(), sort: $('#sort').value,
                     only: $('#only').value, offset: entries.length, limit: PAGE };
     if (LIVE) {
-        const page = await api(mode === 'pairs' ? '/api/pairs' : '/api/list', query);
+        const page = await api('/api/list', query);
         if (mine !== token) return;
-        entries = entries.concat(mode === 'pairs' ? page.pairs : page.clusters);
+        entries = entries.concat(page.clusters);
         matched = page.matched;
         exhausted = entries.length >= matched;
     } else {
-        const all = mode === 'pairs'
-            ? EMBEDDED.pairs.filter(p => pairPasses(p, query))
-            : EMBEDDED.clusters.filter(c => passes(c, query));
+        const all = EMBEDDED.clusters.filter(c => passes(c, query));
         matched = all.length;
-        if (mode === 'pairs') sortPairs(all, query.sort); else sortLocal(all, query.sort);
+        sortLocal(all, query.sort);
         entries = all.slice(0, entries.length + PAGE);
         exhausted = entries.length >= matched;
     }
@@ -491,12 +500,6 @@ function passes(c, query) {
     if (query.only === 'transitive' && !(c.size * (c.size - 1) / 2 > c.edge_count)) return false;
     if (query.only === 'mixed' && !(c.entities > 1)) return false;
     return !query.q || c.hay.includes(query.q.toLowerCase());
-}
-
-function pairPasses(p, query) {
-    if (query.only === 'within' && p.ca !== p.cb) return false;
-    if (query.only === 'rejected' && p.ca === p.cb) return false;
-    return !query.q || p.hay.includes(query.q.toLowerCase());
 }
 
 function sortBy(list, key) {
@@ -519,20 +522,28 @@ function sortLocal(list, sort) {
     }[sort]);
 }
 
-function sortPairs(list, sort) {
-    sortBy(list, {
-        weakest: p => [p.w, p.a, p.b],
-        strongest: p => [-p.w, p.a, p.b],
-        id: p => [p.a, p.b],
-    }[sort]);
-}
-
 async function detail(id) {
     if (details.has(id)) return details.get(id);
     const got = LIVE ? await api('/api/cluster', { id })
                      : EMBEDDED.clusters.find(c => c.id === id);
     details.set(id, got);
     return got;
+}
+
+// Every prediction touching one cluster: its own edges, then the predictions
+// clustering rejected, which cross from one of its members into another
+// cluster. `other` is that other cluster, or null for a pair held inside;
+// `same` is the truth's verdict where there is one.
+function pairsOf(c) {
+    if (c.pairs) return c.pairs;
+    const label = new Map(c.rows.map(r => [r.id, r.t]));
+    const list = (c.edges || []).map(([a, b, w]) => ({
+        a, b, w, other: null,
+        same: HAS_TRUTH ? label.get(a) !== undefined && label.get(a) === label.get(b) : null,
+    }));
+    const rejected = LIVE ? c.rejected || [] : EMBEDDED.rejectedOf.get(c.id) || [];
+    c.pairs = list.concat(rejected);
+    return c.pairs;
 }
 
 // A pair's detail is its two records, the weight, and the ledger behind it.
@@ -588,21 +599,14 @@ function renderList() {
     list.innerHTML = '';
     for (const e of entries) {
         const el = document.createElement('div');
-        el.className = 'item' + (isCurrent(e) ? ' on' : '');
-        if (mode === 'pairs') {
-            const pill = e.ca !== e.cb ? '<span class="pill">rejected</span>' : '';
-            el.innerHTML = `<span class="cid">${esc(e.a)}<span class="sep">&middot;</span>` +
-                `${esc(e.b)}</span>${pill}<span class="sz">${e.w.toFixed(1)}</span>`;
-            el.onclick = () => selectPair(e.a, e.b);
-        } else {
-            let pills = '';
-            if (e.entities > 1) pills += `<span class="pill bad">${e.entities} entities</span>`;
-            if (e.discord) pills += `<span class="pill">${e.discord} split</span>`;
-            else pills += `<span class="pill ok">all agree</span>`;
-            el.innerHTML = `<span class="cid">${esc(e.id)}</span>${pills}` +
-                `<span class="sz">${e.size.toLocaleString()}</span>`;
-            el.onclick = () => select(e.id);
-        }
+        el.className = 'item' + (e.id === current ? ' on' : '');
+        let pills = '';
+        if (e.entities > 1) pills += `<span class="pill bad">${e.entities} entities</span>`;
+        if (e.discord) pills += `<span class="pill">${e.discord} split</span>`;
+        else pills += `<span class="pill ok">all agree</span>`;
+        el.innerHTML = `<span class="cid">${esc(e.id)}</span>${pills}` +
+            `<span class="sz">${e.size.toLocaleString()}</span>`;
+        el.onclick = () => select(e.id);
         list.appendChild(el);
     }
     if (!exhausted) {
@@ -612,44 +616,23 @@ function renderList() {
         more.onclick = async () => { await loadPage(false); renderList(); };
         list.appendChild(more);
     }
-    const what = mode === 'pairs'
-        ? `<b>${matched.toLocaleString()}</b> of <b>${TOTALS.pairs.toLocaleString()}</b> predictions`
-        : `<b>${matched.toLocaleString()}</b> of <b>${TOTALS.clusters.toLocaleString()}</b> clusters`;
+    const predictions = TOTALS.pairs
+        ? ` &middot; ${TOTALS.pairs.toLocaleString()} predictions` : '';
     $('#hmeta').innerHTML =
-        `${what} &middot; ${TOTALS.records.toLocaleString()} records &middot; ${esc(SOURCE)}` +
+        `<b>${matched.toLocaleString()}</b> of <b>${TOTALS.clusters.toLocaleString()}</b> clusters` +
+        ` &middot; ${TOTALS.records.toLocaleString()} records${predictions} &middot; ${esc(SOURCE)}` +
         (LIVE ? ' &middot; <span style="color:var(--accent)">live</span>' : '');
 }
 
-function isCurrent(e) {
-    if (!current) return false;
-    if (mode === 'pairs') return current.kind === 'pair' && current.a === e.a && current.b === e.b;
-    return current.kind === 'cluster' && current.id === e.id;
-}
-
-function fillSelect(el, options, keep) {
+function fillSelect(el, options) {
     el.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('');
-    if (keep && options.some(([v]) => v === keep)) el.value = keep;
-}
-
-async function setMode(next) {
-    if (next === mode || (next === 'pairs' && !TOTALS.pairs)) return;
-    mode = next;
-    for (const b of document.querySelectorAll('.modes button')) {
-        b.classList.toggle('on', b.dataset.mode === mode);
-    }
-    fillSelect($('#sort'), SORTS[mode]);
-    fillSelect($('#only'), ONLYS[mode]);
-    try { localStorage.setItem('cpplink.mode', mode); } catch (e) {}
-    await rebuild(true);
 }
 
 async function rebuild(reset) {
     await loadPage(reset !== false);
     renderList();
-    if (!entries.some(isCurrent)) {
-        if (!entries.length) await select(null);
-        else if (mode === 'pairs') await selectPair(entries[0].a, entries[0].b);
-        else await select(entries[0].id);
+    if (!entries.some(e => e.id === current)) {
+        await select(entries.length ? entries[0].id : null);
     }
 }
 
@@ -680,22 +663,43 @@ function recordsTable(rows, stats, opts) {
         `<tbody>${body}</tbody></table></div>`;
 }
 
-async function select(id) {
+// The address names what is open, so a cluster or a pair can be linked to:
+// #cluster=<id>, or #pair=<a>,<b> for a pair open on its cluster's pairs tab.
+function remember() {
+    const hash = !current ? ''
+        : tab === 'pairs' && pick
+            ? `#pair=${encodeURIComponent(pick.a)},${encodeURIComponent(pick.b)}`
+            : `#cluster=${encodeURIComponent(current)}`;
+    history.replaceState(null, '', location.pathname + location.search + hash);
+}
+
+// Open one cluster in the detail pane: its heading, the two tabs, and both
+// panels, only one of them shown. `opts.tab` picks the tab and `opts.pair`
+// the pair to open on it; without them the tab in use stays in use, so
+// stepping through clusters on the pairs tab keeps reading pairs.
+async function select(id, opts) {
+    opts = opts || {};
+    const d = $('#detail');
     if (id === null) {
         current = null;
-        $('#detail').innerHTML = '<div class="empty-state">Nothing matches.</div>';
+        pick = null;
+        d.innerHTML = '<div class="empty-state">Nothing matches.</div>';
         renderList();
+        remember();
         return;
     }
-    current = { kind: 'cluster', id };
+    current = id;
+    pick = opts.pair || null;
+    if (opts.tab) tab = opts.tab;
     renderList();
     remember();
-    const d = $('#detail');
     d.innerHTML = '<div class="empty-state">Loading&hellip;</div>';
     const c = await detail(id);
-    if (!current || current.id !== id) return;
+    if (current !== id) return;
     if (!c) { d.innerHTML = `<div class="empty-state">No cluster ${esc(id)}.</div>`; return; }
     const view = summarise(c);
+    const pairs = pairsOf(c);
+    const rejected = pairs.filter(p => p.other !== null).length;
 
     let sub = `${c.size.toLocaleString()} records`;
     if (view.shown < c.size) sub += ` (showing ${view.shown})`;
@@ -755,16 +759,31 @@ async function select(id) {
       </div>`;
     }
 
+    const count = pairs.length
+        ? `<span class="count${rejected ? ' warn' : ''}">${pairs.length.toLocaleString()}` +
+          `${rejected ? ` &middot; ${rejected} rejected` : ''}</span>`
+        : '';
     d.innerHTML = `
     <h2>${esc(c.id)}</h2>
     <div class="sub">${sub}</div>
-    <div class="section"><h3>What they have in common</h3><div class="chips">${chips}</div></div>
-    <div class="section"><h3>Records</h3>${recordsTable(c.rows, view.stats)}</div>
-    ${showNet ? network(c) : ''}
-    ${matrix}`;
+    <div class="tabs">
+      <button data-tab="cluster">Cluster</button>
+      <button data-tab="pairs" title="every prediction touching this cluster">Pairs${count}</button>
+    </div>
+    <div class="panel" data-panel="cluster">
+      <div class="section"><h3>What they have in common</h3><div class="chips">${chips}</div></div>
+      <div class="section"><h3>Records</h3>${recordsTable(c.rows, view.stats)}</div>
+      ${showNet ? network(c) : ''}
+      ${matrix}
+    </div>
+    <div class="panel" data-panel="pairs">
+      <div id="pairtable"></div>
+      <div id="pairbox"></div>
+    </div>`;
+    for (const b of d.querySelectorAll('.tabs button')) b.onclick = () => showTab(b.dataset.tab);
     // A node is a record and a line is a pair of them, so hovering either lights
     // the rows it names; a line is also clickable, and that one opens the pair.
-    const table = d.querySelector('tbody');
+    const table = d.querySelector('[data-panel="cluster"] tbody');
     const lit = (rows, on) => rows.forEach(r => r.classList.toggle('lit', on));
     const edgeOf = (i, j) => c.edges.find(([a, b]) =>
         (a === c.rows[i].id && b === c.rows[j].id) || (a === c.rows[j].id && b === c.rows[i].id));
@@ -780,50 +799,146 @@ async function select(id) {
         link.onmouseleave = () => lit(ends, false);
         link.onclick = () => {
             const e = edgeOf(+link.dataset.i, +link.dataset.j);
-            if (e) showPair(e[0], e[1]);
+            if (e) openPair(e[0], e[1]);
         };
     }
     for (const cell of d.querySelectorAll('.matrix td.pair')) {
         cell.onclick = () => {
             const e = edgeOf(+cell.dataset.i, +cell.dataset.j);
-            if (e) showPair(e[0], e[1]);
+            if (e) openPair(e[0], e[1]);
         };
     }
+    renderPairTable(c);
+    showTab(tab);
     d.scrollTop = 0;
 }
 
-// Opening a pair from a cluster keeps the cluster list as it is: the pair is
-// shown in the detail pane with a way back, not selected in a list it is not in.
-async function showPair(a, b) {
-    if (mode === 'pairs') return selectPair(a, b);
-    current = { kind: 'pair', a, b, from: current && current.id };
-    await renderPair(a, b);
-}
-
-async function selectPair(a, b) {
-    current = { kind: 'pair', a, b };
-    renderList();
-    await renderPair(a, b);
-}
-
-// The address names what is open, so a pair or a cluster can be linked to:
-// #cluster=<id>, #pair=<a>,<b>, or #pairs for the list alone.
-function remember() {
-    if (!current) return;
-    const hash = current.kind === 'pair'
-        ? `#pair=${encodeURIComponent(current.a)},${encodeURIComponent(current.b)}`
-        : `#cluster=${encodeURIComponent(current.id)}`;
-    history.replaceState(null, '', hash);
-}
-
-async function renderPair(a, b) {
-    const d = $('#detail');
-    d.innerHTML = '<div class="empty-state">Loading&hellip;</div>';
+function showTab(name) {
+    tab = name;
+    try { localStorage.setItem('cpplink.tab', tab); } catch (e) {}
+    for (const b of document.querySelectorAll('.tabs button')) {
+        b.classList.toggle('on', b.dataset.tab === tab);
+    }
+    for (const p of document.querySelectorAll('.panel')) p.hidden = p.dataset.panel !== tab;
     remember();
+    if (tab !== 'pairs' || !current) return;
+    const c = details.get(current);
+    if (!c) return;
+    const pairs = sortedPairs(c);
+    // The pairs tab always has a pair open: the one asked for, else the
+    // weakest, which is the one most worth reading.
+    if (pick && !pairs.some(p => p.a === pick.a && p.b === pick.b)) pick = null;
+    if (!pick && pairs.length) pick = { a: pairs[0].a, b: pairs[0].b };
+    if (pick) pickPair(pick.a, pick.b);
+}
+
+// From the cluster tab's matrix or network: the pair opens on the pairs tab.
+function openPair(a, b) {
+    pick = { a, b };
+    showTab('pairs');
+    const row = document.querySelector(`table.pairs tr.row.pin`);
+    if (row) row.scrollIntoView({ block: 'nearest' });
+}
+
+function sortedPairs(c) {
+    const list = pairsOf(c).slice();
+    const key = {
+        w: p => [p.w, p.a, p.b],
+        a: p => [p.a, p.b],
+        b: p => [p.b, p.a],
+        other: p => [p.other === null ? '' : p.other, p.w],
+        same: p => [p.same === null ? 2 : p.same ? 1 : 0, p.w],
+    }[pairSort.key];
+    sortBy(list, key);
+    if (pairSort.desc) list.reverse();
+    return list;
+}
+
+// The table of one cluster's predictions, weakest first unless a header was
+// clicked. A row is a pair, and picking one fills the box under the table.
+function renderPairTable(c) {
+    const box = $('#pairtable');
+    const pairs = sortedPairs(c);
+    if (!pairs.length) {
+        box.innerHTML = `<div class="note">${TOTALS.pairs
+            ? 'No prediction touches the members shown.'
+            : 'Run the viewer with <code>--predictions</code> to list the pairs the run scored.'}</div>`;
+        return;
+    }
+    const heads = [['', '', false], ['a', 'id a', true], ['b', 'id b', true],
+                   ['w', 'bits', true], ['other', 'clustering', true]]
+        .concat(HAS_TRUTH ? [['same', 'truth', true]] : []);
+    const head = heads.map(([key, label, sortable]) => sortable
+        ? `<th class="sortable${pairSort.key === key ? ' on' : ''}` +
+          `${pairSort.key === key && pairSort.desc ? ' desc' : ''}" data-key="${key}">${label}</th>`
+        : `<th>${label}</th>`).join('');
+    const body = pairs.map((p, i) => {
+        const on = pick && pick.a === p.a && pick.b === p.b;
+        const where = p.other === null
+            ? '<td class="note">inside</td>'
+            : `<td class="rej">rejected &rarr; <button class="ghost" data-cluster="${esc(p.other)}"` +
+              ` title="open that cluster's pairs">${esc(p.other)}</button></td>`;
+        const truth = !HAS_TRUTH ? ''
+            : p.same === null ? '<td></td>'
+            : p.same ? '<td class="same">same entity</td>'
+            : '<td class="differ">different</td>';
+        return `<tr class="row${on ? ' pin' : ''}" data-a="${esc(p.a)}" data-b="${esc(p.b)}">` +
+            `<td class="n">${i + 1}</td><td class="id">${esc(p.a)}</td><td class="id">${esc(p.b)}</td>` +
+            `<td class="num">${p.w.toFixed(2)}</td>${where}${truth}</tr>`;
+    }).join('');
+    const notes = [];
+    const rejected = pairs.filter(p => p.other !== null).length;
+    if (rejected) {
+        notes.push(`${rejected} prediction${rejected === 1 ? '' : 's'} clustering rejected: scored ` +
+            `above the write threshold, below the clustering one, so the two records sit in different clusters.`);
+    }
+    if ((c.edge_count || 0) > (c.edges || []).length) {
+        notes.push(`${(c.edges || []).length.toLocaleString()} of the cluster's ` +
+            `${c.edge_count.toLocaleString()} predictions are among the members shown.`);
+    }
+    if (c.rejected_more) {
+        notes.push(`${c.rejected_more.toLocaleString()} more rejected predictions are not listed.`);
+    }
+    box.innerHTML = `<div class="section"><h3>Predictions</h3>` +
+        `<div class="tablewrap pairlist"><table class="pairs"><thead><tr>${head}</tr></thead>` +
+        `<tbody>${body}</tbody></table></div>` +
+        (notes.length ? `<div class="note" style="margin-top:6px">${notes.join(' ')}</div>` : '') +
+        `</div>`;
+    for (const th of box.querySelectorAll('th.sortable')) {
+        th.onclick = () => {
+            pairSort = pairSort.key === th.dataset.key
+                ? { key: th.dataset.key, desc: !pairSort.desc }
+                : { key: th.dataset.key, desc: false };
+            renderPairTable(c);
+        };
+    }
+    for (const row of box.querySelectorAll('tr.row')) {
+        row.onclick = e => {
+            if (e.target.tagName === 'BUTTON') return;
+            pickPair(row.dataset.a, row.dataset.b);
+        };
+    }
+    // The other cluster opens on its pairs tab with this same pair picked.
+    for (const btn of box.querySelectorAll('button[data-cluster]')) {
+        const row = btn.closest('tr');
+        btn.onclick = () => select(btn.dataset.cluster,
+                                   { tab: 'pairs', pair: { a: row.dataset.a, b: row.dataset.b } });
+    }
+}
+
+async function pickPair(a, b) {
+    pick = { a, b };
+    for (const row of document.querySelectorAll('table.pairs tr.row')) {
+        row.classList.toggle('pin', row.dataset.a === a && row.dataset.b === b);
+    }
+    remember();
+    const box = $('#pairbox');
+    box.innerHTML = '<div class="empty-state">Loading&hellip;</div>';
+    const cluster = current;
     const p = await pairDetail(a, b);
-    if (!current || current.kind !== 'pair' || current.a !== a || current.b !== b) return;
+    if (current !== cluster || !pick || pick.a !== a || pick.b !== b) return;
     if (!p || !p.rows[0] || !p.rows[1]) {
-        d.innerHTML = `<div class="empty-state">No prediction ${esc(a)} &middot; ${esc(b)}.</div>`;
+        box.innerHTML = `<div class="empty-state">No prediction ${esc(a)} &middot; ${esc(b)}.</div>`;
         return;
     }
     const rejected = p.ca !== p.cb;
@@ -831,16 +946,15 @@ async function renderPair(a, b) {
     if (p.waterfall) sub += ` &middot; posterior ${probability(p.waterfall.probability)}`;
     sub += rejected
         ? ` &middot; <span style="color:var(--warn)">rejected by clustering</span>: the two records sit in different clusters`
-        : ` &middot; inside one cluster`;
+        : ` &middot; inside this cluster`;
     if (p.rows[0].t !== undefined) {
         sub += p.rows[0].t === p.rows[1].t
             ? ' &middot; <span style="color:var(--accent)">same entity in the truth</span>'
             : ' &middot; <span style="color:var(--bad)">different entities in the truth</span>';
     }
     const links = [];
-    if (current.from) links.push(`<button class="ghost" data-cluster="${esc(current.from)}">&larr; back to ${esc(current.from)}</button>`);
     for (const cid of new Set([p.ca, p.cb])) {
-        if (cid !== current.from) links.push(`<button class="ghost" data-cluster="${esc(cid)}">cluster ${esc(cid)}</button>`);
+        if (cid !== cluster) links.push(`<button class="ghost" data-cluster="${esc(cid)}">cluster ${esc(cid)} &rarr;</button>`);
     }
     const stats = statsOf(p.rows, null);
     let ledger;
@@ -851,19 +965,15 @@ async function renderPair(a, b) {
             ? 'No waterfall for this pair.'
             : 'Write the waterfalls with <code>cpplink explain --predictions</code> and run the viewer with <code>--waterfalls</code> and <code>--model</code> to see how this weight was reached.'}</div>`;
     }
-    d.innerHTML = `
-    <h2>${esc(a)} <span style="color:var(--muted)">&middot;</span> ${esc(b)}</h2>
+    box.innerHTML = `
+    <div class="pairhead"><h3>${esc(a)} <span style="color:var(--muted)">&middot;</span> ${esc(b)}</h3></div>
     <div class="sub">${sub}</div>
-    <div class="links">${links.join('')}</div>
+    ${links.length ? `<div class="links">${links.join('')}</div>` : ''}
     <div class="section"><h3>Records</h3>${recordsTable(p.rows, stats, { both: true })}</div>
     <div class="section"><h3>Match weight, as a ledger</h3>${ledger}</div>`;
-    for (const b of d.querySelectorAll('.links button')) {
-        b.onclick = async () => {
-            if (mode !== 'clusters') await setMode('clusters');
-            select(b.dataset.cluster);
-        };
+    for (const btn of box.querySelectorAll('.links button')) {
+        btn.onclick = () => select(btn.dataset.cluster, { tab: 'pairs', pair: { a, b } });
     }
-    d.scrollTop = 0;
 }
 
 function probability(p) {
@@ -965,11 +1075,23 @@ function waterfall(w) {
 }
 
 function move(step) {
-    const i = entries.findIndex(isCurrent);
+    const i = entries.findIndex(e => e.id === current);
     const next = entries[Math.max(0, Math.min(entries.length - 1, i + step))];
     if (next) {
-        if (mode === 'pairs') selectPair(next.a, next.b); else select(next.id);
+        select(next.id);
         $('#list').children[entries.indexOf(next)].scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// The next or previous pair in the table's own order, on the pairs tab only.
+function movePair(step) {
+    if (tab !== 'pairs' || !pick) return;
+    const rows = Array.from(document.querySelectorAll('table.pairs tr.row'));
+    const i = rows.findIndex(r => r.classList.contains('pin'));
+    const next = rows[Math.max(0, Math.min(rows.length - 1, i + step))];
+    if (next && !next.classList.contains('pin')) {
+        pickPair(next.dataset.a, next.dataset.b);
+        next.scrollIntoView({ block: 'nearest' });
     }
 }
 
@@ -980,6 +1102,8 @@ document.addEventListener('keydown', e => {
     }
     if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); move(1); }
     if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+    if (e.key === 'n') { e.preventDefault(); movePair(1); }
+    if (e.key === 'p') { e.preventDefault(); movePair(-1); }
     if (e.key === '/') { e.preventDefault(); $('#q').focus(); }
 });
 
@@ -990,9 +1114,6 @@ $('#q').addEventListener('input', () => {
 });
 $('#sort').addEventListener('change', () => rebuild(true));
 $('#only').addEventListener('change', () => rebuild(true));
-for (const b of document.querySelectorAll('.modes button')) {
-    b.onclick = () => setMode(b.dataset.mode);
-}
 $('#list').addEventListener('scroll', async e => {
     const el = e.target;
     if (exhausted || el.scrollTop + el.clientHeight < el.scrollHeight - 200) return;
@@ -1005,7 +1126,7 @@ $('#net').checked = showNet;
 $('#net').addEventListener('change', () => {
     showNet = $('#net').checked;
     try { localStorage.setItem('cpplink.net', showNet ? '1' : '0'); } catch (e) {}
-    if (current && current.kind === 'cluster') select(current.id);
+    if (current) select(current, { pair: pick });
 });
 $('#theme').onclick = () => {
     const now = document.documentElement.getAttribute('data-theme');
@@ -1026,10 +1147,13 @@ $('#theme').onclick = () => {
         SOURCE = EMBEDDED.source;
         MODEL = EMBEDDED.model || null;
         HAS_MODEL = MODEL !== null;
+        HAS_TRUTH = EMBEDDED.clusters.some(c => c.rows.some(r => r.t !== undefined));
         TOTALS = { clusters: EMBEDDED.totals.clusters, records: EMBEDDED.totals.records || 0 };
         EMBEDDED.records = new Map();
         EMBEDDED.entityOf = new Map();
-        EMBEDDED.pairs = [];
+        EMBEDDED.pairIndex = new Map();
+        EMBEDDED.rejectedOf = new Map();
+        let predictions = 0;
         for (const c of EMBEDDED.clusters) {
             const stats = statsOf(c.rows, null);
             c.size = c.size || c.rows.length + (c.more || 0);
@@ -1047,42 +1171,43 @@ $('#theme').onclick = () => {
             }
             c.edges = (c.edges || []).map(([i, j, x, wf]) => {
                 const a = c.rows[i].id, b = c.rows[j].id;
-                EMBEDDED.pairs.push({ a, b, w: x, ca: c.id, cb: c.id, wf });
+                EMBEDDED.pairIndex.set(pairKey(a, b), { a, b, w: x, ca: c.id, cb: c.id, wf });
+                predictions++;
                 return [a, b, x];
             });
         }
-        for (const p of EMBEDDED.rejected || []) EMBEDDED.pairs.push(p);
-        EMBEDDED.pairIndex = new Map();
-        for (const p of EMBEDDED.pairs) {
-            const ra = EMBEDDED.records.get(p.a), rb = EMBEDDED.records.get(p.b);
-            p.hay = (p.a + ' ' + p.b + ' ' + (ra ? ra.v.join(' ') : '') + ' ' +
-                     (rb ? rb.v.join(' ') : '')).toLowerCase();
+        // A rejected prediction is listed under both of its clusters, each
+        // naming the other as where the pair's second record went.
+        for (const p of EMBEDDED.rejected || []) {
             EMBEDDED.pairIndex.set(pairKey(p.a, p.b), p);
+            predictions++;
+            const ga = EMBEDDED.entityOf.get(p.a), gb = EMBEDDED.entityOf.get(p.b);
+            const same = HAS_TRUTH ? ga !== undefined && ga === gb : null;
+            for (const [mine, other] of [[p.ca, p.cb], [p.cb, p.ca]]) {
+                if (!EMBEDDED.rejectedOf.has(mine)) EMBEDDED.rejectedOf.set(mine, []);
+                EMBEDDED.rejectedOf.get(mine).push({ a: p.a, b: p.b, w: p.w, other, same });
+            }
         }
-        TOTALS.pairs = EMBEDDED.pairs.length;
+        TOTALS.pairs = predictions;
     }
-    let remembered = 'clusters';
-    try { remembered = localStorage.getItem('cpplink.mode') || 'clusters'; } catch (e) {}
+    try { tab = localStorage.getItem('cpplink.tab') === 'pairs' ? 'pairs' : 'cluster'; } catch (e) {}
+    fillSelect($('#sort'), SORTS);
+    fillSelect($('#only'), ONLYS);
     const hash = decodeURIComponent(location.hash.slice(1));
     let open = null;
-    if (hash === 'pairs' || hash.startsWith('pair=')) remembered = 'pairs';
     if (hash.startsWith('pair=')) {
+        // A pair is opened on its first cluster's pairs tab, which needs the
+        // pair looked up before the list is drawn so that the list's first
+        // entry does not open in its place.
         const at = hash.indexOf(',');
-        if (at > 5) open = { kind: 'pair', a: hash.slice(5, at), b: hash.slice(at + 1) };
+        const p = at > 5 ? await pairDetail(hash.slice(5, at), hash.slice(at + 1)) : null;
+        if (p) open = { id: p.ca, tab: 'pairs', pair: { a: p.a, b: p.b } };
     } else if (hash.startsWith('cluster=')) {
-        remembered = 'clusters';
-        open = { kind: 'cluster', id: hash.slice(8) };
+        open = { id: hash.slice(8), tab: 'cluster' };
     }
-    fillSelect($('#sort'), SORTS.clusters);
-    fillSelect($('#only'), ONLYS.clusters);
-    if (!TOTALS.pairs) {
-        document.querySelector('.modes button[data-mode="pairs"]').disabled = true;
-        remembered = 'clusters';
-    }
-    if (open) current = open;  // so the list's first entry does not replace it
-    if (remembered === 'pairs') await setMode('pairs'); else await rebuild(true);
-    if (open && open.kind === 'pair') await selectPair(open.a, open.b);
-    else if (open) await select(open.id);
+    if (open) current = open.id;
+    await rebuild(true);
+    if (open) await select(open.id, open);
 })();
 </script>
 </body>
