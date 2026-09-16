@@ -359,17 +359,21 @@ bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
     const auto schema = MakeArrowSchema();
     auto* pool = arrow::default_memory_pool();
 
-    // One sink per output file. With a second file every planted duplicate is
-    // routed to it, so the two files are exactly the link fixture the cross-dataset
-    // path needs: every recorded pair crosses them.
+    // One sink per output file. With more than one file every planted duplicate is
+    // routed to one of the later ones, so the files are exactly the link fixture
+    // the cross-dataset path needs: every recorded pair crosses them.
     std::vector<std::unique_ptr<RowSink>> sinks;
     sinks.push_back(std::make_unique<RowSink>(pool));
     if (!sinks.back()->Open(path, *schema, error)) return false;
-    const bool linking = !options.link_path.empty();
-    if (linking) {
+    const bool linking = !options.link_paths.empty();
+    for (const std::string& link_path : options.link_paths) {
         sinks.push_back(std::make_unique<RowSink>(pool));
-        if (!sinks.back()->Open(options.link_path, *schema, error)) return false;
+        if (!sinks.back()->Open(link_path, *schema, error)) return false;
     }
+    // Never asked when there is no later file, but constructed either way, and a
+    // distribution over an empty range is undefined.
+    std::uniform_int_distribution<size_t> which_link(
+        1, std::max<size_t>(1, sinks.size() - 1));
 
     std::ofstream truth;
     if (!options.truth_path.empty()) {
@@ -422,7 +426,9 @@ bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
             truth << "r" << other << ",r" << index << "\n";
         }
 
-        RowSink& sink = *sinks[linking && duplicate ? 1 : 0];
+        // A duplicate lands in one of the later files, drawn from the planner so
+        // the file a row lands in is as reproducible as the row.
+        RowSink& sink = *sinks[linking && duplicate ? which_link(planner) : 0];
         if (!sink.Append(record, identifier, error)) return false;
         if (sink.pending >= static_cast<uint64_t>(options.row_group_size) &&
             !sink.Flush(schema, error)) {
