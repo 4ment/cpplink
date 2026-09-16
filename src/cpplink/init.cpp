@@ -475,6 +475,16 @@ Role GuessRole(const std::string& name, ColumnType type, bool readable) {
 
 bool DraftSchema(const std::string& path, const DraftOptions& options,
                  DraftReport* report, std::string* error) {
+    return DraftSchema(std::vector<std::string>{path}, options, report, error);
+}
+
+bool DraftSchema(const std::vector<std::string>& paths, const DraftOptions& options,
+                 DraftReport* report, std::string* error) {
+    if (paths.empty()) {
+        *error = "no parquet file to draft a schema from";
+        return false;
+    }
+    const std::string& path = paths.front();
     std::vector<FileColumn> file_columns;
     if (!ReadFileColumns(path, &file_columns, error)) return false;
     if (file_columns.empty()) {
@@ -482,8 +492,53 @@ bool DraftSchema(const std::string& path, const DraftOptions& options,
         return false;
     }
 
+    // The draft is from the first file; the others have to be able to run it. A
+    // column the first holds must be in each of them at a type that reads the same
+    // way, or the schema would fail at load with a message about the second file
+    // that init could have given now. Columns only a later file holds are left
+    // out, and said so.
+    std::vector<std::string> later_only;
+    for (size_t i = 1; i < paths.size(); ++i) {
+        std::vector<FileColumn> other;
+        if (!ReadFileColumns(paths[i], &other, error)) return false;
+        for (const FileColumn& column : file_columns) {
+            const FileColumn* match = nullptr;
+            for (const FileColumn& candidate : other) {
+                if (candidate.name == column.name) match = &candidate;
+            }
+            if (match == nullptr) {
+                *error = "column \"" + column.name + "\" is in " + path + " but not in " +
+                         paths[i] +
+                         "; a link needs the same columns "
+                         "in every input";
+                return false;
+            }
+            if (column.readable && (!match->readable || match->type != column.type)) {
+                *error = "column \"" + column.name + "\" is " + column.arrow_type +
+                         " in " + path + " and " + match->arrow_type + " in " + paths[i] +
+                         "; cast one so both read as the same type";
+                return false;
+            }
+        }
+        for (const FileColumn& candidate : other) {
+            bool in_first = false;
+            for (const FileColumn& column : file_columns) {
+                in_first = in_first || column.name == candidate.name;
+            }
+            if (!in_first) later_only.push_back(candidate.name + " (" + paths[i] + ")");
+        }
+    }
+
     DraftReport draft;
     draft.path = path;
+    if (!later_only.empty()) {
+        std::string list;
+        for (const std::string& name : later_only) {
+            if (!list.empty()) list += ", ";
+            list += name;
+        }
+        draft.notes.push_back("not in the first input and so not drafted: " + list);
+    }
     std::unordered_map<std::string, Role> given;
     for (const auto& [column, role_name] : options.roles) {
         Role role = Role::kText;

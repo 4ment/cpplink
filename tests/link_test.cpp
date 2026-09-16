@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <variant>
@@ -14,6 +16,7 @@
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
 #include "cpplink/estimate.hpp"
+#include "cpplink/explain_blocking.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/pair_stream.hpp"
 #include "cpplink/record_store.hpp"
@@ -466,6 +469,53 @@ TEST(LinkSampling, RandomCrossPairsAreUniformOverThreeUnequalInputs) {
     EXPECT_NEAR(model.comparisons[0].levels[1].u, 1.0 - exact, 0.001);
     // The old draw would have read about twice the exact rate.
     EXPECT_LT(model.comparisons[0].levels[0].u, 1.5 * exact);
+}
+
+// Two things link mode says out loud rather than approximating quietly. The fuzzy
+// levels' exact u is a self-join over the pooled term frequencies, which cannot
+// give a cross-pair rate, so `--fuzzy-u` is refused with the reason instead of
+// falling back to a sampled u under a flag that promised an exact one. And a
+// sorted-neighbourhood window is over the inputs interleaved, so the report prices
+// how many of a row's neighbours are cross partners: 1 - sum (N_d/N)^2 of the window.
+TEST_P(LinkFixture, FuzzyUIsRefusedAndTheCrossWindowIsPriced) {
+    Reschema(R"({"columns":[
+        {"name":"surname","type":"string"},
+        {"name":"dob","type":"date"},
+        {"name":"city","type":"string"}],
+      "comparisons":[
+        {"name":"surname","columns":["surname"],
+         "levels":[{"type":"null"},{"type":"exact"},
+                   {"type":"jaro_winkler","threshold":0.8},{"type":"else"}]}],
+      "blocking":[{"type":"sorted_neighbourhood","column":"surname","window":4}]})");
+    cpplink::BlockingPlan plan;
+    std::string error;
+    ASSERT_TRUE(plan.Build(schema_, *store_, cpplink::PairMode::kCrossDataset, &error))
+        << error;
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema_, *store_, &error)) << error;
+
+    cpplink::EstimateOptions options;
+    options.u_sample = 1000;
+    options.threads = 1;
+    options.fuzzy_u = true;
+    cpplink::Model model;
+    cpplink::EstimateReport report;
+    EXPECT_FALSE(
+        cpplink::Estimate(*store_, comparisons, plan, options, &model, &report, &error));
+    EXPECT_NE(error.find("--fuzzy-u"), std::string::npos) << error;
+
+    std::ostringstream out;
+    cpplink::PrintBlockingReport(plan, *store_, false, out);
+    const Split& starts = GetParam();
+    double same = 0.0;
+    for (size_t d = 0; d + 1 < starts.size(); ++d) {
+        const double share = static_cast<double>(starts[d + 1] - starts[d]) / kRows;
+        same += share * share;
+    }
+    char expected[64];
+    std::snprintf(expected, sizeof(expected), "reaches about %.1f cross partners a row",
+                  4.0 * (1.0 - same));
+    EXPECT_NE(out.str().find(expected), std::string::npos) << out.str();
 }
 
 // The dedup path must be untouched by all of this: a store with one input carries

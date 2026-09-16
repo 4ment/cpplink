@@ -202,6 +202,8 @@ A column the file already holds a key of, a memo prefix or a rounded amount besi
 # schema is stdout and the report stderr
 cpplink init --out schema.json data.parquet
 cpplink init --role notes=text --role reg_no=national_id data.parquet > schema.json
+# For a link, draft from the first file and check the others hold the same columns
+cpplink init --out schema.json census.parquet tax.parquet
 
 # Report cardinality, null rates and the memory each structure costs
 cpplink inspect --schema examples/sample_schema.json data.parquet
