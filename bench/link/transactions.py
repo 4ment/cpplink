@@ -15,18 +15,20 @@ Three configurations:
   demo     splink exactly as its documentation runs it: the six SQL blocking
            rules (one of them `block_on("unique_id")`, which the demo itself
            calls a cheat), directed date levels, EM on memo then amount. The
-           reference number. cpplink runs the nearest thing it can express --
-           the same levels except a symmetric date window, and the same rules
+           reference number. cpplink runs the same levels, and the same rules
            as key equalities on precomputed columns, which for two of them is a
            superset of the demo's candidates because an amount-ratio conjunct
            has no key form.
   matched  both tools on identical candidate sets: the demo's rules made into
            key equalities on precomputed columns, without the cheat, verified
-           to the pair by counting each rule in both tools. The parity test.
+           to the pair by counting each rule in both tools, with the demo's
+           comparisons including its directed date levels and the demo's two
+           EM sessions. The parity test.
+  symmetric  matched with the date window either side in both tools: what the
+           direction of the date is worth.
   native   cpplink's matched plan plus its automatic sources, cpplink only.
-  directed splink only: the matched blocking with the demo's directed date
-           levels, which separates what the direction of the date is worth
-           from what the demo's tighter blocking is worth.
+  unblocked  cpplink only: matched, with m estimated from a sample of the whole
+           cross product rather than from the two blocked sessions.
 
 The blocking keys are computed by duckdb from the demo's own SQL expressions
 (`KEYS`), once, into the parquet both tools read, so a key means the same thing
@@ -57,6 +59,17 @@ LAMBDA = 1.0 / ROWS
 # destination expressions differ; where a rule carries a conjunct that is not
 # an equality (the amount ratio in the two date rules) the key drops it and
 # the demo track notes the superset.
+# What each key was computed from, declared to cpplink as `derived_from` so a
+# session blocked on the key holds the comparisons on its sources out.
+KEY_SOURCES = {
+    "k_month_memo3": ["transaction_date", "memo"],
+    "k_month15_memo3": ["transaction_date", "memo"],
+    "k_memo9": ["memo"],
+    "k_amt2_week": ["amount", "transaction_date"],
+    "k_amt2_week4": ["amount", "transaction_date"],
+    "k_uid": [],
+}
+
 KEYS = [
     ("k_month_memo3",
      "strftime(transaction_date, '%Y%m') || '|' || substr(memo, 1, 3)",
@@ -104,14 +117,27 @@ DEMO_RULES_SQL = [
 ]
 
 # The comparison ladders, shared by every configuration. splink's demo declares
-# these; cpplink has the same levels (`percentage_within` is splink's
-# PercentageDifferenceLevel, strict and over the larger value). The one
-# difference is the date: the demo's levels are directed (destination on or
-# after origin), cpplink's `date_within` is a window either side, and the
-# matched track gives splink the symmetric form so the two agree.
+# these and cpplink has the same levels: `percentage_within` is splink's
+# PercentageDifferenceLevel, strict and over the larger value, and a
+# `date_within` with `"direction": "forward"` is the demo's directed date level,
+# destination on or after origin within n days. The `symmetric` track is the
+# window either side in both tools, which is what cpplink had before the
+# directed level existed and what it cost.
 AMOUNT_PERCENTAGES = [0.01, 0.03, 0.1, 0.3]
 MEMO_EDITS = [2, 6, 10]
 DATE_DAYS = [1, 4, 10, 30]
+
+# splink's demo trains with one EM session blocked on memo and one on amount,
+# neither of which is a prediction rule, and its prediction rules train
+# nothing. cpplink's equivalent is two sources declared `"use": "estimate"`,
+# which condition a session each and produce no candidate, beside the keys
+# declared `"use": "predict"`, which do the reverse. The amount is blocked on through `amount_key`, the amount written
+# as a zero-padded string, declared derived from it so the session holds the
+# amount comparison out exactly as splink's does.
+ESTIMATE_SOURCES = [
+    {"type": "exact_value", "column": "memo", "use": "estimate"},
+    {"type": "exact_value", "column": "amount_key", "use": "estimate"},
+]
 
 # cpplink's automatic sources for the native track. A rare value of any key is
 # already a candidate through the key's own exact-value source, so what is
@@ -123,9 +149,14 @@ NATIVE_EXTRA = [
     {"type": "sorted_neighbourhood", "column": "memo", "window": 10},
 ]
 
-TRACKS = ("demo", "matched", "native", "directed")
-SPLINK_TRACKS = ("demo", "matched", "directed")
-CPPLINK_TRACKS = ("demo", "matched", "native")
+# `unblocked` is cpplink only: the matched configuration estimated from a
+# Bernoulli sample of the whole cross product instead of the two blocked
+# sessions, which is what cpplink did before a two-free-comparison session was
+# allowed and is kept beside the sessions to show what that refusal cost.
+TRACKS = ("demo", "matched", "symmetric", "native", "unblocked")
+SPLINK_TRACKS = ("demo", "matched", "symmetric")
+CPPLINK_TRACKS = ("demo", "matched", "symmetric", "native", "unblocked")
+SCHEMA_TRACKS = ("demo", "matched", "symmetric", "native")  # unblocked reuses matched
 THRESHOLDS = "0.001,0.01,0.1,0.5,0.9,0.99,0.999"
 
 
@@ -138,22 +169,33 @@ def cpplink_schema(track):
     levels_memo += [{"type": "levenshtein", "threshold": d} for d in MEMO_EDITS]
     levels_memo.append({"type": "else"})
     levels_date = [{"type": "null"}]
-    levels_date += [{"type": "date_within", "threshold": d} for d in DATE_DAYS]
+    for d in DATE_DAYS:
+        level = {"type": "date_within", "threshold": d}
+        if track != "symmetric":
+            level["direction"] = "forward"
+        levels_date.append(level)
     levels_date.append({"type": "else"})
 
+    # The demo's rules generate predictions and train nothing, so the keys are
+    # `"use": "predict"`: the sessions are the demo's two and no other.
     keys = KEY_NAMES if track == "demo" else MATCHED_KEYS
-    blocking = [{"type": "exact_value", "column": k} for k in keys]
+    blocking = [{"type": "exact_value", "column": k, "use": "predict"} for k in keys]
     if track == "native":
-        blocking += NATIVE_EXTRA
+        blocking += [dict(source, use="predict") for source in NATIVE_EXTRA]
+    blocking += ESTIMATE_SOURCES
     columns = [
         {"name": "memo", "type": "string"},
         {"name": "transaction_date", "type": "date"},
         {"name": "amount", "type": "double"},
+        # The amount as a zero-padded string: a session blocks on it, and in the
+        # native track a lexical window over it is a numeric one.
+        {"name": "amount_key", "type": "string", "derived_from": ["amount"]},
     ]
-    columns += [{"name": k, "type": "string"} for k in keys]
-    if track == "native":
-        # The amount as a zero-padded string, so a lexical window is a numeric one.
-        columns.append({"name": "amount_key", "type": "string"})
+    for k in keys:
+        column = {"name": k, "type": "string"}
+        if KEY_SOURCES[k]:
+            column["derived_from"] = KEY_SOURCES[k]
+        columns.append(column)
     return {
         "unique_id": "unique_id",
         "columns": columns,

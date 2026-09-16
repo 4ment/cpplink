@@ -139,6 +139,22 @@ TEST_F(ComparisonConfig, RejectsALevelTheColumnTypeCannotSupport) {
     EXPECT_NE(error_.find("(0, 1]"), std::string::npos);
 }
 
+TEST_F(ComparisonConfig, DirectionBelongsToDateWithinAlone) {
+    EXPECT_TRUE(Parse(R"([{"columns":["dob"],
+        "levels":[{"type":"date_within","threshold":3,"direction":"forward"},
+                  {"type":"date_within","threshold":9,"direction":"either"},
+                  {"type":"else"}]}])"))
+        << error_;
+    EXPECT_FALSE(Parse(R"([{"columns":["dob"],
+        "levels":[{"type":"date_within","threshold":3,"direction":"backward"},
+                  {"type":"else"}]}])"));
+    EXPECT_NE(error_.find("forward or either"), std::string::npos) << error_;
+    EXPECT_FALSE(Parse(R"([{"columns":["surname"],
+        "levels":[{"type":"levenshtein","threshold":1,"direction":"forward"},
+                  {"type":"else"}]}])"));
+    EXPECT_NE(error_.find("only date_within"), std::string::npos) << error_;
+}
+
 TEST_F(ComparisonConfig, GeoNeedsExactlyTwoColumns) {
     EXPECT_FALSE(Parse(R"([{"columns":["lat"],
         "levels":[{"type":"geo_within","threshold":5},{"type":"else"}]}])"));

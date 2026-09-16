@@ -3,13 +3,13 @@
 """Run cpplink's transactions linkage on the prepared tables.
 
 Two files, so every command is in link mode without being told. The model is
-estimated from a Bernoulli sample of the whole cross product (`estimate
---all-pairs --session-pairs N`) rather than from blocked sessions, because a
-session here would have fewer than the three free comparisons cpplink insists
-on: the data has three comparisons and a blocked session holds one out. An
-unblocked session holds nothing out, which is sound exactly when no two
-comparison columns are tied, and amount, memo and date are not. The blocking
-plan is then prediction's alone.
+estimated the way the demo estimates it: one EM session blocked on memo and
+one on the amount, each from a source the schema declares `"use": "estimate"`,
+so it conditions a session and produces no candidate. `--unblocked` estimates
+instead from a Bernoulli sample of the whole cross product (`estimate
+--all-pairs --session-pairs N`), which is what cpplink had to do before a
+two-free-comparison session was allowed, and is kept so the two can be set
+side by side.
 
 Writes predictions.csv (origin_id, destination_id, match_probability),
 timings.json and the blocking analysis into --out. Peak resident set is
@@ -72,7 +72,11 @@ def parse_blocking(text):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--track", default="matched", choices=("demo", "matched", "native"))
+    parser.add_argument("--track", default="matched",
+                        choices=("demo", "matched", "symmetric", "native", "unblocked"))
+    parser.add_argument("--unblocked", action="store_true",
+                        help="estimate from a sample of the cross product instead "
+                             "of the blocked sessions")
     parser.add_argument("--out", required=True)
     parser.add_argument("--thresholds", default=THRESHOLDS)
     parser.add_argument("--threads", type=int, default=0)
@@ -84,7 +88,9 @@ def main():
                         help="also price the blocking and measure its recall")
     args = parser.parse_args()
     thresholds = [float(t) for t in args.thresholds.split(",")]
-    schema = schema_path(args.track)
+    # The unblocked track is the matched schema under the other estimator.
+    unblocked = args.unblocked or args.track == "unblocked"
+    schema = schema_path("matched" if args.track == "unblocked" else args.track)
     os.makedirs(args.out, exist_ok=True)
     model = os.path.join(args.out, "model.json")
     raw = os.path.join(args.out, "predictions.raw.csv")
@@ -112,10 +118,12 @@ def main():
                 "pair_quality": reached["pair_quality"],
             }
 
-        run("estimate", "estimate", "--schema", schema, "--out", model, "--all-pairs",
-            "--session-pairs", args.session_pairs, "--u-sample", args.u_sample,
-            "--lambda", repr(LAMBDA), "--threads", args.threads, "--seed", args.seed,
-            *inputs)
+        estimate = ["estimate", "--schema", schema, "--out", model,
+                    "--u-sample", args.u_sample, "--lambda", repr(LAMBDA),
+                    "--threads", args.threads, "--seed", args.seed]
+        if unblocked:
+            estimate += ["--all-pairs", "--session-pairs", args.session_pairs]
+        run("estimate", *estimate, *inputs)
         run("predict", "predict", "--schema", schema, "--model", model, "--out", raw,
             "--probability", repr(min(thresholds)), "--threads", args.threads, *inputs)
 
@@ -144,6 +152,7 @@ def main():
         "predictions": len(out),
         "lambda": learned["lambda"],
         "predictions_path": predictions_path,
+        "unblocked": unblocked,
         "analysis": analysis,
     }
     with open(os.path.join(args.out, "timings.json"), "w") as handle:

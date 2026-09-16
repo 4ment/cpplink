@@ -14,24 +14,50 @@
       "type": "double"
     },
     {
+      "name": "amount_key",
+      "type": "string",
+      "derived_from": [
+        "amount"
+      ]
+    },
+    {
       "name": "k_month_memo3",
-      "type": "string"
+      "type": "string",
+      "derived_from": [
+        "transaction_date",
+        "memo"
+      ]
     },
     {
       "name": "k_month15_memo3",
-      "type": "string"
+      "type": "string",
+      "derived_from": [
+        "transaction_date",
+        "memo"
+      ]
     },
     {
       "name": "k_memo9",
-      "type": "string"
+      "type": "string",
+      "derived_from": [
+        "memo"
+      ]
     },
     {
       "name": "k_amt2_week",
-      "type": "string"
+      "type": "string",
+      "derived_from": [
+        "amount",
+        "transaction_date"
+      ]
     },
     {
       "name": "k_amt2_week4",
-      "type": "string"
+      "type": "string",
+      "derived_from": [
+        "amount",
+        "transaction_date"
+      ]
     }
   ],
   "comparisons": [
@@ -111,19 +137,23 @@
         },
         {
           "type": "date_within",
-          "threshold": 1
+          "threshold": 1,
+          "direction": "forward"
         },
         {
           "type": "date_within",
-          "threshold": 4
+          "threshold": 4,
+          "direction": "forward"
         },
         {
           "type": "date_within",
-          "threshold": 10
+          "threshold": 10,
+          "direction": "forward"
         },
         {
           "type": "date_within",
-          "threshold": 30
+          "threshold": 30,
+          "direction": "forward"
         },
         {
           "type": "else"
@@ -134,23 +164,38 @@
   "blocking": [
     {
       "type": "exact_value",
-      "column": "k_month_memo3"
+      "column": "k_month_memo3",
+      "use": "predict"
     },
     {
       "type": "exact_value",
-      "column": "k_month15_memo3"
+      "column": "k_month15_memo3",
+      "use": "predict"
     },
     {
       "type": "exact_value",
-      "column": "k_memo9"
+      "column": "k_memo9",
+      "use": "predict"
     },
     {
       "type": "exact_value",
-      "column": "k_amt2_week"
+      "column": "k_amt2_week",
+      "use": "predict"
     },
     {
       "type": "exact_value",
-      "column": "k_amt2_week4"
+      "column": "k_amt2_week4",
+      "use": "predict"
+    },
+    {
+      "type": "exact_value",
+      "column": "memo",
+      "use": "estimate"
+    },
+    {
+      "type": "exact_value",
+      "column": "amount_key",
+      "use": "estimate"
     }
   ]
 }

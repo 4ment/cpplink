@@ -27,7 +27,7 @@ import duckdb
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from transactions import (  # noqa: E402
-    CPPLINK_TRACKS, DATA, DESTINATION, KEYS, ORIGIN, ROWS, SCHEMAS, TRUTH,
+    DATA, DESTINATION, KEYS, ORIGIN, ROWS, SCHEMA_TRACKS, SCHEMAS, TRUTH,
     cpplink_schema, schema_path,
 )
 
@@ -83,7 +83,7 @@ def main():
         for uid in origin["unique_id"]:
             writer.writerow([f"origin:{uid}", f"destination:{uid}"])
 
-    for track in CPPLINK_TRACKS:
+    for track in SCHEMA_TRACKS:
         with open(schema_path(track), "w") as handle:
             json.dump(cpplink_schema(track), handle, indent=2)
             handle.write("\n")

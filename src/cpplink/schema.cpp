@@ -203,7 +203,8 @@ std::string LevelSpec::Describe() const {
         case LevelType::kJaroWinkler:
             return "jaro_winkler >= " + Number(threshold, 2);
         case LevelType::kDateWithin:
-            return "within " + Number(threshold, 0) + " days";
+            return "within " + Number(threshold, 0) + " days" +
+                   (directed ? " after" : "");
         case LevelType::kNumericWithin:
             return "within " + Number(threshold, 3);
         case LevelType::kPercentageWithin:
@@ -297,10 +298,49 @@ bool SameSource(const Schema& schema, const std::string& a, const std::string& b
     if (left == nullptr || right == nullptr) return false;
     // A derivation is one level deep by construction, so the whole relation is
     // these three cases and no walk up a chain is needed.
-    if (left->IsDerived() && left->derive.from == b) return true;
-    if (right->IsDerived() && right->derive.from == a) return true;
-    return left->IsDerived() && right->IsDerived() &&
-           left->derive.from == right->derive.from;
+    const std::vector<std::string> from_left = left->Sources();
+    const std::vector<std::string> from_right = right->Sources();
+    const auto has = [](const std::vector<std::string>& list, const std::string& name) {
+        return std::find(list.begin(), list.end(), name) != list.end();
+    };
+    if (has(from_left, b) || has(from_right, a)) return true;
+    for (const std::string& shared : from_left) {
+        if (has(from_right, shared)) return true;
+    }
+    return false;
+}
+
+namespace {
+
+Schema WithoutSources(const Schema& schema, SourceUse dropped) {
+    Schema kept = schema;
+    kept.blocking.clear();
+    for (const BlockingSpec& spec : schema.blocking) {
+        if (spec.use != dropped) kept.blocking.push_back(spec);
+    }
+    return kept;
+}
+
+}  // namespace
+
+Schema SchemaForEstimation(const Schema& schema) {
+    return WithoutSources(schema, SourceUse::kPredict);
+}
+
+Schema SchemaForPrediction(const Schema& schema) {
+    return WithoutSources(schema, SourceUse::kEstimate);
+}
+
+const char* SourceUseName(SourceUse use) {
+    switch (use) {
+        case SourceUse::kBoth:
+            return "both";
+        case SourceUse::kEstimate:
+            return "estimate";
+        case SourceUse::kPredict:
+            return "predict";
+    }
+    return "both";
 }
 
 namespace {
@@ -571,6 +611,26 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                     return false;
                 }
             }
+            if (entry.contains("direction")) {
+                const std::string direction = entry["direction"].is_string()
+                                                  ? entry["direction"].get<std::string>()
+                                                  : "";
+                if (level.type != LevelType::kDateWithin) {
+                    *error = "comparison \"" + comparison.name + "\" level \"" +
+                             type_name +
+                             "\" has a \"direction\", which only "
+                             "date_within takes";
+                    return false;
+                }
+                if (direction == "forward") {
+                    level.directed = true;
+                } else if (direction != "either") {
+                    *error = "comparison \"" + comparison.name +
+                             "\" level \"date_within\" has \"direction\" \"" + direction +
+                             "\"; it must be forward or either";
+                    return false;
+                }
+            }
             if (entry.contains("label") && entry["label"].is_string()) {
                 level.label = entry["label"].get<std::string>();
             }
@@ -832,6 +892,21 @@ bool ParseBlocking(const nlohmann::json& root, Schema* schema, std::string* erro
         if (item.contains("seed") && item["seed"].is_number()) {
             spec.seed = static_cast<uint64_t>(item["seed"].get<double>());
         }
+        if (item.contains("use")) {
+            const std::string use =
+                item["use"].is_string() ? item["use"].get<std::string>() : "";
+            if (use == "both") {
+                spec.use = SourceUse::kBoth;
+            } else if (use == "estimate") {
+                spec.use = SourceUse::kEstimate;
+            } else if (use == "predict") {
+                spec.use = SourceUse::kPredict;
+            } else {
+                *error = "blocking source on \"" + spec.column + "\" has \"use\" \"" +
+                         use + "\"; it must be both, estimate or predict";
+                return false;
+            }
+        }
         if (spec.kind == SourceKind::kMinHash &&
             (spec.bands == 0 || spec.rows_per_band == 0 || spec.ngram == 0)) {
             *error = "minhash blocking on \"" + spec.column +
@@ -893,11 +968,51 @@ bool ParseSchema(const std::string& json_text, Schema* schema, std::string* erro
             !ParseDerive(item["derive"], spec.name, &spec.derive, error)) {
             return false;
         }
+        if (item.contains("derived_from")) {
+            const nlohmann::json& from = item["derived_from"];
+            if (from.is_string()) {
+                spec.derived_from.push_back(from.get<std::string>());
+            } else if (from.is_array()) {
+                for (const nlohmann::json& name : from) {
+                    if (!name.is_string()) {
+                        *error = "column \"" + spec.name +
+                                 "\" has a \"derived_from\" entry that is not a name";
+                        return false;
+                    }
+                    spec.derived_from.push_back(name.get<std::string>());
+                }
+            } else {
+                *error = "column \"" + spec.name +
+                         "\" has a \"derived_from\" that is neither a name nor a list";
+                return false;
+            }
+            if (spec.IsDerived()) {
+                *error = "column \"" + spec.name +
+                         "\" declares both \"derive\" and \"derived_from\"; a "
+                         "column cpplink computes already knows its source";
+                return false;
+            }
+        }
         parsed.columns.push_back(spec);
     }
     if (parsed.columns.empty()) {
         *error = "schema declares no columns";
         return false;
+    }
+    // A declared source has to be a column, and not the column itself; checked
+    // after the loop so a source declared later in the list still counts.
+    for (const ColumnSpec& spec : parsed.columns) {
+        for (const std::string& source : spec.derived_from) {
+            if (source == spec.name) {
+                *error = "column \"" + spec.name + "\" is derived from itself";
+                return false;
+            }
+            if (parsed.Find(source) == nullptr) {
+                *error = "column \"" + spec.name + "\" is derived from \"" + source +
+                         "\", which is not a column";
+                return false;
+            }
+        }
     }
 
     if (root.contains("unique_id")) {

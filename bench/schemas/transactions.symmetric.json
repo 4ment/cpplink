@@ -137,23 +137,19 @@
         },
         {
           "type": "date_within",
-          "threshold": 1,
-          "direction": "forward"
+          "threshold": 1
         },
         {
           "type": "date_within",
-          "threshold": 4,
-          "direction": "forward"
+          "threshold": 4
         },
         {
           "type": "date_within",
-          "threshold": 10,
-          "direction": "forward"
+          "threshold": 10
         },
         {
           "type": "date_within",
-          "threshold": 30,
-          "direction": "forward"
+          "threshold": 30
         },
         {
           "type": "else"
@@ -185,18 +181,6 @@
     {
       "type": "exact_value",
       "column": "k_amt2_week4",
-      "use": "predict"
-    },
-    {
-      "type": "sorted_neighbourhood",
-      "column": "amount_key",
-      "window": 10,
-      "use": "predict"
-    },
-    {
-      "type": "sorted_neighbourhood",
-      "column": "memo",
-      "window": 10,
       "use": "predict"
     },
     {
