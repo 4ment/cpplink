@@ -163,6 +163,58 @@ TEST(Amount, PercentageDifferenceIsOverTheLargerValueAndStrict) {
     EXPECT_EQ(comparisons.EvaluateOne(0, 5, 0), comparisons.EvaluateOne(0, 0, 5));
 }
 
+// A directed date window reads which input each row came from: the later input's
+// date on or after the earlier input's, within the threshold, whichever order the
+// pair arrives in. Two rows of one input have no earlier side and read the window
+// either way, and a store of one input cannot bind the level at all.
+TEST(DirectedDate, LaterInputOnOrAfterEarlierWithinTheWindow) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(R"({
+      "columns": [{"name": "when", "type": "date"}],
+      "comparisons": [{"name": "when", "columns": ["when"], "levels": [
+        {"type": "null"},
+        {"type": "date_within", "threshold": 1, "direction": "forward"},
+        {"type": "date_within", "threshold": 4, "direction": "forward"},
+        {"type": "date_within", "threshold": 4},
+        {"type": "else"}]}]})",
+                                     &schema, &error))
+        << error;
+    EXPECT_EQ(schema.comparisons[0].levels[1].Describe(), "within 1 days after");
+    cpplink::RecordStore store(schema);
+    auto& when = std::get<cpplink::DateColumn>(store.mutable_column(0));
+    // Input 0 is rows 0-2, input 1 is rows 3-6.
+    //             0    1    2  |  3    4    5    6
+    when.values = {100, 100, 100, 101, 104, 97, 120};
+    store.set_num_records(7);
+    store.set_datasets({0, 3, 7});
+    store.Finalize();
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 3), 1);  // one day after
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 4), 2);  // four days after
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 5),
+              3);  // three days *before*: only the window
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 6), 4);  // twenty days: else
+    // The pair the other way round is the same pair.
+    EXPECT_EQ(comparisons.EvaluateOne(0, 3, 0), 1);
+    EXPECT_EQ(comparisons.EvaluateOne(0, 5, 0), 3);
+    // Two rows of the earlier input: no side is later, so the directed level reads
+    // the window either way and fires on a same-day pair.
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 1), 1);
+    // Two rows of the later input, four days apart either way.
+    EXPECT_EQ(comparisons.EvaluateOne(0, 3, 5), 2);
+
+    cpplink::RecordStore single(schema);
+    std::get<cpplink::DateColumn>(single.mutable_column(0)).values = {100, 101};
+    single.set_num_records(2);
+    single.Finalize();
+    cpplink::ComparisonSet refused;
+    EXPECT_FALSE(refused.Bind(schema, single, &error));
+    EXPECT_NE(error.find("two inputs"), std::string::npos) << error;
+}
+
 // A null is not a value: it must never agree with anything, including another null.
 TEST_F(Fixture, NullsAgreeWithNothingIncludingOtherNulls) {
     EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 4), 0);

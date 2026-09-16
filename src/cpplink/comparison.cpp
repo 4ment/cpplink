@@ -71,6 +71,7 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
     bound_.clear();
     tables_.clear();
     width_ = 0;
+    dataset_starts_ = store.dataset_starts();
     // Several comparisons can read the same column, and the signatures belong to
     // the column's values, so they are built once per dictionary and shared.
     std::vector<std::pair<const Dictionary*, SignatureTable*>> built;
@@ -210,6 +211,15 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
             }
             bound.run_end[i] = static_cast<uint8_t>(end);
             bound.run_screen[i] = screen;
+        }
+
+        for (const LevelSpec& level : spec.levels) {
+            if (level.directed && store.NumDatasets() < 2) {
+                *error = "comparison \"" + spec.name +
+                         "\" has a directed date_within level, which reads which "
+                         "input a row came from; it needs two inputs and one was given";
+                return false;
+            }
         }
 
         bound_.push_back(bound);
@@ -543,9 +553,21 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, size_t index,
             const int32_t left = comparison.dates->values[a];
             const int32_t right = comparison.dates->values[b];
             if (left == kNullDate || right == kNullDate) return false;
-            const int64_t difference =
-                std::abs(static_cast<int64_t>(left) - static_cast<int64_t>(right));
-            return static_cast<double>(difference) <= level.threshold;
+            int64_t difference = static_cast<int64_t>(right) - static_cast<int64_t>(left);
+            if (level.directed) {
+                // Later input minus earlier input, whichever argument is which:
+                // the sampler and the enumerator do not agree on the order of a
+                // pair, and the level must not depend on it. Two rows of one
+                // input have no earlier side and fall through to the window.
+                const size_t side_a = DatasetOf(a);
+                const size_t side_b = DatasetOf(b);
+                if (side_a != side_b) {
+                    if (side_a > side_b) difference = -difference;
+                    return difference >= 0 &&
+                           static_cast<double>(difference) <= level.threshold;
+                }
+            }
+            return static_cast<double>(std::abs(difference)) <= level.threshold;
         }
 
         case LevelType::kNumericWithin: {

@@ -822,16 +822,38 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
             report->sessions.push_back(std::move(session));
             continue;
         }
-        // Two free comparisons give a 2x2 table with three degrees of freedom and
-        // the mixture has three free parameters, so the fit is saturated: it has
-        // two exact solutions and EM cannot tell them apart. Three is the floor
-        // for identifiability, and falling below it is a schema problem the run
-        // has to say out loud rather than quietly return the wrong root.
-        if (usable < 3) {
+        // Whether the free comparisons identify the mixture. The pattern table
+        // over them has prod(L_c) cells and so prod(L_c) - 1 degrees of freedom;
+        // the mixture spends 2 * sum(L_c - 1) on m and u and one on lambda. Two
+        // binary comparisons give a 2x2 table with three degrees of freedom
+        // against five parameters, so the fit is saturated and has two roots EM
+        // cannot tell apart, which is the case "fewer than three comparisons"
+        // used to refuse. But two comparisons of six and five levels have 29
+        // degrees of freedom against 19 parameters, and splink fits exactly that
+        // session; refusing it on the count of comparisons rather than of cells
+        // left a three-comparison schema with no blocked session at all. Only the
+        // levels a pair can land on count: a null level on a column with no
+        // nulls is a cell nothing fills.
+        double cells = 1.0;
+        double parameters = 1.0;  // lambda
+        for (size_t c = 0; c < count; ++c) {
+            if (excluded[c]) continue;
+            size_t reachable = 0;
+            for (size_t l = 0; l < u[c].size(); ++l) {
+                if (u[c][l] > kFloor) ++reachable;
+            }
+            reachable = std::max<size_t>(reachable, 1);
+            cells *= static_cast<double>(reachable);
+            parameters += 2.0 * static_cast<double>(reachable - 1);
+        }
+        if (cells - 1.0 < parameters) {
             session.warnings.push_back(
-                "only " + std::to_string(usable) +
-                " comparison(s) are free in this session, which does not identify "
-                "the mixture; give the schema more comparisons that do not read \"" +
+                "the " + std::to_string(usable) +
+                " free comparison(s) give a pattern table of " +
+                std::to_string(static_cast<uint64_t>(cells)) + " cells against " +
+                std::to_string(static_cast<uint64_t>(parameters)) +
+                " parameters, which does not identify the mixture; give the schema "
+                "more comparisons or levels that do not read \"" +
                 columns[i] + "\"");
             report->sessions.push_back(std::move(session));
             continue;

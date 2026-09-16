@@ -774,6 +774,7 @@ std::string SchemaToJson(const Schema& schema) {
         } else if (column.type_declared) {
             entry["type"] = ColumnTypeName(column.type);
         }
+        if (!column.derived_from.empty()) entry["derived_from"] = column.derived_from;
         root["columns"].push_back(entry);
     }
 
@@ -791,6 +792,7 @@ std::string SchemaToJson(const Schema& schema) {
                 level.type != LevelType::kElse) {
                 item["threshold"] = level.threshold;
             }
+            if (level.directed) item["direction"] = "forward";
             if (level.names_column) {
                 const std::string& column = comparison.columns[level.column];
                 item["column"] = column;
@@ -831,6 +833,7 @@ std::string SchemaToJson(const Schema& schema) {
             default:
                 break;
         }
+        if (source.use != SourceUse::kBoth) entry["use"] = SourceUseName(source.use);
         const std::string default_name =
             source.kind == SourceKind::kAllPairs
                 ? std::string("all pairs")

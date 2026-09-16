@@ -636,8 +636,8 @@ int RunSimplify(const std::vector<std::string>& args, std::ostream& out,
         return 1;
     }
     BlockingPlan plan;
-    if (!plan.Build(schema, store, DefaultMode(mode_given, mode, data_paths.size()),
-                    &error)) {
+    if (!plan.Build(SchemaForPrediction(schema), store,
+                    DefaultMode(mode_given, mode, data_paths.size()), &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -841,16 +841,22 @@ void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
 // blocks on nothing, so the same schema can be run blocked and unblocked without
 // being edited. It is what makes the schema's "blocking" section optional: on an
 // input small enough to enumerate, there is nothing for it to say.
+//
+// `for_estimation` says which union the plan is: estimation keeps the sources
+// declared `"use": "estimate"` and drops the `"use": "predict"` ones, prediction
+// the other way round, so the two purposes see only their own sources.
 bool LoadForBlocking(const std::string& schema_path,
                      const std::vector<std::string>& data_paths, PairMode mode,
                      Schema* schema, std::unique_ptr<RecordStore>* store,
                      BlockingPlan* plan, std::ostream& err, bool all_pairs = false,
-                     LoadStats* stats = nullptr) {
+                     LoadStats* stats = nullptr, bool for_estimation = false) {
     std::string error;
     if (!LoadSchemaFor(schema_path, data_paths, schema, &error)) {
         err << "cpplink: " << error << "\n";
         return false;
     }
+    *schema =
+        for_estimation ? SchemaForEstimation(*schema) : SchemaForPrediction(*schema);
     if (all_pairs) {
         BlockingSpec spec;
         spec.kind = SourceKind::kAllPairs;
@@ -1229,7 +1235,8 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
     BlockingPlan plan;
     if (!LoadForBlocking(schema_path, data_paths,
                          DefaultMode(mode_given, mode, data_paths.size()), &schema,
-                         &store, &plan, err, all_pairs)) {
+                         &store, &plan, err, all_pairs, nullptr,
+                         /*for_estimation=*/true)) {
         return 1;
     }
     if (schema.comparisons.empty()) {

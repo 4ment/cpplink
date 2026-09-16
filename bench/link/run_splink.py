@@ -5,10 +5,10 @@
 Track `demo` is splink's documentation example as written: the six SQL
 blocking rules including `block_on("unique_id")`, the directed date levels,
 u from a million random pairs, EM on memo then on amount, predictions at
-0.001. Track `matched` swaps the rules for the precomputed keys, drops the
-cheat and makes the date levels symmetric, which is the configuration the
-candidate sets can be verified identical to cpplink's under. Track `directed`
-is `matched` with the demo's directed date levels put back.
+0.001. Track `matched` swaps the rules for the precomputed keys and drops the
+cheat, which is the configuration the candidate sets can be verified identical
+to cpplink's under; the levels and the sessions are the demo's. Track
+`symmetric` is `matched` with the date window either side.
 
 Writes predictions.csv (origin_id, destination_id, match_probability) and
 timings.json into --out. Peak resident set is getrusage(RUSAGE_SELF), since
@@ -50,8 +50,9 @@ def amount_comparison():
 
 
 def date_comparison(directed):
-    # The demo's: destination on or after origin, within n days. The matched
-    # track's: within n days either way, which is what cpplink's level reads.
+    # The demo's: destination on or after origin, within n days, which is
+    # cpplink's `date_within` with `"direction": "forward"`. The symmetric
+    # track's: within n days either way.
     if directed:
         template = ("transaction_date_r - transaction_date_l <= {n} "
                     "and transaction_date_r >= transaction_date_l")
@@ -81,7 +82,7 @@ def build_settings(track):
         comparisons=[
             amount_comparison(),
             cl.LevenshteinAtThresholds("memo", MEMO_EDITS),
-            date_comparison(directed=track in ("demo", "directed")),
+            date_comparison(directed=track != "symmetric"),
         ],
         # The demo sets this true, for its dashboards; it widens every row of
         # the prediction table and is not part of either model.
@@ -103,7 +104,8 @@ class Timer:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--track", default="demo", choices=("demo", "matched", "directed"))
+    parser.add_argument("--track", default="demo",
+                        choices=("demo", "matched", "symmetric"))
     parser.add_argument("--out", required=True)
     parser.add_argument("--thresholds", default=THRESHOLDS)
     parser.add_argument("--threads", type=int, default=0)

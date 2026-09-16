@@ -81,6 +81,11 @@ bool Implies(const LevelSpec& upper, const LevelSpec& lower) {
         }
     }
     if (upper.type != lower.type) return false;
+    // A directed window sits inside the window either side at the same threshold,
+    // and not the other way round.
+    if (upper.type == LevelType::kDateWithin && !upper.directed && lower.directed) {
+        return false;
+    }
     switch (upper.type) {
         case LevelType::kLevenshtein:
         case LevelType::kDateWithin:

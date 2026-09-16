@@ -159,6 +159,15 @@ class ComparisonSet {
     // by pointer for the same reason the signature tables are: the vector may
     // grow, and a BoundComparison holds the data() of one of these.
     std::vector<std::unique_ptr<std::vector<uint32_t>>> alias_maps_;
+    // The store's input boundaries, for the one level that reads which side of a
+    // link a row is on. Empty for a single input, as in the store.
+    std::vector<uint64_t> dataset_starts_;
+    size_t DatasetOf(uint64_t row) const {
+        if (dataset_starts_.size() < 3) return 0;
+        size_t dataset = 0;
+        while (row >= dataset_starts_[dataset + 1]) ++dataset;
+        return dataset;
+    }
     uint8_t width_ = 0;
 };
 
