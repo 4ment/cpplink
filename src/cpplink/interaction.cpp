@@ -71,11 +71,6 @@ double GammaQ(double a, double x) {
     return std::exp(-x + a * std::log(x) - log_gamma) * h;
 }
 
-double ChiSquareTail(double statistic, uint64_t degrees) {
-    if (degrees == 0 || statistic <= 0.0) return 1.0;
-    return GammaQ(0.5 * static_cast<double>(degrees), 0.5 * statistic);
-}
-
 // The deviance of a table against the independence fit built from its own
 // margins: 2 sum O ln(O/E), on (rows - 1)(columns - 1) degrees of freedom.
 double Deviance(const std::vector<double>& table, size_t rows, size_t columns) {
@@ -105,6 +100,11 @@ double Deviance(const std::vector<double>& table, size_t rows, size_t columns) {
 }
 
 }  // namespace
+
+double ChiSquareTail(double statistic, uint64_t degrees) {
+    if (degrees == 0 || statistic <= 0.0) return 1.0;
+    return GammaQ(0.5 * static_cast<double>(degrees), 0.5 * statistic);
+}
 
 JointTables::JointTables(const std::vector<size_t>& levels) : levels_(levels) {
     const size_t count = levels_.size();
@@ -343,7 +343,8 @@ void FitInteractions(const ComparisonSet& comparisons,
             // already prices.
             const auto correction = [&](const std::vector<double>& share, double scale,
                                         std::vector<double>* bits, double* match_bits,
-                                        double* effect, double* widest) {
+                                        double* effect, double* widest,
+                                        std::vector<double>* fitted) {
                 std::vector<double> m_fit(height * width, 0.0);
                 for (size_t i = 0; i < height; ++i) {
                     for (size_t j = 0; j < width; ++j) {
@@ -354,6 +355,7 @@ void FitInteractions(const ComparisonSet& comparisons,
                 }
                 const double deviance = Deviance(m_fit, height, width);
                 FitToMargins(m_margin, m_right, &m_fit);
+                if (fitted != nullptr) *fitted = m_fit;
                 bits->assign(height * width, 0.0);
                 double signed_total = 0.0;
                 double absolute_total = 0.0;
@@ -392,9 +394,28 @@ void FitInteractions(const ComparisonSet& comparisons,
             };
 
             std::vector<double> bits;
+            std::vector<double> m_fitted;
             candidate.g2 += correction(match_share, mass, &bits, &candidate.match_bits,
-                                       &candidate.effect, &candidate.widest);
+                                       &candidate.effect, &candidate.widest, &m_fitted);
             candidate.p_value = ChiSquareTail(candidate.g2, candidate.degrees);
+            // What the fit found, as ratios the diagnostic can multiply into a
+            // pattern's probability: the joint over the product of the margins.
+            candidate.match_ratio.assign(height * width, 1.0);
+            candidate.random_ratio.assign(height * width, 1.0);
+            for (size_t i = 0; i < height; ++i) {
+                for (size_t j = 0; j < width; ++j) {
+                    if (!live[left][i] || !live[right][j]) continue;
+                    const size_t at = i * width + j;
+                    const double independent_m = m_margin[i] * m_right[j];
+                    const double independent_u = u_left[i] * u_margin[j];
+                    if (independent_m > 0.0 && m_fitted[at] > 0.0) {
+                        candidate.match_ratio[at] = m_fitted[at] / independent_m;
+                    }
+                    if (independent_u > 0.0 && u_fit[at] > 0.0) {
+                        candidate.random_ratio[at] = u_fit[at] / independent_u;
+                    }
+                }
+            }
             for (const double value : bits) {
                 if (std::fabs(value) >= options.clamp_bits) ++report->clamped;
             }
@@ -409,7 +430,7 @@ void FitInteractions(const ComparisonSet& comparisons,
                 double ignored_effect = 0.0;
                 double ignored_widest = 0.0;
                 correction(per_session[s], per_session_mass[s], &ignored_bits,
-                           &session_bits, &ignored_effect, &ignored_widest);
+                           &session_bits, &ignored_effect, &ignored_widest, nullptr);
                 if (session_bits * candidate.match_bits <= 0.0) {
                     candidate.weakest = 0.0;
                 } else if (std::fabs(session_bits) < std::fabs(candidate.weakest)) {

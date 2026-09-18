@@ -596,6 +596,105 @@ void CheckSession(const ComparisonSet& comparisons, const EmResult& em,
     }
 }
 
+std::string Scientific(double value) {
+    std::ostringstream buffer;
+    buffer << std::scientific << std::setprecision(1) << value;
+    return buffer.str();
+}
+
+std::string Fixed(double value, int places) {
+    std::ostringstream buffer;
+    buffer << std::fixed << std::setprecision(places) << value;
+    return buffer.str();
+}
+
+std::string Rounded(double value) {
+    return WithThousands(static_cast<uint64_t>(std::llround(std::max(value, 0.0))));
+}
+
+void PrintSessionFit(const SessionFit& fit, ReportDetail detail, std::ostream& out) {
+    if (!fit.measured) {
+        if (!fit.refusal.empty())
+            out << "  fit        not measured: " << fit.refusal << "\n";
+        return;
+    }
+    out << "  fit        G^2 " << Rounded(fit.deviance) << " on "
+        << WithThousands(fit.degrees) << " df (p " << Scientific(fit.p_value) << "), "
+        << Fixed(fit.bits, 4) << " bits per pair\n"
+        << "             " << WithThousands(fit.patterns) << " patterns over "
+        << WithThousands(fit.pairs) << " pairs put the sampling floor at "
+        << Fixed(fit.floor_bits, 4) << " bits\n";
+    if (fit.corrected) {
+        out << "  with terms G^2 " << Rounded(fit.corrected_deviance) << ", "
+            << Fixed(fit.corrected_bits, 4) << " bits per pair\n";
+    } else if (!fit.corrected_refusal.empty()) {
+        out << "  with terms not measured: " << fit.corrected_refusal << "\n";
+    }
+    if (fit.residuals.empty()) return;
+
+    // The compact report names the worst pair and stops: the table is what the
+    // full report is for.
+    if (detail == ReportDetail::kCompact) {
+        const PairResidual& worst = fit.residuals.front();
+        out << "  worst pair " << worst.left << " x " << worst.right << " at "
+            << Fixed(worst.bits, 4) << " bits per pair";
+        if (worst.corrected)
+            out << ", " << Fixed(worst.corrected_bits, 4) << " with terms";
+        out << "; " << fit.residuals.size() << " pair"
+            << (fit.residuals.size() == 1 ? "" : "s") << " in the full report\n";
+        return;
+    }
+
+    out << "  residuals  " << std::left << std::setw(18) << "Comparison" << std::setw(18)
+        << "Comparison" << std::right << std::setw(12) << "G^2" << std::setw(6) << "df"
+        << std::setw(9) << "p" << std::setw(8) << "bits";
+    if (fit.corrected) out << std::setw(8) << "after";
+    out << "\n";
+    for (const PairResidual& residual : fit.residuals) {
+        out << "             " << std::left << std::setw(18)
+            << Truncate(residual.left, 17) << std::setw(18)
+            << Truncate(residual.right, 17) << std::right << std::setw(12)
+            << Rounded(residual.g2) << std::setw(6) << residual.degrees << std::setw(9)
+            << Scientific(residual.p_value) << std::setw(8) << Fixed(residual.bits, 4);
+        if (fit.corrected) {
+            out << std::setw(8)
+                << (residual.corrected ? Fixed(residual.corrected_bits, 4) : "-");
+        }
+        out << "\n";
+    }
+}
+
+void PrintFitLegend(const EstimateReport& report, ReportDetail detail,
+                    std::ostream& out) {
+    bool any = false;
+    bool corrected = false;
+    for (const SessionReport& session : report.sessions) {
+        any = any || session.fit.measured;
+        corrected = corrected || session.fit.corrected;
+    }
+    if (!any) return;
+    out << "fit is each session's mixture against the histogram it was fitted to: G^2\n"
+        << "is 2 sum O ln(O/E) over the observed patterns, and bits per pair is that\n"
+        << "over 2 N ln 2, the average bits the model is wrong by on one of the\n"
+        << "session's pairs. The sampling floor is what an exact model would still\n"
+        << "read from N pairs over K patterns, about (K - 1) / (2 N ln 2); misfit is\n"
+        << "what sits above it. A residual is the same deviance over one pair of\n"
+        << "comparisons, and is where conditional independence fails. The p-value is\n"
+        << "the diagnostic and bits are the reading: G^2 grows with the run at a\n"
+        << "fixed misfit.\n";
+    if (detail == ReportDetail::kCompact) {
+        out << "Every residual pair of every session is in the full report, which\n"
+            << "--report <file> writes.\n";
+    }
+    if (corrected) {
+        out << "\"with terms\" and \"after\" are the same numbers once the admitted\n"
+            << "interactions are in the model; a pair a term names is fitted by\n"
+            << "construction, and what the whole table keeps is what the terms did\n"
+            << "not reach.\n";
+    }
+    out << "\n";
+}
+
 }  // namespace
 
 bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
@@ -793,6 +892,15 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         return false;
     };
 
+    // What the fit diagnostic reads once the interactions are in.
+    struct PendingFit {
+        size_t session = 0;
+        std::vector<PatternCount> entries;
+        std::vector<std::vector<double>> m;
+        double lambda = 0.0;
+        std::vector<bool> excluded;
+    };
+    std::vector<PendingFit> pending_fits;
     std::vector<SessionJoint> session_joints;
     double best_matches = 0.0;
     std::string best_column;
@@ -924,7 +1032,7 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
             continue;
         }
 
-        const std::vector<PatternCount> entries = histogram.Entries();
+        std::vector<PatternCount> entries = histogram.Entries();
         const EmResult em = RunEm(comparisons, entries, u, excluded, options);
         session.iterations = em.iterations;
         session.change = em.change;
@@ -960,6 +1068,16 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
             session.warnings.push_back(
                 "this session's m estimates were not merged into the model");
         }
+        // The fit is judged after the interactions are in, so what it needs is
+        // kept: the patterns, which are 1e2 to 1e5 whatever the run size, and the
+        // parameters EM converged on.
+        PendingFit pending;
+        pending.session = report->sessions.size();
+        pending.entries = std::move(entries);
+        pending.m = em.m;
+        pending.lambda = em.lambda;
+        pending.excluded = excluded;
+        pending_fits.push_back(std::move(pending));
         report->sessions.push_back(std::move(session));
     }
 
@@ -1061,10 +1179,33 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         FitInteractions(comparisons, session_joints, random_joint, model->lambda,
                         options.interactions, model, &report->interactions);
     }
+
+    // --- fit -----------------------------------------------------------------
+    // Every session's mixture against its own histogram, plain and with the
+    // admitted terms in. Nothing here changes a parameter: it is the reading of
+    // whether the independence the estimate assumed is what the counts show.
+    std::vector<InteractionRatios> ratios;
+    for (const InteractionCandidate& candidate : report->interactions.candidates) {
+        if (!candidate.admitted || candidate.match_ratio.empty()) continue;
+        InteractionRatios term;
+        for (size_t c = 0; c < count; ++c) {
+            if (comparisons.at(c).spec->name == candidate.left) term.left = c;
+            if (comparisons.at(c).spec->name == candidate.right) term.right = c;
+        }
+        term.match = candidate.match_ratio;
+        term.random = candidate.random_ratio;
+        ratios.push_back(std::move(term));
+    }
+    for (PendingFit& pending : pending_fits) {
+        report->sessions[pending.session].fit =
+            MeasureFit(comparisons, pending.entries, pending.m, u, pending.lambda,
+                       pending.excluded, ratios, FitOptions());
+    }
     return true;
 }
 
-void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
+void PrintEstimateReport(const EstimateReport& report, std::ostream& out,
+                         ReportDetail detail) {
     out << "u from " << WithThousands(report.u_pairs) << " random pairs";
     if (report.u_inputs > 1) {
         out << " drawn uniformly across " << report.u_inputs << " inputs";
@@ -1129,6 +1270,7 @@ void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
                 << session.implied_matches << " matching pairs among the "
                 << WithThousands(session.enumerated) << " it reached\n";
         }
+        PrintSessionFit(session.fit, detail, out);
         for (const std::string& note : session.notes) {
             out << "  note       " << note << "\n";
         }
@@ -1137,6 +1279,7 @@ void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
         }
         out << "\n";
     }
+    PrintFitLegend(report, detail, out);
     for (const std::string& warning : report.warnings) {
         out << "warning: " << warning << "\n";
     }
