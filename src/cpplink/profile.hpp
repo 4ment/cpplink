@@ -203,6 +203,16 @@ struct ColumnPairProfile {
     double m_redundant_bits = 0.0;
     bool m_resolved = false;
 
+    // The same joint read off known pairs where a truth file was given. Nothing
+    // above is fitted to it: it is what the anchor reading is scored against, in
+    // the same way `truth_m` scores the anchor m.
+    bool truth_m_resolved = false;
+    uint64_t truth_m_pairs = 0;  // known pairs carrying both columns on both rows
+    double truth_m_left = 0.0;
+    double truth_m_right = 0.0;
+    double truth_m_joint = 0.0;
+    double truth_m_redundant_bits = 0.0;
+
     // What the weight actually double-counts when both columns agree, which is the
     // M-side overlap less the U-side one: the score adds log2(m/u) twice, and only
     // the difference of the two corrections is wrong. Zero unless both sides read.
@@ -220,9 +230,12 @@ struct ColumnPairProfile {
         return right_informative ? determines_left - baseline_left : 0.0;
     }
 
-    // Whether this pair is worth a line in the suspects table, and why.
+    // Whether this pair is worth a line in the suspects table, what was found,
+    // and what to do about it. The finding and the remedy are separate strings
+    // because the same finding has one remedy on a schema and another on a run.
     bool Suspect() const;
     std::string Verdict() const;
+    std::string Remedy() const;
 };
 
 // One anchor: a column subset whose exact agreement makes a pair a match, and the
@@ -309,6 +322,12 @@ struct ProfileReport {
     double truth_expected_bits = 0.0;
     double truth_margin_bits = 0.0;
     double truth_mean_error = 0.0;  // mean |m - truth m| over the estimated columns
+    // The M side of the dependence map read off the known pairs: what the
+    // ledger's double count is with truth m in place of anchor m, and how far the
+    // anchor reading of each pair's overlap sits from it.
+    double truth_double_counted_bits = 0.0;
+    double truth_pair_mean_error = 0.0;  // mean |m redu - truth m redu|, both resolved
+    size_t truth_pairs_scored = 0;
 
     bool walked = false;  // whether the pairwise pass ran
     uint64_t sampled_rows = 0;

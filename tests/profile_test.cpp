@@ -170,8 +170,10 @@ TEST_F(ProfileFixture, DeterminationFindsTheDirection) {
     EXPECT_NEAR(pair.determines_right, 1.0, 1e-12);
     EXPECT_LT(pair.determines_left, 0.5);
     EXPECT_TRUE(pair.Suspect());
-    EXPECT_EQ(pair.Verdict(),
-              "x determines coarse: drop coarse, or make the two one comparison");
+    EXPECT_EQ(pair.Verdict(), "x determines coarse");
+    EXPECT_EQ(pair.Remedy(),
+              "drop coarse, or make the two one comparison; a session blocking on x "
+              "holds coarse out");
 }
 
 // A key determines everything and says nothing by doing so.
@@ -205,7 +207,10 @@ TEST_F(ProfileFixture, ContainmentNamesTheInnerColumn) {
     EXPECT_NEAR(pair.containment, 1.0, 1e-12);
     EXPECT_TRUE(pair.left_inside_right);
     EXPECT_TRUE(pair.Suspect());
-    EXPECT_EQ(pair.Verdict(), "x occurs inside full: make the two one comparison");
+    EXPECT_EQ(pair.Verdict(), "x occurs inside full");
+    EXPECT_EQ(pair.Remedy(),
+              "make the two one comparison, or declare full derived from x so both "
+              "hold-outs are told");
 }
 
 // The joint of two high-cardinality columns is rarer than the match rate, so on
@@ -445,6 +450,36 @@ TEST_F(AnchorFixture, TruthMReadsThePlantedRateTheAnchorEstimates) {
     // Every column of this fixture is corrupted on its own coin, so an anchor
     // selects nothing about the rest and the two margins land on each other.
     EXPECT_NEAR(report.estimated_margin_bits, report.truth_margin_bits, 1.0);
+}
+
+// The M side of the dependence map read off the known pairs: key3 and linked
+// are redrawn on one coin, so among matches they agree together far more often
+// than agreeing apart predicts, and key2 and soft are on separate coins. The
+// anchor reading of both is scored against it, and the ledger's truth margin
+// nets the true overlap rather than the anchors'.
+TEST_F(AnchorFixture, TruthPairsReadTheDependenceTheAnchorsEstimate) {
+    const cpplink::ProfileReport report =
+        BuildProfile(*store_, cpplink::PairMode::kAll, Options(), &Planted());
+    ASSERT_TRUE(report.truthed);
+    const cpplink::ColumnPairProfile& coupled = PairNamed(report, "key3", "linked");
+    ASSERT_TRUE(coupled.truth_m_resolved);
+    EXPECT_EQ(coupled.truth_m_pairs, kPlantedPairs);
+    EXPECT_NEAR(coupled.truth_m_redundant_bits, -std::log2(0.7), 0.06);
+    EXPECT_NEAR(coupled.m_redundant_bits, coupled.truth_m_redundant_bits, 0.1);
+    const cpplink::ColumnPairProfile& apart = PairNamed(report, "key2", "soft");
+    ASSERT_TRUE(apart.truth_m_resolved);
+    EXPECT_NEAR(apart.truth_m_redundant_bits, 0.0, 0.06);
+    EXPECT_GT(report.truth_pairs_scored, 0u);
+    EXPECT_LT(report.truth_pair_mean_error, 0.1);
+    EXPECT_LE(report.truth_double_counted_bits, 0.0);
+    EXPECT_NEAR(
+        report.truth_margin_bits,
+        report.prior_bits + report.truth_expected_bits + report.truth_double_counted_bits,
+        1e-9);
+    std::ostringstream out;
+    PrintProfileReport(report, out);
+    EXPECT_NE(out.str().find("True redu"), std::string::npos);
+    EXPECT_NE(out.str().find("    -> "), std::string::npos);
 }
 
 // Without a truth file nothing above changes and nothing below is reported, which
