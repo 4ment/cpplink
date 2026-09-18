@@ -1,0 +1,38 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cpplink"
+dynamic = ["version"]
+description = "Streaming Fellegi-Sunter record linkage, from Python"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "Mathieu Fourment"}]
+requires-python = ">=3.10"
+dependencies = ["numpy", "pyarrow"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/4ment/cpplink"
+Documentation = "https://4ment.github.io/cpplink/"
+
+[tool.scikit-build]
+# The version is CMake's project(cpplink VERSION ...), so there is one number.
+metadata.version.provider = "scikit_build_core.metadata.regex"
+metadata.version.input = "CMakeLists.txt"
+metadata.version.regex = 'project\(cpplink VERSION (?P<value>[0-9.]+)'
+cmake.args = ["-DCPPLINK_BUILD_PYTHON=ON"]
+cmake.build-type = "Release"
+wheel.packages = ["python/cpplink"]
+# Keep the extension's build out of build/, which is the CLI's.
+build-dir = "build/python"
+
+[tool.scikit-build.editable]
+mode = "redirect"
+rebuild = false
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

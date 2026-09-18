@@ -11,3 +11,12 @@ dependencies:
   - nlohmann_json
   - mkdocs-material
   - ninja
+  # The Python package: pybind11 builds the extension, scikit-build-core drives
+  # CMake from pip, and pyarrow is the same libarrow the extension links.
+  - python
+  - pip
+  - pybind11
+  - scikit-build-core
+  - pyarrow
+  - numpy
+  - pytest

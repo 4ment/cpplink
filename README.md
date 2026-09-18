@@ -343,6 +343,29 @@ cmake --build build
 ctest --test-dir build
 ```
 
+### From Python
+
+The same binary loads into the interpreter as the `cpplink` package, built with pybind11 inside the same environment:
+
+```sh
+pip install -e . --no-build-isolation -Ccmake.define.CMAKE_PREFIX_PATH=$CONDA_PREFIX
+```
+
+```python
+import cpplink
+
+linker = cpplink.Linker("schema.json", "sample.parquet")
+model, report = linker.estimate(out="model.json")
+linker.predict(model, "predictions.parquet", threshold=20)
+result = linker.cluster("predictions.parquet", truth="sample.truth.csv")
+print(result.quality)
+```
+
+`cpplink.run([...])` forwards an argument list to the command line in process, and `python -m cpplink ...` does the same from a shell.
+Every stage calls the functions the command calls, so a model estimated from Python with a seed is byte for byte the one the command writes.
+The extension links the environment's Arrow, which is the one `pyarrow` loads too, so it is built for the environment rather than shipped as a wheel.
+See [From Python](https://4ment.github.io/cpplink/python/).
+
 ## Prior art
 
 The blocking methods here are drawn from the record linkage and entity resolution literature rather than invented for this tool, and it is worth being explicit about which is which.
@@ -383,7 +406,7 @@ This project follows the [Google C++ Style Guide](https://google.github.io/style
 Tools used:
 
 - clang-format for formatting: `cmake --build build --target format`
-- cpplint for static analysis: `cpplint --recursive src tests`
+- cpplint for static analysis: `cpplint --recursive src tests python/bindings`
 
 ## License
 
