@@ -138,7 +138,8 @@ void PrintUsage(std::ostream& out) {
         << "cpplink recall --schema <schema.json> --truth <truth.csv> [--why]\n"
         << "               [--show-misses N] [--count] [--json] [--mode MODE]\n"
         << "               [--all-pairs] <file.parquet>...\n"
-        << "cpplink estimate --schema <schema.json> [--out <model.json>]\n"
+        << "cpplink estimate --schema <schema.json> [--out <model.json>] [--report "
+           "<file>]\n"
         << "                 [--u-sample N] [--session-pairs N] [--threads N]\n"
         << "                 [--iterations N] [--lambda F] [--seed N] "
            "[--mode MODE]\n"
@@ -1157,6 +1158,7 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
     std::string schema_path;
     std::vector<std::string> data_paths;
     std::string model_path;
+    std::string report_path;
     std::string value;
     EstimateOptions options;
     PairMode mode = PairMode::kAll;
@@ -1173,6 +1175,8 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
             all_pairs = true;
         } else if (args[i] == "--out") {
             if (!TakeValue(args, &i, &model_path, err)) return 1;
+        } else if (args[i] == "--report") {
+            if (!TakeValue(args, &i, &report_path, err)) return 1;
         } else if (args[i] == "--u-sample") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.u_sample = std::stoull(value);
@@ -1272,6 +1276,18 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
             return 1;
         }
         out << "\nWrote " << model_path << "\n";
+    }
+    // The full report is the same text with every residual pair of every session
+    // listed, plus the model, so the file stands on its own.
+    if (!report_path.empty()) {
+        std::ofstream file(report_path);
+        if (!file) {
+            err << "cpplink: cannot write " << report_path << "\n";
+            return 1;
+        }
+        PrintEstimateReport(report, file, ReportDetail::kFull);
+        PrintModel(model, file);
+        out << "Wrote the full report to " << report_path << "\n";
     }
     return 0;
 }

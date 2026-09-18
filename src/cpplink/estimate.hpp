@@ -10,6 +10,7 @@
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
+#include "cpplink/fit.hpp"
 #include "cpplink/interaction.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/neighbourhood.hpp"
@@ -86,6 +87,10 @@ struct SessionReport {
     double lambda = 0.0;           // the match rate among this session's pairs
     double implied_matches = 0.0;  // lambda x enumerated
     bool merged = false;           // whether its m estimates went into the model
+    // How far the fitted mixture sits from the histogram it was fitted to, per
+    // pair of free comparisons and over the whole table: the check on conditional
+    // independence that the likelihood EM maximised cannot make on its own.
+    SessionFit fit;
     std::vector<std::string> notes;
     std::vector<std::string> warnings;
 };
@@ -128,6 +133,12 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
               const BlockingPlan& plan, const EstimateOptions& options, Model* model,
               EstimateReport* report, std::string* error);
 
-void PrintEstimateReport(const EstimateReport& report, std::ostream& out);
+// The terminal gets the compact report: each session's fit and its worst residual
+// pair on one line. The full report lists every residual pair of every session,
+// and is what `--report <file>` writes.
+enum class ReportDetail { kCompact, kFull };
+
+void PrintEstimateReport(const EstimateReport& report, std::ostream& out,
+                         ReportDetail detail = ReportDetail::kCompact);
 
 }  // namespace cpplink

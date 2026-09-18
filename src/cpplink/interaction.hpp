@@ -118,6 +118,12 @@ struct InteractionCandidate {
     double contamination = 0.0;
     bool admitted = false;
     std::string reason;
+    // The fitted joint over the product of its own margins, under M and under U,
+    // one cell per level pair and 1 where a level is dead: the association the
+    // fit found, before the shrinkage and the clamp. Empty where the fit was not
+    // reached. The fit diagnostic reads these to ask what the term leaves behind.
+    std::vector<double> match_ratio;
+    std::vector<double> random_ratio;
 };
 
 struct InteractionReport {
@@ -159,6 +165,11 @@ void PrintInteractionReport(const InteractionReport& report, std::ostream& out);
 
 // Iterative proportional fitting of a two-way table to given margins. Exposed for
 // the test that asserts it moves the margins and not the odds ratios.
+// The upper tail of a chi-square distribution on `degrees` degrees of freedom
+// at `statistic`: the p-value of a deviance. Printed as a diagnostic wherever a
+// G^2 is, and never the decision, because it scales with the size of the run.
+double ChiSquareTail(double statistic, uint64_t degrees);
+
 void FitToMargins(const std::vector<double>& rows, const std::vector<double>& columns,
                   std::vector<double>* table);
 
