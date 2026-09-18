@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
 #include "cpplink/id_index.hpp"
 
 namespace cpplink {

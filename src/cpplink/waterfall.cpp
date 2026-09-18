@@ -27,10 +27,13 @@
 namespace cpplink {
 namespace {
 
-// One prediction as the merged file names it. `gamma` is what the run stored,
-// kept so a schema that has drifted from the file can be noticed.
+// One prediction as the merged file names it: a record is its id, qualified by
+// its dataset where the file carries one. `gamma` is what the run stored, kept
+// so a schema that has drifted from the file can be noticed.
 struct NamedPrediction {
+    std::string_view dataset_a;
     std::string_view id_a;
+    std::string_view dataset_b;
     std::string_view id_b;
     uint32_t gamma = 0;
 };
@@ -46,19 +49,24 @@ bool ForEachCsvPrediction(const std::string& path, const PredictionSink& sink,
     }
     std::string line;
     uint64_t number = 0;
+    EdgeCsvLayout layout;
     while (std::getline(file, line)) {
         ++number;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        if (number == 1 && line.rfind("id_a,", 0) == 0) continue;
-        NamedPrediction prediction;
-        double weight = 0.0;
-        if (!ParseEdgeCsvLine(line, &prediction.id_a, &prediction.id_b, &prediction.gamma,
-                              &weight)) {
+        if (number == 1 && ParseEdgeCsvHeader(line, &layout)) continue;
+        EdgeRow edge;
+        if (!ParseEdgeCsvLine(line, layout, &edge)) {
             *error = "explain: '" + path + "' line " + std::to_string(number) +
                      " is not a cpplink prediction row";
             return false;
         }
+        NamedPrediction prediction;
+        prediction.dataset_a = edge.dataset_a;
+        prediction.id_a = edge.id_a;
+        prediction.dataset_b = edge.dataset_b;
+        prediction.id_b = edge.id_b;
+        prediction.gamma = edge.gamma;
         if (!sink(prediction, error)) return false;
     }
     return true;
@@ -101,6 +109,17 @@ bool ForEachParquetPrediction(const std::string& path, const PredictionSink& sin
         }
         indices.push_back(at);
     }
+    const bool datasets = schema->GetFieldIndex("dataset_a") >= 0;
+    if (datasets) {
+        for (const char* name : {"dataset_a", "dataset_b"}) {
+            const int at = schema->GetFieldIndex(name);
+            if (at < 0) {
+                *error = "explain: '" + path + "' has dataset_a but no " + name;
+                return false;
+            }
+            indices.push_back(at);
+        }
+    }
     for (int group = 0; group < reader->num_row_groups(); ++group) {
         auto group_result = reader->ReadRowGroup(group, indices);
         if (!group_result.ok()) {
@@ -112,6 +131,8 @@ bool ForEachParquetPrediction(const std::string& path, const PredictionSink& sin
         const auto ids_a = table->GetColumnByName("id_a");
         const auto ids_b = table->GetColumnByName("id_b");
         const auto gammas = table->GetColumnByName("gamma");
+        const auto sets_a = datasets ? table->GetColumnByName("dataset_a") : nullptr;
+        const auto sets_b = datasets ? table->GetColumnByName("dataset_b") : nullptr;
         for (int chunk = 0; chunk < ids_a->num_chunks(); ++chunk) {
             const auto a_array =
                 std::dynamic_pointer_cast<arrow::StringArray>(ids_a->chunk(chunk));
@@ -119,15 +140,31 @@ bool ForEachParquetPrediction(const std::string& path, const PredictionSink& sin
                 std::dynamic_pointer_cast<arrow::StringArray>(ids_b->chunk(chunk));
             const auto gamma_array =
                 std::dynamic_pointer_cast<arrow::UInt32Array>(gammas->chunk(chunk));
-            if (a_array == nullptr || b_array == nullptr || gamma_array == nullptr) {
+            std::shared_ptr<arrow::StringArray> set_a;
+            std::shared_ptr<arrow::StringArray> set_b;
+            if (datasets) {
+                set_a =
+                    std::dynamic_pointer_cast<arrow::StringArray>(sets_a->chunk(chunk));
+                set_b =
+                    std::dynamic_pointer_cast<arrow::StringArray>(sets_b->chunk(chunk));
+            }
+            if (a_array == nullptr || b_array == nullptr || gamma_array == nullptr ||
+                (datasets && (set_a == nullptr || set_b == nullptr))) {
                 *error = "explain: '" + path +
-                         "' holds id_a, id_b or gamma in a type a cpplink prediction "
-                         "file does not use";
+                         "' holds id_a, id_b, dataset_a, dataset_b or gamma in a type "
+                         "a cpplink prediction file does not use";
                 return false;
             }
             for (int64_t row = 0; row < a_array->length(); ++row) {
-                if (a_array->IsNull(row) || b_array->IsNull(row)) continue;
+                if (a_array->IsNull(row) || b_array->IsNull(row) ||
+                    (datasets && (set_a->IsNull(row) || set_b->IsNull(row)))) {
+                    continue;
+                }
                 NamedPrediction prediction;
+                if (datasets) {
+                    prediction.dataset_a = set_a->GetView(row);
+                    prediction.dataset_b = set_b->GetView(row);
+                }
                 prediction.id_a = a_array->GetView(row);
                 prediction.id_b = b_array->GetView(row);
                 prediction.gamma = gamma_array->IsNull(row) ? 0 : gamma_array->Value(row);
@@ -431,12 +468,26 @@ bool WriteWaterfalls(const RecordStore& store, const ComparisonSet& comparisons,
     }
 
     const IdIndex index(store);
+    if (!index.Unique(error)) {
+        *error = "explain: " + *error;
+        return false;
+    }
+    // With a dataset the lookup is exact; without one it is answered only where
+    // a single record carries the id, as `cluster` reads the same file.
+    const auto resolve = [&](std::string_view dataset, std::string_view id,
+                             uint32_t* row) {
+        if (dataset.empty()) return index.Find(id, row) == IdLookup::kFound;
+        size_t which = 0;
+        return store.DatasetIndex(dataset, &which) &&
+               index.Find(which, id, row) == IdLookup::kFound;
+    };
     const PredictionSink each = [&](const NamedPrediction& prediction,
                                     std::string* trouble) {
         ++report->read;
         uint32_t a = 0;
         uint32_t b = 0;
-        if (!index.Find(prediction.id_a, &a) || !index.Find(prediction.id_b, &b)) {
+        if (!resolve(prediction.dataset_a, prediction.id_a, &a) ||
+            !resolve(prediction.dataset_b, prediction.id_b, &b)) {
             ++report->unresolved;
             return true;
         }

@@ -88,9 +88,4 @@ void PrintPairWaterfall(const RecordStore& store, const ComparisonSet& compariso
 // The same ledger as one JSON object on one line, for a tool that draws it.
 std::string PairWaterfallJson(const PairWaterfall& waterfall);
 
-// Resolves a unique_id to a row by linear scan. There is no id index: ids are
-// almost all distinct, so an index would cost as much as the values and is only
-// ever needed for one-off lookups like this one.
-bool FindRowById(const RecordStore& store, const std::string& id, uint64_t* row);
-
 }  // namespace cpplink

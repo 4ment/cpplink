@@ -722,15 +722,23 @@ bool ResolvePair(const RecordStore& store, const std::string& text, bool by_row,
         }
         return true;
     }
-    if (!FindRowById(store, first, row_a)) {
-        *error = "no record with id '" + first + "'";
-        return false;
-    }
-    if (!FindRowById(store, second, row_b)) {
-        *error = "no record with id '" + second + "'";
-        return false;
-    }
-    return true;
+    const auto resolve = [&](const std::string& text, uint64_t* row) {
+        const IdLookup found = FindRowById(store, text, row);
+        if (found == IdLookup::kMissing) {
+            *error = "no record with id '" + text + "'";
+            return false;
+        }
+        if (found == IdLookup::kAmbiguous) {
+            *error = "more than one record has id '" + text +
+                     "'; name its input as <dataset>:<id>, where the datasets are";
+            for (size_t d = 0; d < store.NumDatasets(); ++d) {
+                *error += (d == 0 ? " " : ", ") + store.DatasetName(d);
+            }
+            return false;
+        }
+        return true;
+    };
+    return resolve(first, row_a) && resolve(second, row_b);
 }
 
 int RunExplain(const std::vector<std::string>& args, std::ostream& out,
@@ -841,51 +849,6 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
         err << "cpplink: " << error << "\n";
         return 1;
     }
-
-    uint64_t row_a = 0;
-    uint64_t row_b = 0;
-    std::string first;
-    std::string second;
-    if (!pair.empty()) {
-        if (!SplitPair(pair, &first, &second)) {
-            err << "cpplink explain: --pair wants <id_a>,<id_b>\n";
-            return 1;
-        }
-        auto resolve = [&](const std::string& text, uint64_t* row) {
-            const IdLookup found = FindRowById(store, text, row);
-            if (found == IdLookup::kMissing) {
-                err << "cpplink explain: no record with id '" << text << "'\n";
-                return false;
-            }
-            if (found == IdLookup::kAmbiguous) {
-                err << "cpplink explain: more than one record has id '" << text
-                    << "'; name its input as <dataset>:<id>, where the datasets are";
-                for (size_t d = 0; d < store.NumDatasets(); ++d) {
-                    err << (d == 0 ? " " : ", ") << store.DatasetName(d);
-                }
-                err << "\n";
-                return false;
-            }
-            return true;
-        };
-        if (!resolve(first, &row_a) || !resolve(second, &row_b)) return 1;
-    } else {
-        if (!SplitPair(rows, &first, &second)) {
-            err << "cpplink explain: --rows wants <i>,<j>\n";
-            return 1;
-        }
-        row_a = std::stoull(first);
-        row_b = std::stoull(second);
-        if (row_a >= store.NumRecords() || row_b >= store.NumRecords()) {
-            err << "cpplink explain: row out of range; the file has "
-                << store.NumRecords() << " records\n";
-            return 1;
-        }
-    }
-
-    PrintGammaLayout(comparisons, out);
-    out << "\n";
-    PrintPairExplanation(store, comparisons, row_a, row_b, out);
 
     // Without a model there is no weight to explain: the levels are the whole
     // story, and the waterfall is simply not printed.
