@@ -39,6 +39,10 @@ if(BUILD_TESTING)
     file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
     add_executable(run_tests ${TEST_SOURCES})
     target_link_libraries(run_tests PRIVATE cpplink_core GTest::gtest_main)
+    # A test reading a checked-in fixture names it from the source tree, so the
+    # suite passes from ctest's working directory as well as from the root.
+    target_compile_definitions(run_tests PRIVATE
+        CPPLINK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
     # Arrow pulls in a large shared library graph; discovery needs longer than the
     # 5 s default to load it.
