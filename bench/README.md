@@ -1,8 +1,9 @@
-# cpplink vs splink: a deduplication benchmark
+# cpplink vs splink: a deduplication benchmark, and a linkage one
 
 A like-for-like comparison of [splink](https://moj-analytical-services.github.io/splink/)
 and cpplink on public deduplication datasets, at a scale small enough that both tools
 finish in seconds and the whole thing is reproducible on a laptop.
+The same comparison on a link between two tables, splink's own transactions example, is [further down](#linking-two-tables-the-transactions-benchmark).
 
 The point is *not* to show cpplink winning. cpplink's design claim is about **20M records**,
 where splink's pair table does not fit; at 50k records splink's pair table fits easily and
@@ -62,8 +63,9 @@ Everything downstream of the candidate pairs, which is what the benchmark measur
 
 - **How `m` is estimated.** splink runs one EM pass per blocking rule, holding out the
   comparisons that rule blocks on. cpplink runs one session per *column* an EM-safe source
-  conditions on, holds out every comparison reading that column, and refuses a session with
-  fewer than three free comparisons. Same idea, different bookkeeping.
+  conditions on, holds out every comparison reading that column, and refuses a session whose
+  free comparisons' pattern table has fewer cells than the mixture has parameters. Same idea,
+  different bookkeeping.
 - **How `u` is estimated.** Both sample 10⁶ random pairs, but cpplink computes `u` in
   closed form from term frequencies for null and exact levels and samples only the rest.
 - **Scoring.** cpplink brackets each pattern's TF-adjusted score (`Δ_max`/`Δ_min`) and skips
@@ -424,6 +426,163 @@ is the worst case for it, because the join is embarrassingly parallel and the sa
 between them, so half of the cost is redundant across a two-command run and would not be paid by a caller
 that scored under one process.
 
+## Linking two tables: the transactions benchmark
+
+Everything above deduplicates one file.
+This section links two, on the example splink's documentation uses for it: [`transactions_origin` and `transactions_destination`](https://moj-analytical-services.github.io/splink/demos/examples/duckdb/transactions.html), 45,326 fake bank transactions each, where origin row *i* is the payment that destination row *i* received.
+The money arrives days later, the amount differs by fees and exchange, and the memo is truncated or altered, so no column agrees exactly on most pairs.
+The two tables share their `unique_id` space, 0 to 45,325 in both, which is the shape cpplink's dataset-qualified ids exist for: the truth file names its pairs `origin:17,destination:17`, and both tools' prediction files name each record by dataset and id.
+
+The harness is [`link/`](link/), separate from the deduplication one because the truth has a different shape.
+There is one true pair per origin record and no entity to cluster, so quality is pairwise precision and recall over the predictions at or above a threshold, with no closure, computed by [`link/score.py`](link/score.py) from both tools' files.
+
+### What is held fixed
+
+The comparisons are the demo's: amount at exact, then within 1%, 3%, 10% and 30% (splink's `PercentageDifferenceLevel`, strict and over the larger value, which cpplink has as `percentage_within`); memo at exact, then Levenshtein 2, 6 and 10; date on or after, within 1, 4, 10 and 30 days (`date_within` with `"direction": "forward"`, which reads which input each row came from and is the reason the level needs two).
+λ is the demo's `1 / len(df_origin)` in both.
+`u` is a million random cross pairs in both.
+The blocking rules are the demo's, made into key equalities: the demo's SQL expressions are evaluated once by duckdb into the parquet both tools read ([`link/transactions.py`](link/transactions.py)), so `substr(memo, 1, 9)` is the same column in both.
+Two of the demo's rules read the two sides differently, shifting the origin date by 15 days and the origin amount by a dollar, and a link between two files allows exactly that: the key is computed from a different expression per file.
+`bench/link/bench.py --verify` counts each key in both tools and requires agreement to the pair:
+
+```
+  k_month_memo3      cpplink    2,503,926   splink    2,503,926   ok
+  k_month15_memo3    cpplink    2,433,224   splink    2,433,224   ok
+  k_memo9            cpplink      330,510   splink      330,510   ok
+  k_amt2_week        cpplink      353,563   splink      353,563   ok
+  k_amt2_week4       cpplink      352,877   splink      352,877   ok
+```
+
+**And how `m` is estimated is held fixed too, which took three things cpplink did not have.**
+The demo trains with one EM session blocked on memo and one on amount, neither of which is a prediction rule, each holding out the comparison it blocks on and fitting the other two.
+cpplink now runs the same two sessions, from sources the schema declares `"use": "estimate"`: they condition a session and produce no candidate, and a `"use": "predict"` source is the reverse.
+The amount is blocked on through `amount_key`, the amount written as a zero-padded string, declared `"derived_from": ["amount"]` so the session holds the amount comparison out; every precomputed key carries the same declaration, which is what tells the tie hold-out that `k_amt2_week` conditions on the amount and the date without a pairwise pass having to find a composite key's dependency in the rows, which it cannot.
+And a session of two free comparisons is allowed where its pattern table identifies the mixture.
+The old rule refused any session with fewer than three, on the argument that two binary comparisons give a 2x2 table with three degrees of freedom against five parameters; that argument is about cells, not comparisons, and the amount's six reachable levels against the date's five give 29 degrees of freedom against 19 parameters.
+The rule now counts cells against parameters, refuses two binary comparisons as before, and runs this session.
+What refusing it cost is the `unblocked` row below.
+
+### Tracks
+
+| track | tools | blocking | date levels | m estimation |
+|---|---|---|---|---|
+| `demo` | both | the demo's six SQL rules, including `block_on("unique_id")`, which the demo itself calls a cheat and which reaches every true pair by construction; cpplink runs the five keys plus a `k_uid` key, a superset of the demo's candidates on the two rules whose amount-ratio conjunct has no key form | directed | the two blocked sessions |
+| `matched` | both | the five keys, verified identical | directed | the two blocked sessions |
+| `symmetric` | both | the five keys | a window either side | the two blocked sessions |
+| `native` | cpplink | the five keys plus sorted neighbourhood on amount and on memo | directed | the two blocked sessions |
+| `unblocked` | cpplink | the five keys | directed | a Bernoulli sample of 100M of the 2.05bn cross pairs, holding nothing out |
+
+### Results
+
+Measured 2026-09-16 on darwin/arm64, single-threaded, median of 3 runs, thresholds swept from 0.001 to 0.999 on match probability.
+Reproduce with `python bench/link/prepare.py` then `python bench/link/bench.py --repeat 3 --threads 1`; every number is in `results/transactions/summary.json`.
+
+Best F1 over the grid, with the threshold it sits at:
+
+| track | tool | thr | predicted | precision | recall | F1 |
+|---|---|---:|---:|---:|---:|---:|
+| demo | cpplink | 0.1 | 44,007 | 0.7858 | 0.7630 | **0.7742** |
+| demo | splink | 0.1 | 43,906 | 0.7855 | 0.7609 | 0.7730 |
+| matched | cpplink | 0.1 | 44,001 | 0.7858 | 0.7628 | **0.7741** |
+| matched | splink | 0.1 | 43,902 | 0.7855 | 0.7608 | 0.7730 |
+| symmetric | cpplink | 0.1 | 38,353 | 0.8095 | 0.6850 | 0.7421 |
+| symmetric | splink | 0.1 | 42,332 | 0.7533 | 0.7036 | 0.7276 |
+| native | cpplink | 0.1 | 45,041 | 0.7678 | 0.7630 | 0.7654 |
+| unblocked | cpplink | 0.1 | 43,746 | 0.7886 | 0.7611 | 0.7746 |
+
+F1 at every threshold:
+
+| track | tool | 0.001 | 0.01 | 0.1 | 0.5 | 0.9 | 0.99 | 0.999 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| demo | cpplink | 0.2438 | 0.6156 | 0.7742 | 0.7361 | 0.6882 | 0.4916 | 0.1961 |
+| demo | splink | 0.2436 | 0.6150 | 0.7730 | 0.7339 | 0.6613 | 0.4916 | 0.1961 |
+| matched | cpplink | 0.2437 | 0.6155 | 0.7741 | 0.7361 | 0.6882 | 0.4916 | 0.1961 |
+| matched | splink | 0.2436 | 0.6149 | 0.7730 | 0.7339 | 0.6613 | 0.4916 | 0.1961 |
+| symmetric | cpplink | 0.2936 | 0.5315 | 0.7421 | 0.7088 | 0.6606 | 0.4915 | 0.1961 |
+| symmetric | splink | 0.2922 | 0.5315 | 0.7276 | 0.7134 | 0.6606 | 0.4915 | 0.1873 |
+| native | cpplink | 0.2325 | 0.6005 | 0.7654 | 0.7335 | 0.6879 | 0.4916 | 0.1961 |
+| unblocked | cpplink | 0.2443 | 0.6218 | 0.7746 | 0.7282 | 0.6882 | 0.4916 | 0.1961 |
+
+**The parity test passes, and at the top of the scale to the pair.**
+On the matched track the two tools find the same 43,724 true pairs at 0.001, and emit the same predictions with the same true positives at 0.99 (14,790 with 14,777) and 0.999 (4,927 with 4,927).
+Best F1 is 0.7741 against 0.7730, and the two are within 0.003 at every threshold from 0.001 to 0.5.
+At 0.9 they part by 0.027: cpplink emits 24,092 predictions with 23,887 true against splink's 22,536 with 22,438, one pattern of about 1,500 pairs sitting on either side of the threshold under the two tools' sampled `u`, and it is back to the pair at 0.99.
+The same holds on the demo track, where cpplink's blocking is a superset of splink's on two rules and the cheat is in both: 0.7742 against 0.7730.
+
+**The models agree with each other and with the truth.**
+Every true pair is known, so the match rate of each level can be read off the 45,326 pairs and set beside what each tool estimated on the matched track, and beside the estimate cpplink had to make before it could run the demo's sessions:
+
+| comparison | level | truth m | cpplink m | splink m | cpplink unblocked m |
+|---|---|---:|---:|---:|---:|
+| amount | exact | 0.2537 | 0.2482 | 0.2474 | 0.2703 |
+|  | within 1% | 0.1962 | 0.1987 | 0.1981 | 0.1845 |
+|  | within 3% | 0.3190 | 0.3188 | 0.3177 | 0.3216 |
+|  | within 10% | 0.2308 | 0.2326 | 0.2315 | 0.2231 |
+|  | within 30% | 0.0004 | 0.0001 | 0.0004 | 0.0002 |
+|  | else | 0.0000 | 0.0016 | 0.0049 | 0.0002 |
+| memo | exact | 0.4380 | 0.4277 | 0.4273 | 0.4435 |
+|  | levenshtein <= 2 | 0.1050 | 0.1086 | 0.1086 | 0.0991 |
+|  | levenshtein <= 6 | 0.2621 | 0.2614 | 0.2613 | 0.2375 |
+|  | levenshtein <= 10 | 0.1454 | 0.1477 | 0.1476 | 0.1663 |
+|  | else | 0.0496 | 0.0547 | 0.0552 | **0.0536** |
+| date | within 1 day after | 0.3872 | 0.3888 | 0.3890 | 0.3929 |
+|  | within 4 days after | 0.4655 | 0.4659 | 0.4658 | 0.4764 |
+|  | within 10 days after | 0.0957 | 0.0961 | 0.0961 | 0.0967 |
+|  | within 30 days after | 0.0516 | 0.0492 | 0.0490 | **0.0337** |
+|  | else | 0.0000 | 0.0001 | 0.0001 | 0.0002 |
+
+The two tools' blocked sessions agree to 0.001 on thirteen of sixteen levels and both sit within 0.011 of the truth everywhere, mean absolute error 0.002 and 0.003.
+The unblocked estimate is the one to watch, and what it shows is instability rather than a fixed bias.
+5.0% of matches have a memo more than ten edits from its partner; in this run the unblocked session reads that level at 0.0536, and in the run before it, identical but for the `u` sample being redrawn, it read 0.0002, at the floor, with the report saying so ("m at the floor: no matching pair reached this level").
+The blocked sessions read 0.054 and 0.055 in both runs.
+The mechanism is what makes the level fragile: a hundred million sampled pairs hold about 2,200 matches and about 110 of them sit at memo `else`, but so do 88% of the non-matches, and with nothing held out and λ at 2 x 10^-5 the responsibility EM gives such a pair is small enough that whether the level survives depends on where the iteration starts, which the sampled `u` sets.
+A session blocked on the amount sees the same pairs at a within-block match rate several orders of magnitude higher, and keeps them from any start.
+The date's 10-to-30-day level, 5.2% of matches, reads 0.034 unblocked against 0.049 blocked in this run for the same reason.
+At the F1 optimum the two estimators score alike, 0.7746 against 0.7741, because the pairs a collapsed level loses are mostly ones the threshold would have refused anyway; the difference is a model whose report says what it could not see against one that saw it, and 30 s against 0.8.
+
+**The direction of the date is worth 0.032 to 0.045 F1.**
+The `symmetric` track is `matched` with the date window either side in both tools: cpplink 0.7741 to 0.7421, splink 0.7730 to 0.7276.
+The truth explains the gain: no destination transaction precedes its origin (minimum lag 1 day, maximum 21), while among random cross pairs a date within 30 days before is as common as one within 30 days after (24.3% against 27.0%).
+A directed level therefore halves `u` on every date level, a bit each, and refuses every candidate with the dates the wrong way round.
+In link mode the two sides of a pair are the two inputs, which is what makes the direction well defined; two rows of one input have no earlier side and the level reads the window either way there.
+
+**The demo's tighter blocking and its cheat rule add nothing.**
+The five keys reach 99.94% of the true pairs and the cheat adds 27 candidates to 4,459,417; both tools' demo rows reproduce their matched rows to the pair at 0.9 and above.
+
+**cpplink's automatic sources reach more pairs and score worse, again.**
+Sorted neighbourhood on amount and on memo adds 606k candidates, takes blocking recall from 0.9994 to 0.9998, and takes F1 from 0.7741 to 0.7654 at the same threshold.
+The pairs it adds are the ones the keys were right to leave out.
+
+### Cost
+
+| track | tool | candidates | blocking recall | estimate s | predict s | pipeline s | peak RSS |
+|---|---|---:|---:|---:|---:|---:|---:|
+| demo | cpplink | 4,459,444 | 1.0000 | 1.01 | 0.89 | 1.90 | 99.2 MiB |
+| demo | splink |  |  | 3.49 | 4.56 | 8.15 | 654.8 MiB |
+| matched | cpplink | 4,459,417 | 0.9994 | 0.83 | 0.87 | 1.70 | 94.7 MiB |
+| matched | splink | 4,459,417 | 0.9994 | 3.52 | 12.73 | 16.35 | 1.1 GiB |
+| symmetric | cpplink | 4,459,417 | 0.9994 | 0.84 | 0.88 | 1.72 | 95.1 MiB |
+| symmetric | splink | 4,459,417 | 0.9994 | 3.33 | 13.24 | 16.73 | 1.1 GiB |
+| native | cpplink | 5,065,389 | 0.9998 | 0.88 | 1.05 | 1.94 | 93.2 MiB |
+| unblocked | cpplink | 4,459,417 | 0.9994 | 29.68 | 0.91 | 30.59 | 94.4 MiB |
+
+splink's estimate column is its `u` sampling plus its two EM sessions; its load is about 0.1 s and is left out.
+
+**On identical candidates and the same two sessions, the same quality costs cpplink 1.70 s and 94.7 MiB against splink's 16.35 s and 1.1 GiB.**
+Scoring is 0.87 s against 12.73 s and estimation 0.83 s against 3.52 s, on one thread each.
+That is the shape the deduplication benchmark measured, on a link.
+
+**The unblocked estimator is the same quality for eighteen times the wall clock.**
+Sampling a hundred million pairs of a two-billion-pair cross product means enumerating all two billion, about 13 s on one thread before a comparison is made, and comparing the sample is the rest; the two blocked sessions compare 53k and 37k pairs.
+It is what cpplink had to do when a two-free-comparison session was refused, and it is still the right estimator where a schema's columns are tied to each other and no session can hold the tie out, which this schema's are not.
+
+### What this benchmark does not settle
+
+The comparison is one dataset of 45k rows a side, with three comparisons, which is the smallest schema either tool is likely to see.
+Two of the three declarations that made the matched track matched are things a user has to write: `derived_from` on a key the file's preparer computed, and `"use": "estimate"` on a source that trains but does not score.
+splink asks for the same two facts in the same places, as the column expression inside `block_on` and as the argument to its EM call, so this is parity rather than a new burden, but a schema that leaves either out gets a session that holds the wrong thing out or a key that scores.
+And the link is between two files of the same population, which is the assumption the pooled term-frequency tables make; no comparison here uses term frequency, so that assumption went untested.
+
 ## Comparing blocking methods
 
 The benchmark above holds blocking fixed and measures the model. This section does the
@@ -580,6 +739,10 @@ bench/
   score.py         the one scorer, used for both
   bench.py         orchestration, repeats, the parity check, the report
   sweep_blocking.py  the blocking-method frontier: one curve per method per knob
+  link/            the transactions linkage benchmark: two tables, shared ids
+    transactions.py  the description both tools compile from, keys as duckdb SQL
+    prepare.py       splink_datasets -> two typed parquet files, keys, qualified truth
+    run_cpplink.py, run_splink.py, score.py, bench.py   as above, for a link
   schemas/         generated cpplink schemas, one per dataset per track
   data/            generated inputs (gitignored)
   results/         generated outputs (gitignored)
@@ -598,6 +761,10 @@ python bench/prepare.py                   # download, convert, write ground trut
 python bench/bench.py --verify            # assert the candidate sets match
 python bench/bench.py --repeat 3 --threads 1     # the benchmark, as published
 python bench/sweep_blocking.py           # the blocking-method frontier
+
+python bench/link/prepare.py             # the two transactions tables and their keys
+python bench/link/bench.py --verify      # the matched keys count the same in both
+python bench/link/bench.py --repeat 3 --threads 1   # the linkage benchmark
 ```
 
 `sweep_blocking.py` needs only the cpplink binary and the prepared parquet — no splink.

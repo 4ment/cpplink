@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <variant>
@@ -14,6 +16,7 @@
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
 #include "cpplink/estimate.hpp"
+#include "cpplink/explain_blocking.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/pair_stream.hpp"
 #include "cpplink/record_store.hpp"
@@ -25,21 +28,26 @@ using Pair = std::pair<uint32_t, uint32_t>;
 using PairSet = std::set<Pair>;
 
 constexpr uint64_t kRows = 12;
-constexpr uint64_t kSplit = 7;  // rows 0..6 came from the first input, 7..11 the second
-
-// Twelve rows across two inputs, arranged so that every shape a group can take is
-// present: one straddling the split, one wholly inside the first input, one wholly
-// inside the second, a singleton, and a null.
+// Twelve rows, read as two inputs or as three, arranged so that every shape a group
+// can take is present: one straddling a split, one wholly inside an input, a
+// singleton, and a null. The two-input split is at row 7; the three-input split is
+// at rows 4 and 7, so the first input's "green" group and its "smith" group each
+// sit wholly inside one of the smaller inputs and the cross pairs between the two
+// smaller inputs exist.
 //
-//   row       0     1     2      3      4      5     6   | 7     8     9      10     11
-//   surname   smith smith jones  green  green  brown -   | smith smith jones  white white
-//   dob       100   100   200    200    300    300   -   | 100   200   300    400    400
+//   row       0     1     2      3   |  4      5     6   | 7     8     9      10     11
+//   surname   smith smith jones  green| green  brown -   | smith smith jones  white white
+//   dob       100   100   200    200  | 300    300   -   | 100   200   300    400    400
+using Split = std::vector<uint64_t>;
+const Split kTwoInputs = {0, 7, 12};
+const Split kThreeInputs = {0, 4, 7, 12};
+
 constexpr const char* kColumns = R"("columns":[
     {"name":"surname","type":"string"},
     {"name":"dob","type":"date"},
     {"name":"city","type":"string"}])";
 
-class LinkFixture : public ::testing::Test {
+class LinkFixture : public ::testing::TestWithParam<Split> {
    protected:
     void SetUp() override { MakeStore(); }
 
@@ -80,7 +88,7 @@ class LinkFixture : public ::testing::Test {
         city.ids = {c0, c1, c0, c1, c0, c1, c0, c0, c1, c0, c1, c0};
 
         store_->set_num_records(kRows);
-        store_->set_datasets({0, kSplit, kRows});
+        store_->set_datasets(GetParam());
         store_->Finalize();
     }
 
@@ -103,11 +111,21 @@ class LinkFixture : public ::testing::Test {
         return pairs;
     }
 
-    static bool Crosses(uint32_t a, uint32_t b) { return (a < kSplit) != (b < kSplit); }
+    bool Crosses(uint32_t a, uint32_t b) const {
+        return store_->DatasetOf(a) != store_->DatasetOf(b);
+    }
+    double CrossPairs() const {
+        return store_->PairSpace(cpplink::PairMode::kCrossDataset);
+    }
 
     cpplink::Schema schema_;
     std::unique_ptr<cpplink::RecordStore> store_;
 };
+
+INSTANTIATE_TEST_SUITE_P(Inputs, LinkFixture, ::testing::Values(kTwoInputs, kThreeInputs),
+                         [](const ::testing::TestParamInfo<Split>& info) {
+                             return info.param.size() == 3 ? "Two" : "Three";
+                         });
 
 const std::vector<std::string>& Configurations() {
     static const std::vector<std::string> configs = {
@@ -129,7 +147,7 @@ const std::vector<std::string>& Configurations() {
 // the dedup stream with the within-input pairs removed, and nothing else. It is
 // asserted rather than argued because the enumeration does not filter -- it jumps
 // to a contiguous partner range -- so a bug there loses pairs silently.
-TEST_F(LinkFixture, CrossDatasetIsExactlyTheDedupStreamWithoutTheWithinInputPairs) {
+TEST_P(LinkFixture, CrossDatasetIsExactlyTheDedupStreamWithoutTheWithinInputPairs) {
     for (const std::string& config : Configurations()) {
         cpplink::BlockingPlan all;
         cpplink::BlockingPlan cross;
@@ -148,7 +166,7 @@ TEST_F(LinkFixture, CrossDatasetIsExactlyTheDedupStreamWithoutTheWithinInputPair
 // CountPairs is exact in dedup mode from the term frequencies alone. Those pool
 // the inputs, so link mode counts a different way -- and the equivalence with
 // enumeration has to hold there too or the cost report is lying.
-TEST_F(LinkFixture, CountMatchesEnumerationForEverySourceInLinkMode) {
+TEST_P(LinkFixture, CountMatchesEnumerationForEverySourceInLinkMode) {
     for (const std::string& config : Configurations()) {
         cpplink::BlockingPlan plan;
         Plan(config, cpplink::PairMode::kCrossDataset, &plan);
@@ -170,7 +188,7 @@ TEST_F(LinkFixture, CountMatchesEnumerationForEverySourceInLinkMode) {
 // pooled count scaled to the cross share of the pair space -- exact if a value's
 // rows split as the rows do, an estimate otherwise, and said to be one. Windows
 // and the unblocked source are closed form either way and stay exact.
-TEST_F(LinkFixture, ApproximateCountIsExactWhereNoSortIsNeededAndSaysSoWhereItIsNot) {
+TEST_P(LinkFixture, ApproximateCountIsExactWhereNoSortIsNeededAndSaysSoWhereItIsNot) {
     for (const std::string& config : Configurations()) {
         cpplink::BlockingPlan dedup;
         Plan(config, cpplink::PairMode::kAll, &dedup);
@@ -183,8 +201,7 @@ TEST_F(LinkFixture, ApproximateCountIsExactWhereNoSortIsNeededAndSaysSoWhereItIs
 
         cpplink::BlockingPlan link;
         Plan(config, cpplink::PairMode::kCrossDataset, &link);
-        const double share = static_cast<double>(kSplit * (kRows - kSplit)) /
-                             static_cast<double>(kRows * (kRows - 1) / 2);
+        const double share = CrossPairs() / static_cast<double>(kRows * (kRows - 1) / 2);
         for (size_t s = 0; s < link.Size(); ++s) {
             bool exact = false;
             const uint64_t priced = link.ApproximatePairs(s, &exact);
@@ -207,7 +224,7 @@ TEST_F(LinkFixture, ApproximateCountIsExactWhereNoSortIsNeededAndSaysSoWhereItIs
 // A task is rows [begin, end) of one group, so the partner cursor has to be
 // correct for a range that does not start at the group's first row. Every split
 // point is checked, because only the first row of a task exercises that setup.
-TEST_F(LinkFixture, AGroupSplitIntoRowRangesEmitsTheSamePairs) {
+TEST_P(LinkFixture, AGroupSplitIntoRowRangesEmitsTheSamePairs) {
     cpplink::BlockingPlan plan;
     Plan(R"([{"type":"exact_value","column":"surname"}])",
          cpplink::PairMode::kCrossDataset, &plan);
@@ -239,10 +256,10 @@ TEST_F(LinkFixture, AGroupSplitIntoRowRangesEmitsTheSamePairs) {
 // the whole store is one group there -- so the partner cursor is walked over every
 // row of the store rather than over a handful, and the count has to be the cross
 // product exactly.
-TEST_F(LinkFixture, AllPairsInLinkModeIsTheCrossProduct) {
+TEST_P(LinkFixture, AllPairsInLinkModeIsTheCrossProduct) {
     cpplink::BlockingPlan plan;
     Plan(R"([{"type":"all_pairs"}])", cpplink::PairMode::kCrossDataset, &plan);
-    const uint64_t expected = kSplit * (kRows - kSplit);
+    const uint64_t expected = static_cast<uint64_t>(CrossPairs());
     EXPECT_EQ(plan.CountPairs(0), expected);
     const PairSet pairs = Emitted(plan);
     EXPECT_EQ(pairs.size(), expected);
@@ -255,7 +272,7 @@ TEST_F(LinkFixture, AllPairsInLinkModeIsTheCrossProduct) {
     EXPECT_EQ(dedup.CountPairs(0), kRows * (kRows - 1) / 2);
 }
 
-TEST_F(LinkFixture, ThreadedWalkEmitsTheSamePairsAsTheSerialOne) {
+TEST_P(LinkFixture, ThreadedWalkEmitsTheSamePairsAsTheSerialOne) {
     cpplink::BlockingPlan plan;
     Plan(R"([{"type":"exact_value","column":"surname"},
              {"type":"exact_value","column":"dob"},
@@ -277,7 +294,7 @@ TEST_F(LinkFixture, ThreadedWalkEmitsTheSamePairsAsTheSerialOne) {
 // than watching the stream: the recall harness, the earlier-source predicate and
 // the miss diagnostic all go through Produces. It has to agree with what is
 // emitted, or the harness measures a stream that never ran.
-TEST_F(LinkFixture, NoSourceProducesAPairInsideOneInput) {
+TEST_P(LinkFixture, NoSourceProducesAPairInsideOneInput) {
     cpplink::BlockingPlan plan;
     Plan(R"([{"type":"exact_value","column":"surname"},
              {"type":"sorted_neighbourhood","column":"surname","window":4}])",
@@ -297,7 +314,7 @@ TEST_F(LinkFixture, NoSourceProducesAPairInsideOneInput) {
     }
 }
 
-TEST_F(LinkFixture, LinkModeNeedsMoreThanOneInput) {
+TEST_P(LinkFixture, LinkModeNeedsMoreThanOneInput) {
     cpplink::RecordStore single(schema_);
     auto& surname = std::get<cpplink::StringColumn>(single.mutable_column(0));
     surname.ids = {surname.dict.Intern("smith"), surname.dict.Intern("smith")};
@@ -315,21 +332,29 @@ TEST_F(LinkFixture, LinkModeNeedsMoreThanOneInput) {
     EXPECT_TRUE(plan.Build(schema_, single, cpplink::PairMode::kAll, &error)) << error;
 }
 
-TEST_F(LinkFixture, PairSpaceIsTheCrossProductNotTheTriangle) {
-    EXPECT_EQ(store_->NumDatasets(), 2u);
-    EXPECT_EQ(store_->DatasetOf(0), 0u);
-    EXPECT_EQ(store_->DatasetOf(kSplit), 1u);
-    EXPECT_EQ(store_->DatasetEndFor(3), kSplit);
-    EXPECT_EQ(store_->DatasetEndFor(9), kRows);
+TEST_P(LinkFixture, PairSpaceIsTheCrossProductNotTheTriangle) {
+    const Split& starts = GetParam();
+    EXPECT_EQ(store_->NumDatasets(), starts.size() - 1);
+    double within = 0.0;
+    for (size_t d = 0; d + 1 < starts.size(); ++d) {
+        for (uint64_t row = starts[d]; row < starts[d + 1]; ++row) {
+            EXPECT_EQ(store_->DatasetOf(row), d);
+            EXPECT_EQ(store_->DatasetEndFor(row), starts[d + 1]);
+        }
+        const double size = static_cast<double>(starts[d + 1] - starts[d]);
+        within += size * (size - 1.0) / 2.0;
+    }
     EXPECT_DOUBLE_EQ(store_->PairSpace(cpplink::PairMode::kAll), 12.0 * 11.0 / 2.0);
-    EXPECT_DOUBLE_EQ(store_->PairSpace(cpplink::PairMode::kCrossDataset), 7.0 * 5.0);
+    EXPECT_DOUBLE_EQ(CrossPairs(), 12.0 * 11.0 / 2.0 - within);
+    // Two inputs: 7 x 5. Three: 4 x 3 + 4 x 5 + 3 x 5.
+    EXPECT_DOUBLE_EQ(CrossPairs(), starts.size() == 3 ? 35.0 : 47.0);
 }
 
 // u is what a random admissible pair does, and in link mode the admissible pairs
 // are the cross-product. There are exactly N_a x N_b ordered cross draws and none
 // of them is a row against itself, so the closed form is not an approximation
 // here: it must equal the enumeration exactly.
-TEST_F(LinkFixture, ClosedFormUIsTheCrossPairRateExactly) {
+TEST_P(LinkFixture, ClosedFormUIsTheCrossPairRateExactly) {
     Reschema(R"({"columns":[
         {"name":"surname","type":"string"},
         {"name":"dob","type":"date"},
@@ -364,8 +389,9 @@ TEST_F(LinkFixture, ClosedFormUIsTheCrossPairRateExactly) {
         counts[c].assign(comparisons.at(c).spec->levels.size(), 0);
     }
     uint64_t pairs = 0;
-    for (uint32_t a = 0; a < kSplit; ++a) {
-        for (uint32_t b = kSplit; b < kRows; ++b) {
+    for (uint32_t a = 0; a < kRows; ++a) {
+        for (uint32_t b = a + 1; b < kRows; ++b) {
+            if (!Crosses(a, b)) continue;
             const uint32_t gamma = comparisons.Evaluate(a, b);
             for (size_t c = 0; c < comparisons.Size(); ++c) {
                 ++counts[c][comparisons.LevelOf(gamma, c)];
@@ -373,7 +399,7 @@ TEST_F(LinkFixture, ClosedFormUIsTheCrossPairRateExactly) {
             ++pairs;
         }
     }
-    ASSERT_EQ(pairs, kSplit * (kRows - kSplit));
+    ASSERT_EQ(static_cast<double>(pairs), CrossPairs());
 
     // Both comparisons are made only of levels u is closed form for, so every
     // level is exact and the whole distribution can be checked, not just one.
@@ -387,10 +413,115 @@ TEST_F(LinkFixture, ClosedFormUIsTheCrossPairRateExactly) {
     }
 }
 
+// The sampled u is uniform over the cross pairs however many inputs there are and
+// however unequal. Three inputs of 1,000, 20 and 20 rows: the two small ones make
+// 400 of the 40,400 cross pairs, 0.99%, and only those pairs clear the fuzzy level.
+// Drawing a row and then a partner outside its input would reach that block on
+// 1.9% of draws, twice its share; a draw uniform over positions reaches it on its
+// share, and the sampled u lands on the exact rate within sampling error.
+TEST(LinkSampling, RandomCrossPairsAreUniformOverThreeUnequalInputs) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(R"({
+      "columns":[{"name":"city","type":"string"}],
+      "comparisons":[{"name":"city","columns":["city"],
+        "levels":[{"type":"jaro_winkler","threshold":0.9},{"type":"else"}]}],
+      "blocking":[{"type":"all_pairs"}]})",
+                                     &schema, &error))
+        << error;
+    constexpr uint64_t kBig = 1000;
+    constexpr uint64_t kSmall = 20;
+    cpplink::RecordStore store(schema);
+    auto& city = std::get<cpplink::StringColumn>(store.mutable_column(0));
+    const uint32_t far = city.dict.Intern("aaaaaa");
+    const uint32_t near_a = city.dict.Intern("bbbbbb");
+    const uint32_t near_b = city.dict.Intern("bbbbbc");
+    city.ids.assign(kBig, far);
+    city.ids.insert(city.ids.end(), kSmall, near_a);
+    city.ids.insert(city.ids.end(), kSmall, near_b);
+    store.set_num_records(kBig + 2 * kSmall);
+    store.set_datasets({0, kBig, kBig + kSmall, kBig + 2 * kSmall});
+    store.Finalize();
+
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+    ASSERT_EQ(comparisons.EvaluateOne(0, kBig, kBig + kSmall), 0);  // bbbbbb ~ bbbbbc
+    ASSERT_EQ(comparisons.EvaluateOne(0, 0, kBig), 1);              // aaaaaa vs bbbbbb
+    cpplink::BlockingPlan plan;
+    ASSERT_TRUE(plan.Build(schema, store, cpplink::PairMode::kCrossDataset, &error))
+        << error;
+
+    cpplink::EstimateOptions options;
+    options.u_sample = 400000;
+    options.threads = 3;
+    options.seed = 5;
+    options.session_pairs = 1000;  // the session is not what this test reads
+    cpplink::Model model;
+    cpplink::EstimateReport report;
+    ASSERT_TRUE(
+        cpplink::Estimate(store, comparisons, plan, options, &model, &report, &error))
+        << error;
+    EXPECT_EQ(report.u_inputs, 3u);
+
+    const double cross = static_cast<double>(kBig * kSmall * 2 + kSmall * kSmall);
+    const double exact = static_cast<double>(kSmall * kSmall) / cross;
+    EXPECT_NEAR(model.comparisons[0].levels[0].u, exact, 0.001);
+    EXPECT_NEAR(model.comparisons[0].levels[1].u, 1.0 - exact, 0.001);
+    // The old draw would have read about twice the exact rate.
+    EXPECT_LT(model.comparisons[0].levels[0].u, 1.5 * exact);
+}
+
+// Two things link mode says out loud rather than approximating quietly. The fuzzy
+// levels' exact u is a self-join over the pooled term frequencies, which cannot
+// give a cross-pair rate, so `--fuzzy-u` is refused with the reason instead of
+// falling back to a sampled u under a flag that promised an exact one. And a
+// sorted-neighbourhood window is over the inputs interleaved, so the report prices
+// how many of a row's neighbours are cross partners: 1 - sum (N_d/N)^2 of the window.
+TEST_P(LinkFixture, FuzzyUIsRefusedAndTheCrossWindowIsPriced) {
+    Reschema(R"({"columns":[
+        {"name":"surname","type":"string"},
+        {"name":"dob","type":"date"},
+        {"name":"city","type":"string"}],
+      "comparisons":[
+        {"name":"surname","columns":["surname"],
+         "levels":[{"type":"null"},{"type":"exact"},
+                   {"type":"jaro_winkler","threshold":0.8},{"type":"else"}]}],
+      "blocking":[{"type":"sorted_neighbourhood","column":"surname","window":4}]})");
+    cpplink::BlockingPlan plan;
+    std::string error;
+    ASSERT_TRUE(plan.Build(schema_, *store_, cpplink::PairMode::kCrossDataset, &error))
+        << error;
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema_, *store_, &error)) << error;
+
+    cpplink::EstimateOptions options;
+    options.u_sample = 1000;
+    options.threads = 1;
+    options.fuzzy_u = true;
+    cpplink::Model model;
+    cpplink::EstimateReport report;
+    EXPECT_FALSE(
+        cpplink::Estimate(*store_, comparisons, plan, options, &model, &report, &error));
+    EXPECT_NE(error.find("--fuzzy-u"), std::string::npos) << error;
+
+    std::ostringstream out;
+    cpplink::PrintBlockingReport(plan, *store_, false, out);
+    const Split& starts = GetParam();
+    double same = 0.0;
+    for (size_t d = 0; d + 1 < starts.size(); ++d) {
+        const double share = static_cast<double>(starts[d + 1] - starts[d]) / kRows;
+        same += share * share;
+    }
+    char expected[64];
+    std::snprintf(expected, sizeof(expected), "reaches about %.1f cross partners a row",
+                  4.0 * (1.0 - same));
+    EXPECT_NE(out.str().find(expected), std::string::npos) << out.str();
+}
+
 // The dedup path must be untouched by all of this: a store with one input carries
 // no boundaries at all, and kAll over two inputs is link-and-dedup, which is the
 // same enumeration a single concatenated file would have given.
-TEST_F(LinkFixture, DedupOverTwoInputsIsTheWholeTriangle) {
+TEST_P(LinkFixture, DedupOverTwoInputsIsTheWholeTriangle) {
     cpplink::BlockingPlan plan;
     Plan(R"([{"type":"exact_value","column":"surname"}])", cpplink::PairMode::kAll,
          &plan);

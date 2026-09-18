@@ -58,6 +58,14 @@ struct BoundComparison {
         const SignatureTable* signatures = nullptr;
     };
     std::vector<StringSlot> slots;
+    // A ladder is a run of consecutive levels of one fuzzy string type over one
+    // slot, `jaro_winkler >= 0.92` above `jaro_winkler >= 0.85`, and its rungs
+    // are one metric asked several questions. `run_end[i]` is one past the last
+    // level of the run that level i starts, which is i + 1 for a level that starts
+    // none, and `run_screen[i]` is the loosest threshold in it: the metric is run
+    // once, screened there, and every rung is read off the one value.
+    std::vector<uint8_t> run_end;
+    std::vector<double> run_screen;
 };
 
 class ComparisonSet {
@@ -66,9 +74,10 @@ class ComparisonSet {
     //
     // `use_signatures` exists so a test can run the same data with the filter off
     // and compare the patterns: the filter is only admissible if it changes
-    // nothing, and that has to be checked rather than argued.
+    // nothing, and that has to be checked rather than argued. `use_ladders` is the
+    // same switch for evaluating a run of fuzzy levels with one metric call.
     bool Bind(const Schema& schema, const RecordStore& store, std::string* error,
-              bool use_signatures = true);
+              bool use_signatures = true, bool use_ladders = true);
 
     // The packed agreement pattern for a pair. This is the hot path.
     uint32_t Evaluate(uint64_t a, uint64_t b) const;
@@ -107,14 +116,21 @@ class ComparisonSet {
 
    private:
     bool IsNull(const BoundComparison& comparison, uint64_t row) const;
-    bool LevelFires(const BoundComparison& comparison, const LevelSpec& level, uint64_t a,
+    bool LevelFires(const BoundComparison& comparison, size_t index, uint64_t a,
                     uint64_t b) const;
-    bool LevelMaybe(const BoundComparison& comparison, const LevelSpec& level, uint64_t a,
+    bool LevelMaybe(const BoundComparison& comparison, size_t index, uint64_t a,
                     uint64_t b) const;
     // The string levels, over value ids. LevelFires routes its string cases here
     // so that the pair path and the dictionary self-join cannot drift apart.
     bool StringLevelFires(const BoundComparison& comparison, const LevelSpec& level,
                           uint32_t left, uint32_t right) const;
+    // The fuzzy string levels [first, end) -- a run of one type over one slot, as
+    // Bind recorded it in `run_end` -- over value ids, returning the first that
+    // fires or `end` where none does. The metric runs at most once, screened at
+    // the run's loosest threshold, and each rung keeps its own signature and
+    // length bounds, so the verdict per rung is the one it gives evaluated alone.
+    uint8_t StringRunLevel(const BoundComparison& comparison, size_t first, size_t end,
+                           uint32_t left, uint32_t right) const;
     // The pairwise levels: whether any element of one row's list is within the
     // level's threshold of any element of the other's.
     //
@@ -143,6 +159,15 @@ class ComparisonSet {
     // by pointer for the same reason the signature tables are: the vector may
     // grow, and a BoundComparison holds the data() of one of these.
     std::vector<std::unique_ptr<std::vector<uint32_t>>> alias_maps_;
+    // The store's input boundaries, for the one level that reads which side of a
+    // link a row is on. Empty for a single input, as in the store.
+    std::vector<uint64_t> dataset_starts_;
+    size_t DatasetOf(uint64_t row) const {
+        if (dataset_starts_.size() < 3) return 0;
+        size_t dataset = 0;
+        while (row >= dataset_starts_[dataset + 1]) ++dataset;
+        return dataset;
+    }
     uint8_t width_ = 0;
 };
 

@@ -248,15 +248,22 @@ std::string EdgeShardName(unsigned thread) {
     return buffer;
 }
 
-bool EdgeShardWriter::Open(const std::string& path, EdgeFormat format) {
+const char* EdgeCsvHeader(bool datasets) {
+    return datasets ? "dataset_a,id_a,dataset_b,id_b,gamma,match_weight,match_probability"
+                    : "id_a,id_b,gamma,match_weight,match_probability";
+}
+
+bool EdgeShardWriter::Open(const std::string& path, EdgeFormat format, bool datasets) {
     format_ = format;
+    datasets_ = datasets;
     file_.open(path, format == EdgeFormat::kBinary ? std::ios::binary | std::ios::out
                                                    : std::ios::out);
     if (!file_) return false;
     if (format == EdgeFormat::kBinary) {
         file_.write(kEdgeMagic, sizeof(kEdgeMagic));
     } else {
-        buffer_ = "id_a,id_b,gamma,match_weight,match_probability\n";
+        buffer_ = EdgeCsvHeader(datasets);
+        buffer_.push_back('\n');
     }
     return static_cast<bool>(file_);
 }
@@ -272,14 +279,23 @@ void EdgeShardWriter::WriteBinary(uint32_t a, uint32_t b, uint32_t gamma, double
     if (buffer_.size() >= kFlushBytes) Flush();
 }
 
-void EdgeShardWriter::WriteCsv(std::string_view id_a, std::string_view id_b,
+void EdgeShardWriter::WriteCsv(const RecordStore& store, uint32_t a, uint32_t b,
                                uint32_t gamma, double weight) {
     char numbers[64];
     std::snprintf(numbers, sizeof(numbers), ",%u,%.6f,%.9f", gamma, weight,
                   ProbabilityForWeight(weight));
-    buffer_.append(id_a);
+    const IdColumn& ids = store.ids();
+    if (datasets_) {
+        buffer_.append(store.DatasetName(store.DatasetOf(a)));
+        buffer_.push_back(',');
+    }
+    buffer_.append(ids.Get(a));
     buffer_.push_back(',');
-    buffer_.append(id_b);
+    if (datasets_) {
+        buffer_.append(store.DatasetName(store.DatasetOf(b)));
+        buffer_.push_back(',');
+    }
+    buffer_.append(ids.Get(b));
     buffer_.append(numbers);
     buffer_.push_back('\n');
     if (buffer_.size() >= kFlushBytes) Flush();
@@ -319,7 +335,7 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
             (std::filesystem::path(options.out_dir) / (EdgeShardName(t) + suffix))
                 .string();
         auto writer = std::make_unique<EdgeShardWriter>();
-        if (!writer->Open(path, options.format)) {
+        if (!writer->Open(path, options.format, store.NumDatasets() > 1)) {
             *error = "cannot write \"" + path + "\"";
             return false;
         }
@@ -369,7 +385,6 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
     std::atomic<uint64_t> emitted{0};
     const uint64_t limit = options.max_edges;
     const bool csv = options.format == EdgeFormat::kCsv;
-    const IdColumn& ids = store.ids();
 
     const std::vector<size_t> sources = plan.AllSources();
     std::unique_ptr<PredictProgress> progress;
@@ -438,7 +453,7 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
                     ++counts->spilled;
                 }
                 if (csv) {
-                    writer->WriteCsv(ids.Get(a), ids.Get(b), gamma, weight);
+                    writer->WriteCsv(store, a, b, gamma, weight);
                 } else {
                     writer->WriteBinary(a, b, gamma, weight);
                 }
@@ -526,6 +541,18 @@ void PrintPredictPlan(const RecordStore& store, const BlockingPlan& plan,
             out << WithThousands(store.DatasetEnd(d) - store.DatasetStart(d));
         }
         out << " rows), mode " << PairModeName(plan.mode()) << "\n";
+        bool adjusted = false;
+        for (size_t c = 0; c < comparisons.Size(); ++c) {
+            adjusted = adjusted || scorer.HasAdjustment(c);
+        }
+        if (adjusted) {
+            // Said once per run, because it is an approximation the run makes and
+            // not a property of the data: a value's rarity is read across every
+            // input together, which is exact when the inputs are drawn from one
+            // population and is what linking them assumes.
+            out << "Term frequency pools the inputs: a value is as rare as it is across "
+                   "all of them\n";
+        }
     }
     out << "Threshold      " << std::fixed << std::setprecision(3) << scorer.threshold()
         << " bits  (posterior " << std::setprecision(6)

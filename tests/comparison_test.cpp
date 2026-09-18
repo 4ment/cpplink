@@ -124,6 +124,97 @@ TEST_F(Fixture, GeoLevelReadsBothColumnsAsOneComparison) {
     EXPECT_EQ(comparisons_.EvaluateOne(2, 0, 5), 2);  // Sydney to Melbourne
 }
 
+// An amount is compared as splink's PercentageDifferenceLevel does: the absolute
+// difference over the larger value, strictly below the threshold, with an exact
+// level above it for two values the same to the cent.
+TEST(Amount, PercentageDifferenceIsOverTheLargerValueAndStrict) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(R"({
+      "columns": [{"name": "amount", "type": "double"}],
+      "comparisons": [{"name": "amount", "columns": ["amount"], "levels": [
+        {"type": "null"},
+        {"type": "exact"},
+        {"type": "percentage_within", "threshold": 0.01},
+        {"type": "percentage_within", "threshold": 0.1},
+        {"type": "else"}]}]})",
+                                     &schema, &error))
+        << error;
+    cpplink::RecordStore store(schema);
+    auto& amount = std::get<cpplink::DoubleColumn>(store.mutable_column(0));
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    //             0       1       2       3      4      5    6    7
+    amount.values = {100.0, 100.0, 100.5, 109.0, 110.0, 90.0, nan, 0.0};
+    store.set_num_records(8);
+    store.Finalize();
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 1), 1);  // exact
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 2), 2);  // 0.5 / 100.5 < 1%
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 3), 3);  // 9 / 109 = 8.3% < 10%
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 4), 3);  // 10 / 110 = 9.1% < 10%
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 5), 4);  // 10 / 100 = 10%, strict: else
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 6), 0);  // null
+    EXPECT_EQ(comparisons.EvaluateOne(0, 7, 7), 1);  // 0 == 0 is exact, not 0/0
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 7), 4);  // 100 / 100 = 1 >= 10%
+    // The order of the two rows does not matter: the denominator is the larger.
+    EXPECT_EQ(comparisons.EvaluateOne(0, 3, 0), 3);
+    EXPECT_EQ(comparisons.EvaluateOne(0, 5, 0), comparisons.EvaluateOne(0, 0, 5));
+}
+
+// A directed date window reads which input each row came from: the later input's
+// date on or after the earlier input's, within the threshold, whichever order the
+// pair arrives in. Two rows of one input have no earlier side and read the window
+// either way, and a store of one input cannot bind the level at all.
+TEST(DirectedDate, LaterInputOnOrAfterEarlierWithinTheWindow) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(R"({
+      "columns": [{"name": "when", "type": "date"}],
+      "comparisons": [{"name": "when", "columns": ["when"], "levels": [
+        {"type": "null"},
+        {"type": "date_within", "threshold": 1, "direction": "forward"},
+        {"type": "date_within", "threshold": 4, "direction": "forward"},
+        {"type": "date_within", "threshold": 4},
+        {"type": "else"}]}]})",
+                                     &schema, &error))
+        << error;
+    EXPECT_EQ(schema.comparisons[0].levels[1].Describe(), "within 1 days after");
+    cpplink::RecordStore store(schema);
+    auto& when = std::get<cpplink::DateColumn>(store.mutable_column(0));
+    // Input 0 is rows 0-2, input 1 is rows 3-6.
+    //             0    1    2  |  3    4    5    6
+    when.values = {100, 100, 100, 101, 104, 97, 120};
+    store.set_num_records(7);
+    store.set_datasets({0, 3, 7});
+    store.Finalize();
+    cpplink::ComparisonSet comparisons;
+    ASSERT_TRUE(comparisons.Bind(schema, store, &error)) << error;
+
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 3), 1);  // one day after
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 4), 2);  // four days after
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 5),
+              3);  // three days *before*: only the window
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 6), 4);  // twenty days: else
+    // The pair the other way round is the same pair.
+    EXPECT_EQ(comparisons.EvaluateOne(0, 3, 0), 1);
+    EXPECT_EQ(comparisons.EvaluateOne(0, 5, 0), 3);
+    // Two rows of the earlier input: no side is later, so the directed level reads
+    // the window either way and fires on a same-day pair.
+    EXPECT_EQ(comparisons.EvaluateOne(0, 0, 1), 1);
+    // Two rows of the later input, four days apart either way.
+    EXPECT_EQ(comparisons.EvaluateOne(0, 3, 5), 2);
+
+    cpplink::RecordStore single(schema);
+    std::get<cpplink::DateColumn>(single.mutable_column(0)).values = {100, 101};
+    single.set_num_records(2);
+    single.Finalize();
+    cpplink::ComparisonSet refused;
+    EXPECT_FALSE(refused.Bind(schema, single, &error));
+    EXPECT_NE(error.find("two inputs"), std::string::npos) << error;
+}
+
 // A null is not a value: it must never agree with anything, including another null.
 TEST_F(Fixture, NullsAgreeWithNothingIncludingOtherNulls) {
     EXPECT_EQ(comparisons_.EvaluateOne(0, 0, 4), 0);
@@ -227,6 +318,157 @@ TEST(SignatureFilterTest, ChangesNoPattern) {
             ASSERT_EQ(filtered.Evaluate(a, b), plain.Evaluate(a, b))
                 << "'" << values[a] << "' vs '" << values[b] << "'";
         }
+    }
+}
+
+// A ladder: consecutive fuzzy levels of one type over one column, which the
+// evaluator answers with one metric call. The runs here are two Jaro-Winkler rungs
+// out of order, so the test also covers a ladder that is not monotone, and three
+// Levenshtein rungs; `surname_alone` holds the same rungs each behind an exact
+// level, which breaks every run into a run of one.
+constexpr const char* kLadderConfig = R"({
+  "columns": [
+    {"name": "surname", "type": "string"}
+  ],
+  "comparisons": [
+    {"name": "surname", "columns": ["surname"], "levels": [
+      {"type": "null"},
+      {"type": "exact"},
+      {"type": "levenshtein", "threshold": 1},
+      {"type": "levenshtein", "threshold": 2},
+      {"type": "levenshtein", "threshold": 3},
+      {"type": "jaro_winkler", "threshold": 0.85},
+      {"type": "jaro_winkler", "threshold": 0.92},
+      {"type": "jaro_winkler", "threshold": 0.7},
+      {"type": "else"}]},
+    {"name": "surname_alone", "columns": ["surname"], "levels": [
+      {"type": "null"},
+      {"type": "exact"},
+      {"type": "levenshtein", "threshold": 1},
+      {"type": "exact"},
+      {"type": "levenshtein", "threshold": 2},
+      {"type": "exact"},
+      {"type": "levenshtein", "threshold": 3},
+      {"type": "exact"},
+      {"type": "jaro_winkler", "threshold": 0.85},
+      {"type": "exact"},
+      {"type": "jaro_winkler", "threshold": 0.92},
+      {"type": "exact"},
+      {"type": "jaro_winkler", "threshold": 0.7},
+      {"type": "else"}]}
+  ]
+})";
+
+// The same population as the signature test, held in a store over kLadderConfig.
+void FillLadderStore(cpplink::RecordStore* store, std::vector<std::string>* values,
+                     uint64_t rows) {
+    std::mt19937_64 rng(20260914);
+    const std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
+    std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+    std::uniform_int_distribution<size_t> length(3, 12);
+    std::uniform_int_distribution<int> corrupt(0, 3);
+    auto& surname = std::get<cpplink::StringColumn>(store->mutable_column(0));
+    for (uint64_t row = 0; row < rows; ++row) {
+        std::string value;
+        if (!values->empty() && corrupt(rng) == 0) {
+            value = (*values)[rng() % values->size()];
+            // Zero to three edits, so the pairs land on the exact level and on
+            // every rung of both ladders.
+            const int edits = static_cast<int>(rng() % 4);
+            for (int e = 0; e < edits && !value.empty(); ++e) {
+                value[rng() % value.size()] = alphabet[pick(rng)];
+            }
+            // And sometimes a suffix, which is what carries a pair past three
+            // edits while it still shares a long prefix: the Jaro-Winkler rungs.
+            if (rng() % 3 == 0) {
+                for (size_t i = 1 + rng() % 5; i > 0; --i)
+                    value.push_back(alphabet[pick(rng)]);
+            }
+        } else {
+            for (size_t i = length(rng); i > 0; --i) value.push_back(alphabet[pick(rng)]);
+        }
+        values->push_back(value);
+        surname.ids.push_back(surname.dict.Intern(value));
+    }
+    // One null, so the run sees a missing value too.
+    surname.ids[rows / 2] = cpplink::kNullId;
+    store->set_num_records(rows);
+    store->Finalize();
+}
+
+TEST(LadderTest, BindRecordsTheRuns) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(kLadderConfig, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    std::vector<std::string> values;
+    FillLadderStore(&store, &values, 20);
+
+    cpplink::ComparisonSet ladders;
+    ASSERT_TRUE(ladders.Bind(schema, store, &error, true, true)) << error;
+    const std::vector<uint8_t> run_end = {1, 2, 5, 5, 5, 8, 8, 8, 9};
+    EXPECT_EQ(ladders.at(0).run_end, run_end);
+    EXPECT_EQ(ladders.at(0).run_screen[2], 3.0);  // the widest edit distance
+    EXPECT_EQ(ladders.at(0).run_screen[5], 0.7);  // the loosest similarity
+    EXPECT_EQ(ladders.at(0).run_screen[6], 0.7);  // the run from there down
+    // The split comparison holds no run longer than one.
+    for (size_t i = 0; i < ladders.at(1).run_end.size(); ++i) {
+        EXPECT_EQ(ladders.at(1).run_end[i], i + 1) << i;
+    }
+
+    cpplink::ComparisonSet plain;
+    ASSERT_TRUE(plain.Bind(schema, store, &error, true, false)) << error;
+    for (size_t i = 0; i < plain.at(0).run_end.size(); ++i) {
+        EXPECT_EQ(plain.at(0).run_end[i], i + 1) << i;
+    }
+}
+
+// The ladder is only admissible if it changes nothing: every pair must land on the
+// rung it lands on evaluated one level at a time, with the signature filter on and
+// off, and the same through value ids.
+TEST(LadderTest, ChangesNoPattern) {
+    cpplink::Schema schema;
+    std::string error;
+    ASSERT_TRUE(cpplink::ParseSchema(kLadderConfig, &schema, &error)) << error;
+    cpplink::RecordStore store(schema);
+    std::vector<std::string> values;
+    constexpr uint64_t kRows = 400;
+    FillLadderStore(&store, &values, kRows);
+    const auto& surname = std::get<cpplink::StringColumn>(store.column(0));
+
+    // Which rung of the ladder each split level stands for.
+    const std::vector<uint8_t> rung = {0, 1, 2, 1, 3, 1, 4, 1, 5, 1, 6, 1, 7, 8};
+
+    for (const bool signatures : {true, false}) {
+        cpplink::ComparisonSet ladders;
+        cpplink::ComparisonSet plain;
+        ASSERT_TRUE(ladders.Bind(schema, store, &error, signatures, true)) << error;
+        ASSERT_TRUE(plain.Bind(schema, store, &error, signatures, false)) << error;
+        std::vector<uint64_t> seen(9, 0);
+        for (uint64_t a = 0; a < kRows; ++a) {
+            for (uint64_t b = a + 1; b < kRows; ++b) {
+                const uint8_t level = ladders.EvaluateOne(0, a, b);
+                ++seen[level];
+                ASSERT_EQ(level, plain.EvaluateOne(0, a, b))
+                    << "'" << values[a] << "' vs '" << values[b] << "'";
+                ASSERT_EQ(level, rung[ladders.EvaluateOne(1, a, b)])
+                    << "'" << values[a] << "' vs '" << values[b] << "'";
+                if (surname.ids[a] == cpplink::kNullId ||
+                    surname.ids[b] == cpplink::kNullId) {
+                    continue;
+                }
+                ASSERT_EQ(level,
+                          ladders.LevelForValues(0, surname.ids[a], surname.ids[b]))
+                    << "'" << values[a] << "' vs '" << values[b] << "'";
+            }
+        }
+        // Every rung that can fire did, or the test checked nothing. The 0.92 rung
+        // sits under 0.85, which implies it, so it is the one that never can; the
+        // 0.7 rung below fires for the pairs between the two.
+        for (const size_t level : {0, 1, 2, 3, 4, 5, 7, 8}) {
+            EXPECT_GT(seen[level], 0u) << "level " << level;
+        }
+        EXPECT_EQ(seen[6], 0u);
     }
 }
 

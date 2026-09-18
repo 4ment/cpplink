@@ -18,12 +18,16 @@ namespace cpplink {
 struct TruthPairs {
     std::vector<std::pair<uint32_t, uint32_t>> rows;
     uint64_t lines = 0;
-    uint64_t unresolved = 0;  // ids in the file that are not in the data
+    uint64_t unresolved = 0;  // pairs naming an id the data lacks, or an ambiguous one
+    uint64_t ambiguous = 0;   // of those, pairs naming an id more than one record has
 };
 
 // Reads an "id_a,id_b" CSV and resolves both ids to rows. Resolution is one pass
 // over the id column against a set of only the wanted ids, rather than a full
-// id index, which is not otherwise needed.
+// id index, which is not otherwise needed. Over several inputs an id is written
+// `dataset:id` where the inputs share ids; a bare id is resolved only where one
+// record carries it, and a pair naming an id several records carry is counted
+// as ambiguous rather than resolved to the first of them.
 bool LoadTruthPairs(const std::string& path, const RecordStore& store, TruthPairs* truth,
                     std::string* error);
 
@@ -43,7 +47,8 @@ struct SourceRecall {
 // source is paying for itself.
 struct RecallMetrics {
     uint64_t truth_pairs = 0;   // resolved, and in scope for the mode
-    uint64_t unresolved = 0;    // ids in the truth file the data does not hold
+    uint64_t unresolved = 0;    // pairs naming an id the data lacks or several hold
+    uint64_t ambiguous = 0;     // of those, pairs naming an id several records hold
     uint64_t out_of_scope = 0;  // link mode: known pairs inside a single input
     uint64_t union_found = 0;
     uint64_t candidate_sum = 0;    // over sources; bounds the union from above

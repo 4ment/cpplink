@@ -34,6 +34,7 @@ constexpr LevelName kLevelNames[] = {
     {"jaro_winkler", LevelType::kJaroWinkler},
     {"date_within", LevelType::kDateWithin},
     {"numeric_within", LevelType::kNumericWithin},
+    {"percentage_within", LevelType::kPercentageWithin},
     {"geo_within", LevelType::kGeoWithin},
     {"list_overlap", LevelType::kListOverlap},
     {"list_jaccard", LevelType::kListJaccard},
@@ -202,9 +203,12 @@ std::string LevelSpec::Describe() const {
         case LevelType::kJaroWinkler:
             return "jaro_winkler >= " + Number(threshold, 2);
         case LevelType::kDateWithin:
-            return "within " + Number(threshold, 0) + " days";
+            return "within " + Number(threshold, 0) + " days" +
+                   (directed ? " after" : "");
         case LevelType::kNumericWithin:
             return "within " + Number(threshold, 3);
+        case LevelType::kPercentageWithin:
+            return "within " + Number(threshold * 100.0, 1) + "%";
         case LevelType::kGeoWithin:
             return "within " + Number(threshold, 2) + " km";
         case LevelType::kListOverlap:
@@ -280,6 +284,13 @@ bool Schema::IsDerived(const std::string& name) const {
     return spec != nullptr && spec->IsDerived();
 }
 
+bool Schema::TypeKnown(const ColumnSpec& spec) const {
+    if (spec.type_declared) return true;
+    if (!spec.IsDerived()) return false;
+    const ColumnSpec* source = Find(spec.derive.from);
+    return source != nullptr && source->type_declared;
+}
+
 bool SameSource(const Schema& schema, const std::string& a, const std::string& b) {
     if (a == b) return true;
     const ColumnSpec* left = schema.Find(a);
@@ -287,10 +298,49 @@ bool SameSource(const Schema& schema, const std::string& a, const std::string& b
     if (left == nullptr || right == nullptr) return false;
     // A derivation is one level deep by construction, so the whole relation is
     // these three cases and no walk up a chain is needed.
-    if (left->IsDerived() && left->derive.from == b) return true;
-    if (right->IsDerived() && right->derive.from == a) return true;
-    return left->IsDerived() && right->IsDerived() &&
-           left->derive.from == right->derive.from;
+    const std::vector<std::string> from_left = left->Sources();
+    const std::vector<std::string> from_right = right->Sources();
+    const auto has = [](const std::vector<std::string>& list, const std::string& name) {
+        return std::find(list.begin(), list.end(), name) != list.end();
+    };
+    if (has(from_left, b) || has(from_right, a)) return true;
+    for (const std::string& shared : from_left) {
+        if (has(from_right, shared)) return true;
+    }
+    return false;
+}
+
+namespace {
+
+Schema WithoutSources(const Schema& schema, SourceUse dropped) {
+    Schema kept = schema;
+    kept.blocking.clear();
+    for (const BlockingSpec& spec : schema.blocking) {
+        if (spec.use != dropped) kept.blocking.push_back(spec);
+    }
+    return kept;
+}
+
+}  // namespace
+
+Schema SchemaForEstimation(const Schema& schema) {
+    return WithoutSources(schema, SourceUse::kPredict);
+}
+
+Schema SchemaForPrediction(const Schema& schema) {
+    return WithoutSources(schema, SourceUse::kEstimate);
+}
+
+const char* SourceUseName(SourceUse use) {
+    switch (use) {
+        case SourceUse::kBoth:
+            return "both";
+        case SourceUse::kEstimate:
+            return "estimate";
+        case SourceUse::kPredict:
+            return "predict";
+    }
+    return "both";
 }
 
 namespace {
@@ -303,13 +353,17 @@ bool LevelAcceptsColumn(LevelType level, ColumnType column) {
         case LevelType::kElse:
             return true;
         case LevelType::kExact:
-            return column != ColumnType::kDouble;
+            // On a double it is value equality: no interning, so no term
+            // frequency and no closed-form u, but two amounts being the same to
+            // the cent is a level splink has and a ledger wants.
+            return true;
         case LevelType::kLevenshtein:
         case LevelType::kJaroWinkler:
             return column == ColumnType::kString;
         case LevelType::kDateWithin:
             return column == ColumnType::kDate;
         case LevelType::kNumericWithin:
+        case LevelType::kPercentageWithin:
         case LevelType::kGeoWithin:
             return column == ColumnType::kDouble;
         case LevelType::kListOverlap:
@@ -424,6 +478,66 @@ uint8_t BitsFor(size_t level_count) {
     return bits;
 }
 
+// Everything about a comparison that its columns' types decide. Reported against
+// the parsed structure rather than the JSON, so the loader can run it again once
+// the file has typed the columns the schema did not.
+bool CheckComparisonTypes(const Schema& schema, const ComparisonSpec& comparison,
+                          std::string* error) {
+    std::vector<ColumnType> column_types;
+    for (const std::string& name : comparison.columns) {
+        column_types.push_back(schema.Find(name)->type);
+    }
+    if (!TypesCompatible(column_types)) {
+        *error = "comparison \"" + comparison.name +
+                 "\" mixes column types; all its columns must agree, unless it "
+                 "is a string against a string_list, which is what "
+                 "\"list_contains\" reads";
+        return false;
+    }
+    for (const LevelSpec& level : comparison.levels) {
+        const std::string type_name = LevelTypeName(level.type);
+        if (!LevelAcceptsColumns(level.type, column_types)) {
+            std::string types;
+            for (const ColumnType type : column_types) {
+                if (!types.empty()) types += ", ";
+                types += ColumnTypeName(type);
+            }
+            *error = "comparison \"" + comparison.name + "\" applies level \"" +
+                     type_name + "\" to a " + types + " column, which it cannot read";
+            return false;
+        }
+        // A one-column level in the scalar-and-list shape reads one of the two,
+        // and one over several string columns reads the one it names. Those are
+        // the two places a level's arity may be under the comparison's without
+        // that being a mistake.
+        const size_t needs = LevelColumnCount(level.type);
+        const bool picks_one = needs == 1 && (IsScalarAndList(column_types) ||
+                                              IsSeveralStrings(column_types));
+        if (needs != 0 && needs != comparison.columns.size() && !picks_one) {
+            *error = "comparison \"" + comparison.name + "\" level \"" + type_name +
+                     "\" reads " + std::to_string(needs) +
+                     " column(s) but the comparison names " +
+                     std::to_string(comparison.columns.size());
+            return false;
+        }
+        if (level.names_column && (!IsSeveralStrings(column_types) || needs != 1)) {
+            *error = "comparison \"" + comparison.name + "\" level \"" + type_name +
+                     "\" names a column, which only a single-column level of "
+                     "a comparison over several string columns may do";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool AllTypesKnown(const Schema& schema, const std::vector<std::string>& columns) {
+    for (const std::string& name : columns) {
+        const ColumnSpec* spec = schema.Find(name);
+        if (spec == nullptr || !schema.TypeKnown(*spec)) return false;
+    }
+    return true;
+}
+
 bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* error) {
     if (!root.contains("comparisons")) return true;
     if (!root["comparisons"].is_array()) {
@@ -452,24 +566,14 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                                     item["term_frequency"].is_boolean() &&
                                     item["term_frequency"].get<bool>();
 
-        // Every named column must exist, and the types it spans must be a shape
-        // some level can read.
-        std::vector<ColumnType> column_types;
+        // Every named column must exist; whether the types it spans are a shape
+        // some level can read is CheckComparisonTypes, below.
         for (const std::string& name : comparison.columns) {
-            const ColumnSpec* spec = schema->Find(name);
-            if (spec == nullptr) {
+            if (schema->Find(name) == nullptr) {
                 *error = "comparison \"" + comparison.name + "\" names column \"" + name +
                          "\", which is not declared";
                 return false;
             }
-            column_types.push_back(spec->type);
-        }
-        if (!TypesCompatible(column_types)) {
-            *error = "comparison \"" + comparison.name +
-                     "\" mixes column types; all its columns must agree, unless it "
-                     "is a string against a string_list, which is what "
-                     "\"list_contains\" reads";
-            return false;
         }
 
         if (!item.contains("levels") || !item["levels"].is_array() ||
@@ -492,30 +596,6 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                          "\" has unknown level type \"" + type_name + "\"";
                 return false;
             }
-            if (!LevelAcceptsColumns(level.type, column_types)) {
-                std::string types;
-                for (const ColumnType type : column_types) {
-                    if (!types.empty()) types += ", ";
-                    types += ColumnTypeName(type);
-                }
-                *error = "comparison \"" + comparison.name + "\" applies level \"" +
-                         type_name + "\" to a " + types + " column, which it cannot read";
-                return false;
-            }
-            // A one-column level in the scalar-and-list shape reads one of the
-            // two, and one over several string columns reads the one it names.
-            // Those are the two places a level's arity may be under the
-            // comparison's without that being a mistake.
-            const size_t needs = LevelColumnCount(level.type);
-            const bool picks_one = needs == 1 && (IsScalarAndList(column_types) ||
-                                                  IsSeveralStrings(column_types));
-            if (needs != 0 && needs != comparison.columns.size() && !picks_one) {
-                *error = "comparison \"" + comparison.name + "\" level \"" + type_name +
-                         "\" reads " + std::to_string(needs) +
-                         " column(s) but the comparison names " +
-                         std::to_string(comparison.columns.size());
-                return false;
-            }
             if (LevelNeedsThreshold(level.type)) {
                 if (!entry.contains("threshold") || !entry["threshold"].is_number()) {
                     *error = "comparison \"" + comparison.name + "\" level \"" +
@@ -523,6 +603,33 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                     return false;
                 }
                 level.threshold = entry["threshold"].get<double>();
+                if (level.type == LevelType::kPercentageWithin &&
+                    (level.threshold <= 0.0 || level.threshold > 1.0)) {
+                    *error = "comparison \"" + comparison.name +
+                             "\" level \"percentage_within\" wants a threshold in "
+                             "(0, 1], a fraction rather than a percentage";
+                    return false;
+                }
+            }
+            if (entry.contains("direction")) {
+                const std::string direction = entry["direction"].is_string()
+                                                  ? entry["direction"].get<std::string>()
+                                                  : "";
+                if (level.type != LevelType::kDateWithin) {
+                    *error = "comparison \"" + comparison.name + "\" level \"" +
+                             type_name +
+                             "\" has a \"direction\", which only "
+                             "date_within takes";
+                    return false;
+                }
+                if (direction == "forward") {
+                    level.directed = true;
+                } else if (direction != "either") {
+                    *error = "comparison \"" + comparison.name +
+                             "\" level \"date_within\" has \"direction\" \"" + direction +
+                             "\"; it must be forward or either";
+                    return false;
+                }
             }
             if (entry.contains("label") && entry["label"].is_string()) {
                 level.label = entry["label"].get<std::string>();
@@ -531,13 +638,6 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                 if (!entry["column"].is_string()) {
                     *error = "comparison \"" + comparison.name + "\" level \"" +
                              type_name + "\" has a \"column\" that is not a string";
-                    return false;
-                }
-                if (!IsSeveralStrings(column_types) || needs != 1) {
-                    *error = "comparison \"" + comparison.name + "\" level \"" +
-                             type_name +
-                             "\" names a column, which only a single-column level of "
-                             "a comparison over several string columns may do";
                     return false;
                 }
                 const std::string wanted = entry["column"].get<std::string>();
@@ -552,6 +652,7 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                     return false;
                 }
                 level.column = static_cast<uint8_t>(at);
+                level.names_column = true;
                 // Two exact levels in one comparison would otherwise print as
                 // two rows reading "exact", so the default label says which.
                 if (level.label.empty()) level.label = level.Describe() + " on " + wanted;
@@ -574,6 +675,12 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                          "can never fire";
                 return false;
             }
+        }
+
+        // A column the file will type is checked once it has; the rest now.
+        if (AllTypesKnown(*schema, comparison.columns) &&
+            !CheckComparisonTypes(*schema, comparison, error)) {
+            return false;
         }
 
         comparison.bits = BitsFor(comparison.levels.size());
@@ -660,8 +767,7 @@ bool ParseDerive(const nlohmann::json& item, const std::string& column,
 // Resolved once every column is parsed, so "from" may name a column declared
 // later, and checked here rather than at load: a chain that cannot type-check is a
 // configuration error and should fail before a file is opened.
-bool ResolveDerived(Schema* schema, const std::vector<bool>& type_declared,
-                    std::string* error) {
+bool ResolveDerived(Schema* schema, std::string* error) {
     for (size_t i = 0; i < schema->columns.size(); ++i) {
         ColumnSpec& spec = schema->columns[i];
         if (!spec.IsDerived()) continue;
@@ -681,6 +787,9 @@ bool ResolveDerived(Schema* schema, const std::vector<bool>& type_declared,
                      "holds and chain the transforms instead";
             return false;
         }
+        // The chain type-checks against the source's type, which a source the
+        // file will type does not have yet; CheckTypes comes back for it.
+        if (!source->type_declared) continue;
         ColumnType current = source->type;
         for (const Transform transform : spec.derive.transforms) {
             if (TransformInput(transform) != current) {
@@ -691,13 +800,33 @@ bool ResolveDerived(Schema* schema, const std::vector<bool>& type_declared,
             }
             current = TransformOutput(transform);
         }
-        if (type_declared[i] && spec.type != current) {
+        if (spec.type_declared && spec.type != current) {
             *error = "column \"" + spec.name + "\" is declared " +
                      ColumnTypeName(spec.type) + ", but its transforms produce a " +
                      ColumnTypeName(current) + " value";
             return false;
         }
         spec.type = current;
+    }
+    return true;
+}
+
+// What a source's column type decides: blocking needs discrete agreement, which
+// a double never provides, and MinHash shingles text.
+bool CheckSourceTypes(const Schema& schema, const BlockingSpec& spec,
+                      std::string* error) {
+    if (spec.kind == SourceKind::kAllPairs) return true;
+    const ColumnSpec* column = schema.Find(spec.column);
+    if (!HasTermFrequencies(column->type)) {
+        *error = "blocking source names column \"" + spec.column + "\", a " +
+                 ColumnTypeName(column->type) +
+                 " column; blocking needs discrete agreement on a value";
+        return false;
+    }
+    if (spec.kind == SourceKind::kMinHash && column->type != ColumnType::kString) {
+        *error = "minhash blocking needs a string column, but \"" + spec.column +
+                 "\" is " + ColumnTypeName(column->type);
+        return false;
     }
     return true;
 }
@@ -751,16 +880,7 @@ bool ParseBlocking(const nlohmann::json& root, Schema* schema, std::string* erro
                      "\", which is not declared";
             return false;
         }
-        // Blocking needs discrete agreement, which a double never provides.
-        if (!HasTermFrequencies(column->type)) {
-            *error = "blocking source names column \"" + spec.column + "\", a " +
-                     ColumnTypeName(column->type) +
-                     " column; blocking needs discrete agreement on a value";
-            return false;
-        }
-        if (spec.kind == SourceKind::kMinHash && column->type != ColumnType::kString) {
-            *error = "minhash blocking needs a string column, but \"" + spec.column +
-                     "\" is " + ColumnTypeName(column->type);
+        if (schema->TypeKnown(*column) && !CheckSourceTypes(*schema, spec, error)) {
             return false;
         }
 
@@ -771,6 +891,21 @@ bool ParseBlocking(const nlohmann::json& root, Schema* schema, std::string* erro
         spec.ngram = ReadUnsigned(item, "ngram", spec.ngram);
         if (item.contains("seed") && item["seed"].is_number()) {
             spec.seed = static_cast<uint64_t>(item["seed"].get<double>());
+        }
+        if (item.contains("use")) {
+            const std::string use =
+                item["use"].is_string() ? item["use"].get<std::string>() : "";
+            if (use == "both") {
+                spec.use = SourceUse::kBoth;
+            } else if (use == "estimate") {
+                spec.use = SourceUse::kEstimate;
+            } else if (use == "predict") {
+                spec.use = SourceUse::kPredict;
+            } else {
+                *error = "blocking source on \"" + spec.column + "\" has \"use\" \"" +
+                         use + "\"; it must be both, estimate or predict";
+                return false;
+            }
         }
         if (spec.kind == SourceKind::kMinHash &&
             (spec.bands == 0 || spec.rows_per_band == 0 || spec.ngram == 0)) {
@@ -810,7 +945,6 @@ bool ParseSchema(const std::string& json_text, Schema* schema, std::string* erro
 
     Schema parsed;
     std::unordered_set<std::string> seen;
-    std::vector<bool> type_declared;
     for (const nlohmann::json& item : root["columns"]) {
         if (!item.is_object() || !item.contains("name") || !item["name"].is_string()) {
             *error = "every column needs a string \"name\"";
@@ -822,24 +956,63 @@ bool ParseSchema(const std::string& json_text, Schema* schema, std::string* erro
             *error = "column \"" + spec.name + "\" is declared twice";
             return false;
         }
-        const bool declared = item.contains("type") && item["type"].is_string();
+        spec.type_declared = item.contains("type") && item["type"].is_string();
         const std::string type_name =
-            declared ? item["type"].get<std::string>() : std::string("string");
+            spec.type_declared ? item["type"].get<std::string>() : std::string("string");
         if (!ParseColumnType(type_name, &spec.type)) {
             *error = "column \"" + spec.name + "\" has unknown type \"" + type_name +
-                     "\" (expected string, string_list, date or double)";
+                     "\" (expected string, string_list, date, boolean or double)";
             return false;
         }
         if (item.contains("derive") &&
             !ParseDerive(item["derive"], spec.name, &spec.derive, error)) {
             return false;
         }
-        type_declared.push_back(declared);
+        if (item.contains("derived_from")) {
+            const nlohmann::json& from = item["derived_from"];
+            if (from.is_string()) {
+                spec.derived_from.push_back(from.get<std::string>());
+            } else if (from.is_array()) {
+                for (const nlohmann::json& name : from) {
+                    if (!name.is_string()) {
+                        *error = "column \"" + spec.name +
+                                 "\" has a \"derived_from\" entry that is not a name";
+                        return false;
+                    }
+                    spec.derived_from.push_back(name.get<std::string>());
+                }
+            } else {
+                *error = "column \"" + spec.name +
+                         "\" has a \"derived_from\" that is neither a name nor a list";
+                return false;
+            }
+            if (spec.IsDerived()) {
+                *error = "column \"" + spec.name +
+                         "\" declares both \"derive\" and \"derived_from\"; a "
+                         "column cpplink computes already knows its source";
+                return false;
+            }
+        }
         parsed.columns.push_back(spec);
     }
     if (parsed.columns.empty()) {
         *error = "schema declares no columns";
         return false;
+    }
+    // A declared source has to be a column, and not the column itself; checked
+    // after the loop so a source declared later in the list still counts.
+    for (const ColumnSpec& spec : parsed.columns) {
+        for (const std::string& source : spec.derived_from) {
+            if (source == spec.name) {
+                *error = "column \"" + spec.name + "\" is derived from itself";
+                return false;
+            }
+            if (parsed.Find(source) == nullptr) {
+                *error = "column \"" + spec.name + "\" is derived from \"" + source +
+                         "\", which is not a column";
+                return false;
+            }
+        }
     }
 
     if (root.contains("unique_id")) {
@@ -857,11 +1030,27 @@ bool ParseSchema(const std::string& json_text, Schema* schema, std::string* erro
 
     // Before the comparisons, which check the types a derived column only has once
     // its transforms have been resolved.
-    if (!ResolveDerived(&parsed, type_declared, error)) return false;
+    if (!ResolveDerived(&parsed, error)) return false;
     if (!ParseComparisons(root, &parsed, error)) return false;
     if (!ParseBlocking(root, &parsed, error)) return false;
 
     *schema = std::move(parsed);
+    return true;
+}
+
+bool CheckTypes(Schema* schema, std::string* error) {
+    // Every source column is typed by now, so the chains resolve in full.
+    for (ColumnSpec& spec : schema->columns) {
+        if (!spec.IsDerived()) spec.type_declared = true;
+    }
+    if (!ResolveDerived(schema, error)) return false;
+    for (ColumnSpec& spec : schema->columns) spec.type_declared = true;
+    for (const ComparisonSpec& comparison : schema->comparisons) {
+        if (!CheckComparisonTypes(*schema, comparison, error)) return false;
+    }
+    for (const BlockingSpec& spec : schema->blocking) {
+        if (!CheckSourceTypes(*schema, spec, error)) return false;
+    }
     return true;
 }
 

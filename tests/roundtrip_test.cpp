@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -382,14 +383,14 @@ TEST_F(RoundTrip, ListValuesAreSortedAndDeduplicatedPerRow) {
     }
 }
 
-// The boolean column and the email comparison the sample now exists to exercise.
-// gender is the boolean; email_username is derived from the address at load, and
+// The two-valued column and the email comparison the sample now exists to exercise.
+// gender is F or M; email_username is derived from the address at load, and
 // the comparison ranks an exact address above an exact username above a fuzzy
 // match on either, which is where a duplicate that moved provider lands.
 constexpr const char* kFlagAndEmailSchema = R"({
   "unique_id": "id",
   "columns": [
-    {"name": "gender", "type": "boolean"},
+    {"name": "gender", "type": "string"},
     {"name": "email", "type": "string"},
     {"name": "email_username", "derive": {"from": "email", "transform": "email_username"}},
     {"name": "email_domain", "derive": {"from": "email", "transform": "email_domain"}}
@@ -407,7 +408,7 @@ constexpr const char* kFlagAndEmailSchema = R"({
   ]
 })";
 
-TEST_F(RoundTrip, GenderIsABooleanWithNullsAndBothValues) {
+TEST_F(RoundTrip, GenderIsATwoValuedStringWithNullsAndBothValues) {
     cpplink::SampleOptions options;
     options.rows = 4000;
     options.row_group_size = 1000;
@@ -421,10 +422,12 @@ TEST_F(RoundTrip, GenderIsABooleanWithNullsAndBothValues) {
     cpplink::RecordStore store(schema);
     ASSERT_TRUE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error)) << error;
 
-    const auto& gender = std::get<cpplink::BooleanColumn>(store.column(0));
-    ASSERT_EQ(gender.values.size(), 4000u);
+    const auto& gender = std::get<cpplink::StringColumn>(store.column(0));
+    ASSERT_EQ(gender.ids.size(), 4000u);
     ASSERT_EQ(gender.tf.size(), 2u);
     EXPECT_EQ(store.DistinctValues(0), 2u);
+    const std::string a(gender.dict.Value(0)), b(gender.dict.Value(1));
+    EXPECT_TRUE((a == "F" && b == "M") || (a == "M" && b == "F")) << a << " " << b;
     // Missing on a few percent of rows, and otherwise close to even.
     const double nulls = static_cast<double>(store.NullCount(0)) / 4000.0;
     EXPECT_GT(nulls, 0.01);
@@ -563,7 +566,7 @@ TEST_F(RoundTrip, WrongDeclaredTypeIsReportedByColumn) {
     cpplink::RecordStore store(schema);
     EXPECT_FALSE(cpplink::LoadParquet(data_, schema, &store, nullptr, &error));
     EXPECT_NE(error.find("latitude"), std::string::npos);
-    EXPECT_NE(error.find("expected a string column"), std::string::npos);
+    EXPECT_NE(error.find("expected a string or integer column"), std::string::npos);
 }
 
 // A planted duplicate is a corruption of another record, so the two rows must
@@ -658,7 +661,7 @@ TEST_F(RoundTrip, SplitSampleRecordsOnlyPairsThatCrossTheTwoFiles) {
     options.rows = 4000;
     options.duplicate_rate = 0.25;
     options.truth_path = truth_;
-    options.link_path = link_;
+    options.link_paths = {link_};
     std::string error;
     ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
 
@@ -710,7 +713,7 @@ TEST_F(RoundTrip, LinkModeReachesThePlantedPairsAcrossTheTwoFiles) {
     options.rows = 4000;
     options.duplicate_rate = 0.25;
     options.truth_path = truth_;
-    options.link_path = link_;
+    options.link_paths = {link_};
     std::string error;
     ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
 
@@ -756,7 +759,7 @@ TEST_F(RoundTrip, UnblockedLinkRunGoesEndToEndWithNoBlockingSection) {
     options.rows = 2000;
     options.duplicate_rate = 0.25;
     options.truth_path = truth_;
-    options.link_path = link_;
+    options.link_paths = {link_};
     std::string error;
     ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
 
@@ -837,6 +840,104 @@ TEST_F(RoundTrip, UnblockedLinkRunGoesEndToEndWithNoBlockingSection) {
     }
     const uint64_t first = store.DatasetEnd(0) - store.DatasetStart(0);
     EXPECT_EQ(plan.CountPairs(0), first * (store.NumRecords() - first));
+}
+
+// Three files through the whole command line. Originals go to the first file and
+// every planted duplicate to one of the other two, so the truth pairs cross the
+// first file and each of the others, and two duplicates of one base sit in the
+// two later files as a cross pair the truth file never lists and the closure has
+// to reach. Everything that is N-general by construction -- the boundary walk, the
+// cross counts, the closed-form u, the uniform sampler -- is exercised here on a
+// third input rather than believed from the code.
+TEST_F(RoundTrip, ThreeFilesLinkEndToEndThroughTheCommandLine) {
+    const std::string third = (dir_ / "sample.c.parquet").string();
+    cpplink::SampleOptions options;
+    options.rows = 6000;
+    options.duplicate_rate = 0.3;
+    options.truth_path = truth_;
+    options.link_paths = {link_, third};
+    std::string error;
+    ASSERT_TRUE(cpplink::WriteSampleParquet(data_, options, &error)) << error;
+
+    const std::string schema_path = (dir_ / "schema.json").string();
+    {
+        std::ofstream file(schema_path);
+        file << kSampleSchema;
+    }
+    const std::vector<std::string> inputs = {data_, link_, third};
+
+    // Every input holds rows, and the planted pairs all cross the first file.
+    {
+        cpplink::Schema schema;
+        ASSERT_TRUE(cpplink::ParseSchema(kSampleSchema, &schema, &error)) << error;
+        cpplink::RecordStore store(schema);
+        cpplink::LoadStats stats;
+        ASSERT_TRUE(cpplink::LoadParquetFiles(inputs, schema, &store, &stats, &error))
+            << error;
+        ASSERT_EQ(store.NumDatasets(), 3u);
+        EXPECT_GT(stats.dataset_rows[1], 400u);
+        EXPECT_GT(stats.dataset_rows[2], 400u);
+        cpplink::TruthPairs truth;
+        ASSERT_TRUE(cpplink::LoadTruthPairs(truth_, store, &truth, &error)) << error;
+        EXPECT_EQ(truth.unresolved, 0u);
+        for (const auto& pair : truth.rows) {
+            EXPECT_EQ(store.DatasetOf(pair.first), 0u);
+            EXPECT_NE(store.DatasetOf(pair.second), 0u);
+        }
+    }
+
+    std::ostringstream out;
+    std::ostringstream err;
+    auto run = [&](std::vector<std::string> args) {
+        out.str("");
+        err.str("");
+        for (const std::string& input : inputs) args.push_back(input);
+        return cpplink::Run(args, out, err);
+    };
+
+    ASSERT_EQ(run({"recall", "--schema", schema_path, "--truth", truth_, "--count"}), 0)
+        << err.str();
+    EXPECT_NE(out.str().find("Known pairs  "), std::string::npos) << out.str();
+    EXPECT_EQ(out.str().find("unresolved"), std::string::npos) << out.str();
+
+    const std::string model_path = (dir_ / "model.json").string();
+    ASSERT_EQ(run({"estimate", "--schema", schema_path, "--out", model_path, "--u-sample",
+                   "200000", "--threads", "2"}),
+              0)
+        << err.str();
+    EXPECT_NE(out.str().find("across 3 inputs"), std::string::npos) << out.str();
+
+    const std::string predictions = (dir_ / "predictions.parquet").string();
+    ASSERT_EQ(run({"predict", "--schema", schema_path, "--model", model_path, "--out",
+                   predictions, "--threshold", "10", "--threads", "2"}),
+              0)
+        << err.str();
+    EXPECT_NE(out.str().find("over 3 inputs"), std::string::npos) << out.str();
+
+    const std::string clusters = (dir_ / "clusters.csv").string();
+    ASSERT_EQ(run({"cluster", "--schema", schema_path, "--predictions", predictions,
+                   "--out", clusters, "--truth", truth_}),
+              0)
+        << err.str();
+    const std::string report = out.str();
+    EXPECT_EQ(report.find("WARNING"), std::string::npos) << report;
+    // The schema blocks on email and dob alone and reaches about 92% of the pairs,
+    // so recall is capped by blocking; precision is what a wrong join would show.
+    const auto number_after = [&report](const char* label) {
+        const size_t at = report.find(label);
+        EXPECT_NE(at, std::string::npos) << report;
+        return at == std::string::npos
+                   ? 0.0
+                   : std::stod(report.substr(at + std::strlen(label)));
+    };
+    EXPECT_GT(number_after("  precision  "), 0.99) << report;
+    EXPECT_GT(number_after("  recall     "), 0.85) << report;
+    EXPECT_GT(number_after("  f1  "), 0.9) << report;
+    // The merged file names records by dataset and id, so the cluster file does too.
+    std::ifstream file(clusters);
+    std::string header;
+    std::getline(file, header);
+    EXPECT_EQ(header, "dataset,unique_id,cluster_id,cluster_size");
 }
 
 }  // namespace

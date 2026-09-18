@@ -481,6 +481,105 @@ TEST_F(EstimateFixture, IndependentColumnsAreNeverTiedOut) {
     }
 }
 
+// A session is identified by cells, not by a count of comparisons. Two binary
+// comparisons make a 2x2 table with three degrees of freedom against five
+// parameters and are refused; two comparisons of four and three reachable levels
+// make twelve cells against eleven parameters and run. The second is the shape
+// splink's transactions example trains on, and refusing it left a
+// three-comparison schema with no blocked session at all.
+TEST_F(EstimateFixture, IdentifiabilityIsDecidedByCellsNotByComparisonCount) {
+    const char* const kTwoBinary = R"({
+      "columns": [
+        {"name": "email", "type": "string"}, {"name": "surname", "type": "string"},
+        {"name": "city", "type": "string"}, {"name": "postcode", "type": "string"}],
+      "comparisons": [
+        {"name": "email", "columns": ["email"],
+         "levels": [{"type": "exact"}, {"type": "else"}]},
+        {"name": "city", "columns": ["city"],
+         "levels": [{"type": "exact"}, {"type": "else"}]},
+        {"name": "postcode", "columns": ["postcode"],
+         "levels": [{"type": "exact"}, {"type": "else"}]}],
+      "blocking": [{"type": "exact_value", "column": "email"}]})";
+    const char* const kTwoLadders = R"({
+      "columns": [
+        {"name": "email", "type": "string"}, {"name": "surname", "type": "string"},
+        {"name": "city", "type": "string"}, {"name": "postcode", "type": "string"}],
+      "comparisons": [
+        {"name": "email", "columns": ["email"],
+         "levels": [{"type": "exact"}, {"type": "else"}]},
+        {"name": "surname", "columns": ["surname"],
+         "levels": [{"type": "exact"}, {"type": "jaro_winkler", "threshold": 0.9},
+                    {"type": "jaro_winkler", "threshold": 0.7}, {"type": "else"}]},
+        {"name": "city", "columns": ["city"],
+         "levels": [{"type": "exact"}, {"type": "levenshtein", "threshold": 1},
+                    {"type": "else"}]}],
+      "blocking": [{"type": "exact_value", "column": "email"}]})";
+    for (const auto& [json, identified] :
+         {std::pair<const char*, bool>(kTwoBinary, false),
+          std::pair<const char*, bool>(kTwoLadders, true)}) {
+        cpplink::Schema schema;
+        std::string error;
+        ASSERT_TRUE(cpplink::ParseSchema(json, &schema, &error)) << error;
+        cpplink::ComparisonSet comparisons;
+        ASSERT_TRUE(comparisons.Bind(schema, *store_, &error)) << error;
+        cpplink::BlockingPlan plan;
+        ASSERT_TRUE(plan.Build(schema, *store_, &error)) << error;
+        cpplink::Model model;
+        cpplink::EstimateReport report;
+        ASSERT_TRUE(cpplink::Estimate(*store_, comparisons, plan, options_, &model,
+                                      &report, &error))
+            << error;
+        ASSERT_EQ(report.sessions.size(), 1u);
+        const cpplink::SessionReport& session = report.sessions.front();
+        bool refused = false;
+        for (const std::string& warning : session.warnings) {
+            refused = refused || warning.find("does not identify") != std::string::npos;
+        }
+        EXPECT_NE(refused, identified) << json;
+        EXPECT_EQ(session.iterations > 0, identified) << json;
+    }
+}
+
+// A source declared `"use": "estimate"` conditions a session and produces no
+// candidate; one declared `"use": "predict"` is the other way round. The two
+// purposes build their plans from the schema each is given.
+TEST_F(EstimateFixture, EstimationOnlySourcesRunASessionAndBlockNothing) {
+    cpplink::Schema schema = schema_;
+    cpplink::BlockingSpec learn;
+    learn.kind = cpplink::SourceKind::kExactValue;
+    learn.column = "postcode";
+    learn.name = "postcode exact_value";
+    learn.use = cpplink::SourceUse::kEstimate;
+    schema.blocking.push_back(learn);
+    cpplink::BlockingSpec score = learn;
+    score.column = "surname";
+    score.name = "surname exact_value";
+    score.use = cpplink::SourceUse::kPredict;
+    schema.blocking.push_back(score);
+
+    const cpplink::Schema predicting = cpplink::SchemaForPrediction(schema);
+    const cpplink::Schema estimating = cpplink::SchemaForEstimation(schema);
+    ASSERT_EQ(predicting.blocking.size(), 3u);
+    EXPECT_EQ(predicting.blocking.back().column, "surname");
+    ASSERT_EQ(estimating.blocking.size(), 3u);
+    EXPECT_EQ(estimating.blocking.back().column, "postcode");
+
+    std::string error;
+    cpplink::BlockingPlan plan;
+    ASSERT_TRUE(plan.Build(estimating, *store_, &error)) << error;
+    cpplink::Model model;
+    cpplink::EstimateReport report;
+    ASSERT_TRUE(
+        cpplink::Estimate(*store_, comparisons_, plan, options_, &model, &report, &error))
+        << error;
+    bool postcode_session = false;
+    for (const cpplink::SessionReport& session : report.sessions) {
+        postcode_session = postcode_session || session.column == "postcode";
+        EXPECT_NE(session.column, "surname");
+    }
+    EXPECT_TRUE(postcode_session);
+}
+
 TEST_F(EstimateFixture, RefusesToEstimateWithoutComparisons) {
     cpplink::ComparisonSet empty;
     cpplink::Model model;

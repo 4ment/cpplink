@@ -24,6 +24,8 @@
 #include "cpplink/estimate.hpp"
 #include "cpplink/explain.hpp"
 #include "cpplink/explain_blocking.hpp"
+#include "cpplink/id_index.hpp"
+#include "cpplink/init.hpp"
 #include "cpplink/inspect.hpp"
 #include "cpplink/levels.hpp"
 #include "cpplink/merge_edges.hpp"
@@ -47,10 +49,22 @@ const char* const kVersion = "0.1.0";
 
 namespace {
 
+// The schema for a data command: parsed, then given the column types it left to
+// the file. Every command that builds a store from a schema goes through here,
+// because the store's layout is the types and they must be settled first.
+bool LoadSchemaFor(const std::string& schema_path,
+                   const std::vector<std::string>& data_paths, Schema* schema,
+                   std::string* error) {
+    return LoadSchema(schema_path, schema, error) &&
+           ResolveColumnTypes(data_paths, schema, error);
+}
+
 void PrintUsage(std::ostream& out) {
     out << "usage: cpplink <command> [options]\n"
         << "\n"
         << "commands:\n"
+        << "  init        draft a schema from a parquet file: guess what each column\n"
+        << "              is from its name, and write default comparisons and blocking\n"
         << "  inspect     load a parquet file and report cardinality and memory\n"
         << "  profile     what the columns can be worth, what a matching pair "
            "will\n"
@@ -88,13 +102,19 @@ void PrintUsage(std::ostream& out) {
         << "are read in order into one store and each becomes a dataset, so two\n"
         << "files mean linking: --mode link scores only pairs that cross the two,\n"
         << "--mode dedup (or link-and-dedup) scores every pair of the whole store.\n"
-        << "One file is a deduplication and needs no --mode.\n"
+        << "One file is a deduplication and needs no --mode. A record's id need only\n"
+        << "be unique within its file: each dataset is named by its file's stem, the\n"
+        << "prediction and cluster files carry the dataset beside the id, and an id\n"
+        << "typed or listed in a truth file is qualified as <dataset>:<id> wherever\n"
+        << "the inputs share ids.\n"
         << "\n"
         << "--all-pairs runs the five plan-building commands with no blocking at\n"
         << "all: every pair the mode admits becomes a candidate. On an input small\n"
         << "enough to enumerate that is cheap, and it leaves blocking nothing to\n"
         << "miss. Estimating from it holds no column out; see the documentation.\n"
         << "\n"
+        << "cpplink init [--out <schema.json>] [--id COLUMN] [--role COLUMN=ROLE]...\n"
+        << "             <file.parquet>...\n"
         << "cpplink inspect --schema <schema.json> <file.parquet>...\n"
         << "cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]\n"
         << "                [--expected-matches N] [--threads N] [--json] "
@@ -138,8 +158,9 @@ void PrintUsage(std::ostream& out) {
         << "                --out <dir|file.csv|file.parquet>\n"
         << "                [--threshold BITS | --probability P] [--format bin|csv]\n"
         << "                [--threads N] [--limit N] [--no-bounds] [--no-ceiling]\n"
-        << "                [--tf-damping F] [--no-signatures] [--spill <dir>]\n"
-        << "                [--spill-sample R] [--fuzzy-tf] [--ball-budget N]\n"
+        << "                [--tf-damping F] [--no-signatures] [--no-ladders]\n"
+        << "                [--spill <dir>] [--spill-sample R] [--fuzzy-tf]\n"
+        << "                [--ball-budget N]\n"
         << "                [--no-interactions] [--mode MODE] [--all-pairs]\n"
         << "                [-v | --verbose] <file.parquet>...\n"
         << "cpplink completeness --schema <schema.json> --model <model.json>\n"
@@ -155,7 +176,7 @@ void PrintUsage(std::ostream& out) {
         << "                <file.parquet>...\n"
         << "cpplink cluster --schema <schema.json>\n"
         << "                --predictions <dir|file.csv|file.parquet>\n"
-        << "                [--out <file.csv>]\n"
+        << "                [--out <file.csv|file.parquet>]\n"
         << "                [--threshold BITS | --probability P] [--truth <file.csv>]\n"
         << "                [--min-size N] <file.parquet>...\n"
         << "cpplink merge-predictions --shards <dir> "
@@ -166,7 +187,7 @@ void PrintUsage(std::ostream& out) {
            "[<file.parquet>...]\n"
         << "cpplink gen-sample --out <file.parquet> [--rows N] [--seed N]\n"
         << "                   [--duplicate-rate F] [--truth <file.csv>]\n"
-        << "                   [--out-b <file.parquet>]\n";
+        << "                   [--out-b <file.parquet>]...\n";
 }
 
 // Reads "--name value" pairs. Returns false and reports on a missing value.
@@ -204,6 +225,63 @@ PairMode DefaultMode(bool given, PairMode mode, size_t inputs) {
     return inputs > 1 ? PairMode::kCrossDataset : PairMode::kAll;
 }
 
+// The schema goes to --out, or to stdout where there is none so the command can
+// be redirected; the report then goes to stderr, where it is still read but not
+// captured into the file.
+int RunInit(const std::vector<std::string>& args, std::ostream& out, std::ostream& err) {
+    DraftOptions options;
+    std::string out_path;
+    std::string value;
+    std::vector<std::string> data_paths;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--out") {
+            if (!TakeValue(args, &i, &out_path, err)) return 1;
+        } else if (args[i] == "--id") {
+            if (!TakeValue(args, &i, &options.unique_id, err)) return 1;
+        } else if (args[i] == "--role") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            const size_t equals = value.find('=');
+            if (equals == std::string::npos || equals == 0 ||
+                equals + 1 == value.size()) {
+                err << "cpplink init: --role takes COLUMN=ROLE, where ROLE is one of "
+                    << KnownRoles() << "\n";
+                return 1;
+            }
+            options.roles.emplace_back(value.substr(0, equals), value.substr(equals + 1));
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink init: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else {
+            data_paths.push_back(args[i]);
+        }
+    }
+    if (data_paths.empty()) {
+        err << "cpplink init: a parquet file is required\n";
+        return 1;
+    }
+
+    DraftReport report;
+    std::string error;
+    if (!DraftSchema(data_paths, options, &report, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    if (out_path.empty()) {
+        PrintDraftReport(report, err);
+        out << report.json;
+        return 0;
+    }
+    std::ofstream file(out_path);
+    if (!file) {
+        err << "cpplink: cannot write " << out_path << "\n";
+        return 1;
+    }
+    file << report.json;
+    PrintDraftReport(report, out);
+    out << "\nWrote " << out_path << "\n";
+    return 0;
+}
+
 int RunInspect(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
@@ -226,7 +304,7 @@ int RunInspect(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -241,7 +319,8 @@ int RunInspect(const std::vector<std::string>& args, std::ostream& out,
     for (size_t i = 0; i < data_paths.size(); ++i) {
         out << (i == 0 ? "File         " : "             ") << data_paths[i];
         if (data_paths.size() > 1) {
-            out << "  (dataset " << i << ", " << stats.dataset_rows[i] << " rows)";
+            out << "  (dataset " << store.DatasetName(i) << ", " << stats.dataset_rows[i]
+                << " rows)";
         }
         out << "\n";
     }
@@ -307,7 +386,7 @@ int RunProfile(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -416,7 +495,7 @@ int RunLevels(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -533,7 +612,7 @@ int RunSimplify(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -564,8 +643,8 @@ int RunSimplify(const std::vector<std::string>& args, std::ostream& out,
         return 1;
     }
     BlockingPlan plan;
-    if (!plan.Build(schema, store, DefaultMode(mode_given, mode, data_paths.size()),
-                    &error)) {
+    if (!plan.Build(SchemaForPrediction(schema), store,
+                    DefaultMode(mode_given, mode, data_paths.size()), &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -742,7 +821,7 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
 
     Schema schema;
     std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -762,6 +841,51 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
         err << "cpplink: " << error << "\n";
         return 1;
     }
+
+    uint64_t row_a = 0;
+    uint64_t row_b = 0;
+    std::string first;
+    std::string second;
+    if (!pair.empty()) {
+        if (!SplitPair(pair, &first, &second)) {
+            err << "cpplink explain: --pair wants <id_a>,<id_b>\n";
+            return 1;
+        }
+        auto resolve = [&](const std::string& text, uint64_t* row) {
+            const IdLookup found = FindRowById(store, text, row);
+            if (found == IdLookup::kMissing) {
+                err << "cpplink explain: no record with id '" << text << "'\n";
+                return false;
+            }
+            if (found == IdLookup::kAmbiguous) {
+                err << "cpplink explain: more than one record has id '" << text
+                    << "'; name its input as <dataset>:<id>, where the datasets are";
+                for (size_t d = 0; d < store.NumDatasets(); ++d) {
+                    err << (d == 0 ? " " : ", ") << store.DatasetName(d);
+                }
+                err << "\n";
+                return false;
+            }
+            return true;
+        };
+        if (!resolve(first, &row_a) || !resolve(second, &row_b)) return 1;
+    } else {
+        if (!SplitPair(rows, &first, &second)) {
+            err << "cpplink explain: --rows wants <i>,<j>\n";
+            return 1;
+        }
+        row_a = std::stoull(first);
+        row_b = std::stoull(second);
+        if (row_a >= store.NumRecords() || row_b >= store.NumRecords()) {
+            err << "cpplink explain: row out of range; the file has "
+                << store.NumRecords() << " records\n";
+            return 1;
+        }
+    }
+
+    PrintGammaLayout(comparisons, out);
+    out << "\n";
+    PrintPairExplanation(store, comparisons, row_a, row_b, out);
 
     // Without a model there is no weight to explain: the levels are the whole
     // story, and the waterfall is simply not printed.
@@ -870,7 +994,13 @@ void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
                      const BallOptions& options, BallTables* balls, std::ostream& out) {
     balls->Build(comparisons, store.NumRecords(), options);
     out << "Neighbourhood masses in " << std::fixed << std::setprecision(1)
-        << balls->seconds << " s\n";
+        << balls->seconds << " s";
+    if (store.NumDatasets() > 1) {
+        out << ", over the " << store.NumDatasets()
+            << " inputs pooled: a value's neighbourhood is as heavy as it is across all "
+               "of them";
+    }
+    out << "\n";
     for (size_t c = 0; c < comparisons.Size(); ++c) {
         out << "  " << comparisons.at(c).spec->name << ": ";
         if (balls->Has(c)) {
@@ -889,16 +1019,22 @@ void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
 // blocks on nothing, so the same schema can be run blocked and unblocked without
 // being edited. It is what makes the schema's "blocking" section optional: on an
 // input small enough to enumerate, there is nothing for it to say.
+//
+// `for_estimation` says which union the plan is: estimation keeps the sources
+// declared `"use": "estimate"` and drops the `"use": "predict"` ones, prediction
+// the other way round, so the two purposes see only their own sources.
 bool LoadForBlocking(const std::string& schema_path,
                      const std::vector<std::string>& data_paths, PairMode mode,
                      Schema* schema, std::unique_ptr<RecordStore>* store,
                      BlockingPlan* plan, std::ostream& err, bool all_pairs = false,
-                     LoadStats* stats = nullptr) {
+                     LoadStats* stats = nullptr, bool for_estimation = false) {
     std::string error;
-    if (!LoadSchema(schema_path, schema, &error)) {
+    if (!LoadSchemaFor(schema_path, data_paths, schema, &error)) {
         err << "cpplink: " << error << "\n";
         return false;
     }
+    *schema =
+        for_estimation ? SchemaForEstimation(*schema) : SchemaForPrediction(*schema);
     if (all_pairs) {
         BlockingSpec spec;
         spec.kind = SourceKind::kAllPairs;
@@ -1277,7 +1413,8 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
     BlockingPlan plan;
     if (!LoadForBlocking(schema_path, data_paths,
                          DefaultMode(mode_given, mode, data_paths.size()), &schema,
-                         &store, &plan, err, all_pairs)) {
+                         &store, &plan, err, all_pairs, nullptr,
+                         /*for_estimation=*/true)) {
         return 1;
     }
     if (schema.comparisons.empty()) {
@@ -1347,6 +1484,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     bool fuzzy_tf = false;
     bool have_threshold = false;
     bool use_signatures = true;
+    bool use_ladders = true;
     PairMode mode = PairMode::kAll;
     bool mode_given = false;
     bool all_pairs = false;
@@ -1421,6 +1559,8 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             }
         } else if (args[i] == "--no-signatures") {
             use_signatures = false;
+        } else if (args[i] == "--no-ladders") {
+            use_ladders = false;
         } else if (args[i] == "--no-interactions") {
             score.use_interactions = false;
         } else if (!args[i].empty() && args[i][0] == '-') {
@@ -1473,7 +1613,7 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     }
 
     ComparisonSet comparisons;
-    if (!comparisons.Bind(schema, *store, &error, use_signatures)) {
+    if (!comparisons.Bind(schema, *store, &error, use_signatures, use_ladders)) {
         err << "cpplink: " << error << "\n";
         return 1;
     }
@@ -1832,7 +1972,11 @@ int RunGenSample(const std::vector<std::string>& args, std::ostream& out,
             if (!TakeValue(args, &i, &value, err)) return 1;
             options.duplicate_rate = std::stod(value);
         } else if (args[i] == "--out-b") {
-            if (!TakeValue(args, &i, &options.link_path, err)) return 1;
+            // Repeatable: each names one more file the planted duplicates are
+            // spread across, so three of them make a four-way link fixture.
+            std::string link_path;
+            if (!TakeValue(args, &i, &link_path, err)) return 1;
+            options.link_paths.push_back(link_path);
         } else if (args[i] == "--truth") {
             if (!TakeValue(args, &i, &options.truth_path, err)) return 1;
         } else {
@@ -1875,6 +2019,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     }
 
     const std::vector<std::string> rest(args.begin() + 1, args.end());
+    if (first == "init") return RunInit(rest, out, err);
     if (first == "inspect") return RunInspect(rest, out, err);
     if (first == "profile") return RunProfile(rest, out, err);
     if (first == "levels") return RunLevels(rest, out, err);

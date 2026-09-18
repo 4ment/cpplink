@@ -74,9 +74,28 @@ struct DeriveSpec {
 struct ColumnSpec {
     std::string name;
     ColumnType type = ColumnType::kString;
+    // Whether the schema said what the type is. A parquet file already knows,
+    // so a column that says nothing takes its type from the file at load, and
+    // until then it reads as a string, which is what every in-memory fixture
+    // and every file the schema was written against holds.
+    bool type_declared = false;
     DeriveSpec derive;  // an empty transform list means the column is read
+    // Columns this one was computed from *outside* cpplink: a blocking key
+    // written into the file by whatever prepared it, such as a memo prefix or
+    // a rounded amount beside its week. The values are read from the file like
+    // any column's; what the declaration carries is the functional dependency,
+    // so `SameSource` ties the key to what it came from and a session blocked on
+    // it holds those comparisons out. Without it the tie has to be found from
+    // the rows, and a composite key is exactly the shape that pass cannot see.
+    std::vector<std::string> derived_from;
 
     bool IsDerived() const { return !derive.transforms.empty(); }
+    // Every column this one is a function of, declared either way.
+    std::vector<std::string> Sources() const {
+        std::vector<std::string> sources = derived_from;
+        if (IsDerived()) sources.push_back(derive.from);
+        return sources;
+    }
 };
 
 // What a comparison level tests. Levels are evaluated top-down, first hit wins,
@@ -88,10 +107,13 @@ enum class LevelType {
     kJaroWinkler,    // similarity >= threshold
     kDateWithin,     // |difference| <= threshold days
     kNumericWithin,  // |difference| <= threshold
-    kGeoWithin,      // great-circle distance <= threshold km
-    kListOverlap,    // intersection size >= threshold
-    kListJaccard,    // Jaccard similarity >= threshold
-    kListContains,   // one row's scalar value is an element of the other's list
+    // |difference| / max(a, b) < threshold: splink's PercentageDifferenceLevel,
+    // for an amount whose tolerance scales with its size. Strict, as splink's is.
+    kPercentageWithin,
+    kGeoWithin,     // great-circle distance <= threshold km
+    kListOverlap,   // intersection size >= threshold
+    kListJaccard,   // Jaccard similarity >= threshold
+    kListContains,  // one row's scalar value is an element of the other's list
     // The two pairwise levels: the closest pair of elements over the cross
     // product of the two rows' lists, rather than the elements they share. A set
     // of email addresses agreeing up to a typo is evidence that an intersection
@@ -122,8 +144,16 @@ bool ParseLevelType(const std::string& name, LevelType* type);
 struct LevelSpec {
     LevelType type = LevelType::kElse;
     double threshold = 0.0;
-    std::string label;   // defaults to a description of type and threshold
-    uint8_t column = 0;  // index into the comparison's columns
+    std::string label;          // defaults to a description of type and threshold
+    uint8_t column = 0;         // index into the comparison's columns
+    bool names_column = false;  // the schema chose `column` rather than defaulting
+    // `"direction": "forward"` on a date_within: the later input's date is on or
+    // after the earlier input's, within the threshold. A payment arrives after it
+    // is sent, so a window either side would admit the half of the near-date
+    // non-matches with the dates the wrong way round and halve the level's
+    // evidence. The sides are the two inputs of a link, so the level needs two;
+    // two rows of one input have no earlier side and read the window either way.
+    bool directed = false;
 
     std::string Describe() const;
 };
@@ -151,10 +181,25 @@ bool ParseSourceKind(const std::string& name, SourceKind* kind);
 // input blocking is a cost with no benefit -- in link mode especially, where the
 // admissible space is the cross product rather than a triangle -- and because it
 // is the reference a plan's pair completeness is measured against.
+// What a source is for. Estimation and prediction already run over different
+// unions -- a source that is not EM-safe feeds prediction alone -- and this is
+// the declared form of the same split: a source blocked on a column to *learn*
+// from, as splink's `estimate_parameters_using_expectation_maximisation(block_on(
+// "amount"))` is, need not be one the run wants to score, and a source that is
+// only worth scoring need not be one that conditions a session.
+enum class SourceUse : uint8_t {
+    kBoth = 0,
+    kEstimate,  // sessions only; left out of the prediction plan
+    kPredict,   // prediction only; never a session
+};
+
+const char* SourceUseName(SourceUse use);
+
 struct BlockingSpec {
     SourceKind kind = SourceKind::kExactValue;
     std::string name;
     std::string column;
+    SourceUse use = SourceUse::kBoth;
     uint32_t max_frequency = 100;  // kRareValue
     uint32_t window = 8;           // kSortedNeighbourhood
     uint32_t bands = 12;           // kMinHash
@@ -190,18 +235,37 @@ struct Schema {
     const ColumnSpec* Find(const std::string& name) const;
     // The columns a file is actually read for: everything but the derived ones.
     bool IsDerived(const std::string& name) const;
+    // Whether a column's type is settled before any file is opened: declared,
+    // or derived from a column whose type is.
+    bool TypeKnown(const ColumnSpec& spec) const;
     // Total packed width in bits. Must fit in a uint32.
     uint8_t GammaWidth() const;
 };
 
 // Whether two columns are one piece of evidence by construction: either derives
-// from the other, or both derive from the same column. Unlike containment or a
+// from the other, or both derive from the same column, by a `derive` cpplink runs
+// or a `derived_from` the file's preparer declares. Unlike containment or a
 // u-side overlap this needs no rows to see and cannot be refused for want of
 // them, which matters because a derived column's collision rate with its source
 // is exactly the rate a file's own duplicates swamp.
 bool SameSource(const Schema& schema, const std::string& a, const std::string& b);
 
+// The schema with the sources one purpose does not use removed: prediction drops
+// `"use": "estimate"` sources, estimation drops `"use": "predict"` ones. Every
+// command building a plan goes through this, so a session-only source can never
+// produce a candidate and a prediction-only source can never condition a session.
+Schema SchemaForEstimation(const Schema& schema);
+Schema SchemaForPrediction(const Schema& schema);
+
 bool ParseSchema(const std::string& json_text, Schema* schema, std::string* error);
+
+// The checks a column's type decides: which transforms a derivation may chain,
+// which levels a comparison may apply, which columns a source may block on.
+// ParseSchema runs them wherever the types are known, so a mistyped schema still
+// fails before a file is opened; the loader runs them again over every column
+// once the file has supplied the types the schema left to it. Also fills in the
+// type of every derived column from its source's.
+bool CheckTypes(Schema* schema, std::string* error);
 bool LoadSchema(const std::string& path, Schema* schema, std::string* error);
 
 }  // namespace cpplink

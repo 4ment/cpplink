@@ -226,6 +226,36 @@ TEST(BlockingConfigTest, RejectsAColumnOnAllPairs) {
     EXPECT_NE(error.find("all_pairs"), std::string::npos) << error;
 }
 
+// `use` says which purpose a source serves, and the two purposes see only their
+// own sources.
+TEST(BlockingConfigTest, UseSplitsTheSourcesBetweenEstimationAndPrediction) {
+    cpplink::Schema schema;
+    std::string error;
+    const std::string json = "{" + std::string(kColumns) +
+                             R"(,"blocking":[
+        {"type":"exact_value","column":"surname"},
+        {"type":"exact_value","column":"dob","use":"estimate"},
+        {"type":"rare_value","column":"surname","max_frequency":3,"use":"predict"},
+        {"type":"exact_value","column":"surname","use":"both"}]})";
+    ASSERT_TRUE(cpplink::ParseSchema(json, &schema, &error)) << error;
+    ASSERT_EQ(schema.blocking.size(), 4u);
+    EXPECT_EQ(schema.blocking[1].use, cpplink::SourceUse::kEstimate);
+    EXPECT_EQ(schema.blocking[2].use, cpplink::SourceUse::kPredict);
+    EXPECT_EQ(schema.blocking[3].use, cpplink::SourceUse::kBoth);
+    const cpplink::Schema predicting = cpplink::SchemaForPrediction(schema);
+    const cpplink::Schema estimating = cpplink::SchemaForEstimation(schema);
+    ASSERT_EQ(predicting.blocking.size(), 3u);
+    ASSERT_EQ(estimating.blocking.size(), 3u);
+    EXPECT_EQ(predicting.blocking[1].kind, cpplink::SourceKind::kRareValue);
+    EXPECT_EQ(estimating.blocking[1].column, "dob");
+
+    EXPECT_FALSE(cpplink::ParseSchema(
+        "{" + std::string(kColumns) +
+            R"(,"blocking":[{"type":"exact_value","column":"surname","use":"never"}]})",
+        &schema, &error));
+    EXPECT_NE(error.find("both, estimate or predict"), std::string::npos) << error;
+}
+
 TEST(BlockingConfigTest, RejectsBlockingOnADoubleColumn) {
     cpplink::Schema schema;
     std::string error;

@@ -303,6 +303,35 @@ void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparison
     std::vector<JointTables> joints(joint != nullptr ? threads : 0,
                                     joint != nullptr ? *joint : JointTables());
 
+    // The cross pair space, laid out so one draw is one pair: the inputs' pairs
+    // (d, e) with d < e in order, each owning a block of N_d * N_e positions, and
+    // a position inside a block naming a row of each. Uniform over positions is
+    // uniform over cross pairs however many inputs there are and however unequal.
+    // Drawing a row and then a partner outside its input is not: with three
+    // inputs of 1M, 1k and 1k rows it reaches the small pair of inputs on two
+    // draws in a million where the space holds five hundred times that.
+    struct CrossBlock {
+        uint64_t first;    // position of the block's first pair
+        uint64_t start_d;  // rows of input d begin here
+        uint64_t start_e;
+        uint64_t size_e;  // rows in input e, the block's minor stride
+    };
+    std::vector<CrossBlock> blocks;
+    uint64_t cross_pairs = 0;
+    if (cross) {
+        const size_t datasets = store.NumDatasets();
+        for (size_t d = 0; d < datasets; ++d) {
+            for (size_t e = d + 1; e < datasets; ++e) {
+                const uint64_t size_d = store.DatasetEnd(d) - store.DatasetStart(d);
+                const uint64_t size_e = store.DatasetEnd(e) - store.DatasetStart(e);
+                if (size_d == 0 || size_e == 0) continue;
+                blocks.push_back(
+                    {cross_pairs, store.DatasetStart(d), store.DatasetStart(e), size_e});
+                cross_pairs += size_d * size_e;
+            }
+        }
+    }
+
     std::vector<std::thread> workers;
     workers.reserve(threads);
     for (unsigned t = 0; t < threads; ++t) {
@@ -313,23 +342,26 @@ void SampleRandomPairs(const RecordStore& store, const ComparisonSet& comparison
             uint64_t taken = 0;
             std::vector<uint8_t> levels(comparisons.Size(), 0);
             for (uint64_t i = 0; i < share; ++i) {
-                state = Mix64(state);
-                const uint64_t a = state % records;
-                state = Mix64(state);
-                uint64_t b = state % records;
+                uint64_t a = 0;
+                uint64_t b = 0;
                 if (cross) {
-                    // Draw the partner from the rows outside a's own input, by
-                    // picking a position in what is left once that input is taken
-                    // out and stepping over the hole. With two inputs -- the case
-                    // linking is about -- this is exactly uniform over cross pairs;
-                    // with more it favours the smaller inputs slightly, which is
-                    // why the number of inputs is reported beside u.
-                    const uint64_t start = store.DatasetStart(store.DatasetOf(a));
-                    const uint64_t end = store.DatasetEndFor(a);
-                    const uint64_t outside = records - (end - start);
-                    if (outside == 0) continue;
-                    b = state % outside;
-                    if (b >= start) b += end - start;
+                    if (cross_pairs == 0) break;
+                    state = Mix64(state);
+                    const uint64_t position = state % cross_pairs;
+                    // The block holding the position: the last whose first
+                    // position is not past it. A handful of inputs is a handful
+                    // of blocks, so a walk is the search.
+                    size_t which = blocks.size() - 1;
+                    while (blocks[which].first > position) --which;
+                    const CrossBlock& block = blocks[which];
+                    const uint64_t inside = position - block.first;
+                    a = block.start_d + inside / block.size_e;
+                    b = block.start_e + inside % block.size_e;
+                } else {
+                    state = Mix64(state);
+                    a = state % records;
+                    state = Mix64(state);
+                    b = state % records;
                 }
                 if (a == b) continue;  // a pair is two distinct records
                 const uint32_t gamma = comparisons.Evaluate(a, b);
@@ -574,6 +606,17 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         *error = "the schema declares no comparisons to estimate";
         return false;
     }
+    if (options.fuzzy_u && plan.mode() == PairMode::kCrossDataset) {
+        // The dictionary self-join counts value pairs over the pooled term
+        // frequencies, and u over cross pairs needs how each value splits between
+        // the inputs, which those tables do not hold. Skipping quietly would hand
+        // back a sampled u under a flag that promised an exact one.
+        *error =
+            "--fuzzy-u is a closed form over one input's term frequencies; in link mode "
+            "the fuzzy levels' u needs each value's count per input, which the pooled "
+            "tables do not hold. Drop --fuzzy-u to sample those levels instead";
+        return false;
+    }
     if (store.NumRecords() < 2) {
         *error = "estimation needs at least two records";
         return false;
@@ -612,9 +655,10 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
 
     // The dictionary self-join, which turns the fuzzy levels' u from a sampled
     // number into an exact one. Term frequencies pool the inputs, so this is a
-    // dedup-only closed form for the same reason the exact level's is.
+    // dedup-only closed form for the same reason the exact level's is, and link
+    // mode was refused above rather than skipped here.
     BallTables balls;
-    if (options.fuzzy_u && plan.mode() != PairMode::kCrossDataset) {
+    if (options.fuzzy_u) {
         // The self-join is threaded by the same knob as everything else here:
         // --threads is the whole command's budget, not the pair walk's alone.
         BallOptions ball = options.ball;
@@ -681,6 +725,7 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
         }
     }
     report->u_pairs = drawn;
+    report->u_inputs = plan.mode() == PairMode::kCrossDataset ? store.NumDatasets() : 1;
     report->u_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - u_started)
             .count();
@@ -822,16 +867,38 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
             report->sessions.push_back(std::move(session));
             continue;
         }
-        // Two free comparisons give a 2x2 table with three degrees of freedom and
-        // the mixture has three free parameters, so the fit is saturated: it has
-        // two exact solutions and EM cannot tell them apart. Three is the floor
-        // for identifiability, and falling below it is a schema problem the run
-        // has to say out loud rather than quietly return the wrong root.
-        if (usable < 3) {
+        // Whether the free comparisons identify the mixture. The pattern table
+        // over them has prod(L_c) cells and so prod(L_c) - 1 degrees of freedom;
+        // the mixture spends 2 * sum(L_c - 1) on m and u and one on lambda. Two
+        // binary comparisons give a 2x2 table with three degrees of freedom
+        // against five parameters, so the fit is saturated and has two roots EM
+        // cannot tell apart, which is the case "fewer than three comparisons"
+        // used to refuse. But two comparisons of six and five levels have 29
+        // degrees of freedom against 19 parameters, and splink fits exactly that
+        // session; refusing it on the count of comparisons rather than of cells
+        // left a three-comparison schema with no blocked session at all. Only the
+        // levels a pair can land on count: a null level on a column with no
+        // nulls is a cell nothing fills.
+        double cells = 1.0;
+        double parameters = 1.0;  // lambda
+        for (size_t c = 0; c < count; ++c) {
+            if (excluded[c]) continue;
+            size_t reachable = 0;
+            for (size_t l = 0; l < u[c].size(); ++l) {
+                if (u[c][l] > kFloor) ++reachable;
+            }
+            reachable = std::max<size_t>(reachable, 1);
+            cells *= static_cast<double>(reachable);
+            parameters += 2.0 * static_cast<double>(reachable - 1);
+        }
+        if (cells - 1.0 < parameters) {
             session.warnings.push_back(
-                "only " + std::to_string(usable) +
-                " comparison(s) are free in this session, which does not identify "
-                "the mixture; give the schema more comparisons that do not read \"" +
+                "the " + std::to_string(usable) +
+                " free comparison(s) give a pattern table of " +
+                std::to_string(static_cast<uint64_t>(cells)) + " cells against " +
+                std::to_string(static_cast<uint64_t>(parameters)) +
+                " parameters, which does not identify the mixture; give the schema "
+                "more comparisons or levels that do not read \"" +
                 columns[i] + "\"");
             report->sessions.push_back(std::move(session));
             continue;
@@ -998,8 +1065,11 @@ bool Estimate(const RecordStore& store, const ComparisonSet& comparisons,
 }
 
 void PrintEstimateReport(const EstimateReport& report, std::ostream& out) {
-    out << "u from " << WithThousands(report.u_pairs) << " random pairs in " << std::fixed
-        << std::setprecision(1) << report.u_seconds << " s, plus "
+    out << "u from " << WithThousands(report.u_pairs) << " random pairs";
+    if (report.u_inputs > 1) {
+        out << " drawn uniformly across " << report.u_inputs << " inputs";
+    }
+    out << " in " << std::fixed << std::setprecision(1) << report.u_seconds << " s, plus "
         << report.u_exact_levels << " levels in closed form from the term "
         << "frequencies\n";
     if (report.tie_seconds > 0.0) {

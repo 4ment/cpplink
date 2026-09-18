@@ -1,0 +1,213 @@
+{
+  "unique_id": "unique_id",
+  "columns": [
+    {
+      "name": "memo",
+      "type": "string"
+    },
+    {
+      "name": "transaction_date",
+      "type": "date"
+    },
+    {
+      "name": "amount",
+      "type": "double"
+    },
+    {
+      "name": "amount_key",
+      "type": "string",
+      "derived_from": [
+        "amount"
+      ]
+    },
+    {
+      "name": "k_month_memo3",
+      "type": "string",
+      "derived_from": [
+        "transaction_date",
+        "memo"
+      ]
+    },
+    {
+      "name": "k_month15_memo3",
+      "type": "string",
+      "derived_from": [
+        "transaction_date",
+        "memo"
+      ]
+    },
+    {
+      "name": "k_memo9",
+      "type": "string",
+      "derived_from": [
+        "memo"
+      ]
+    },
+    {
+      "name": "k_amt2_week",
+      "type": "string",
+      "derived_from": [
+        "amount",
+        "transaction_date"
+      ]
+    },
+    {
+      "name": "k_amt2_week4",
+      "type": "string",
+      "derived_from": [
+        "amount",
+        "transaction_date"
+      ]
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "amount",
+      "columns": [
+        "amount"
+      ],
+      "term_frequency": false,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "percentage_within",
+          "threshold": 0.01
+        },
+        {
+          "type": "percentage_within",
+          "threshold": 0.03
+        },
+        {
+          "type": "percentage_within",
+          "threshold": 0.1
+        },
+        {
+          "type": "percentage_within",
+          "threshold": 0.3
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "memo",
+      "columns": [
+        "memo"
+      ],
+      "term_frequency": false,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "exact"
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 2
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 6
+        },
+        {
+          "type": "levenshtein",
+          "threshold": 10
+        },
+        {
+          "type": "else"
+        }
+      ]
+    },
+    {
+      "name": "transaction_date",
+      "columns": [
+        "transaction_date"
+      ],
+      "term_frequency": false,
+      "levels": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "date_within",
+          "threshold": 1,
+          "direction": "forward"
+        },
+        {
+          "type": "date_within",
+          "threshold": 4,
+          "direction": "forward"
+        },
+        {
+          "type": "date_within",
+          "threshold": 10,
+          "direction": "forward"
+        },
+        {
+          "type": "date_within",
+          "threshold": 30,
+          "direction": "forward"
+        },
+        {
+          "type": "else"
+        }
+      ]
+    }
+  ],
+  "blocking": [
+    {
+      "type": "exact_value",
+      "column": "k_month_memo3",
+      "use": "predict"
+    },
+    {
+      "type": "exact_value",
+      "column": "k_month15_memo3",
+      "use": "predict"
+    },
+    {
+      "type": "exact_value",
+      "column": "k_memo9",
+      "use": "predict"
+    },
+    {
+      "type": "exact_value",
+      "column": "k_amt2_week",
+      "use": "predict"
+    },
+    {
+      "type": "exact_value",
+      "column": "k_amt2_week4",
+      "use": "predict"
+    },
+    {
+      "type": "sorted_neighbourhood",
+      "column": "amount_key",
+      "window": 10,
+      "use": "predict"
+    },
+    {
+      "type": "sorted_neighbourhood",
+      "column": "memo",
+      "window": 10,
+      "use": "predict"
+    },
+    {
+      "type": "exact_value",
+      "column": "memo",
+      "use": "estimate"
+    },
+    {
+      "type": "exact_value",
+      "column": "amount_key",
+      "use": "estimate"
+    }
+  ]
+}

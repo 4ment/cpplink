@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include "cpplink/id_index.hpp"
 
 namespace cpplink {
 namespace {
@@ -100,18 +101,6 @@ std::string Truncate(std::string text, size_t width) {
 
 }  // namespace
 
-bool FindRowById(const RecordStore& store, const std::string& id, uint64_t* row) {
-    const IdColumn& ids = store.ids();
-    if (ids.offsets.empty()) return false;
-    for (uint64_t i = 0; i < store.NumRecords(); ++i) {
-        if (ids.Get(i) == id) {
-            *row = i;
-            return true;
-        }
-    }
-    return false;
-}
-
 void PrintGammaLayout(const ComparisonSet& comparisons, std::ostream& out) {
     out << std::left << std::setw(20) << "Comparison" << std::right << std::setw(8)
         << "Levels" << std::setw(7) << "Bits" << std::setw(9) << "Shift" << "   "
@@ -137,8 +126,8 @@ void PrintPairExplanation(const RecordStore& store, const ComparisonSet& compari
                           uint64_t a, uint64_t b, std::ostream& out) {
     const IdColumn& ids = store.ids();
     const bool has_ids = !ids.offsets.empty();
-    out << "Pair  " << (has_ids ? std::string(ids.Get(a)) : "row " + std::to_string(a))
-        << "  /  " << (has_ids ? std::string(ids.Get(b)) : "row " + std::to_string(b))
+    out << "Pair  " << (has_ids ? QualifiedId(store, a) : "row " + std::to_string(a))
+        << "  /  " << (has_ids ? QualifiedId(store, b) : "row " + std::to_string(b))
         << "\n\n";
 
     out << std::left << std::setw(18) << "Comparison" << std::setw(24) << "Level"

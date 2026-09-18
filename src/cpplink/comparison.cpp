@@ -67,10 +67,11 @@ bool SameSet(const StringListColumn& column, uint64_t a, uint64_t b) {
 }  // namespace
 
 bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
-                         std::string* error, bool use_signatures) {
+                         std::string* error, bool use_signatures, bool use_ladders) {
     bound_.clear();
     tables_.clear();
     width_ = 0;
+    dataset_starts_ = store.dataset_starts();
     // Several comparisons can read the same column, and the signatures belong to
     // the column's values, so they are built once per dictionary and shared.
     std::vector<std::pair<const Dictionary*, SignatureTable*>> built;
@@ -185,6 +186,42 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
             bound.alias_ids = alias_maps_.back()->data();
         }
 
+        // The ladders: each maximal run of one fuzzy string type over one slot.
+        // The screen is the loosest rung -- the lowest similarity, the widest
+        // distance -- so that one screened metric call answers every rung with
+        // the verdict it would give alone; the rungs need not be ordered for
+        // that, only screened at the loosest of them.
+        const size_t count = spec.levels.size();
+        bound.run_end.resize(count);
+        bound.run_screen.resize(count, 0.0);
+        for (size_t i = 0; i < count; ++i) {
+            const LevelSpec& head = spec.levels[i];
+            size_t end = i + 1;
+            double screen = head.threshold;
+            if (use_ladders && (head.type == LevelType::kLevenshtein ||
+                                head.type == LevelType::kJaroWinkler)) {
+                while (end < count && spec.levels[end].type == head.type &&
+                       spec.levels[end].column == head.column) {
+                    const double threshold = spec.levels[end].threshold;
+                    screen = head.type == LevelType::kJaroWinkler
+                                 ? std::min(screen, threshold)
+                                 : std::max(screen, threshold);
+                    ++end;
+                }
+            }
+            bound.run_end[i] = static_cast<uint8_t>(end);
+            bound.run_screen[i] = screen;
+        }
+
+        for (const LevelSpec& level : spec.levels) {
+            if (level.directed && store.NumDatasets() < 2) {
+                *error = "comparison \"" + spec.name +
+                         "\" has a directed date_within level, which reads which "
+                         "input a row came from; it needs two inputs and one was given";
+                return false;
+            }
+        }
+
         bound_.push_back(bound);
         width_ = static_cast<uint8_t>(width_ + bound.bits);
     }
@@ -246,39 +283,75 @@ bool ComparisonSet::StringLevelFires(const BoundComparison& comparison,
             // A null equals nothing, not even another null.
             return left != kNullId && left == right;
 
-        case LevelType::kLevenshtein: {
-            if (left == kNullId || right == kNullId) return false;
-            if (left == right) return true;  // identical ids, distance zero
-            const int limit = static_cast<int>(level.threshold);
+        default:
+            // The fuzzy levels are StringRunLevel's, a run of one included.
+            return false;
+    }
+}
+
+uint8_t ComparisonSet::StringRunLevel(const BoundComparison& comparison, size_t first,
+                                      size_t end, uint32_t left, uint32_t right) const {
+    const std::vector<LevelSpec>& levels = comparison.spec->levels;
+    const LevelSpec& head = levels[first];
+    const BoundComparison::StringSlot& slot = comparison.slots[head.column];
+    const SignatureTable* signatures = slot.signatures;
+    const uint8_t none = static_cast<uint8_t>(end);
+    if (left == kNullId || right == kNullId) return none;
+    // Identical ids: distance zero and similarity one, so the first rung fires.
+    if (left == right) return static_cast<uint8_t>(first);
+    const double screen = comparison.run_screen[first];
+
+    if (head.type == LevelType::kJaroWinkler) {
+        double similarity = 0.0;
+        double length_bound = 0.0;
+        bool computed = false;
+        for (size_t i = first; i < end; ++i) {
+            const double threshold = levels[i].threshold;
             // Two loads and two popcounts, and the strings are never touched. On a
             // candidate set this rejects the great majority of pairs, which is the
             // only reason the fuzzy levels are affordable at all.
             if (signatures != nullptr &&
-                LevenshteinLowerBound(signatures->Mask(left), signatures->Length(left),
-                                      signatures->Mask(right),
-                                      signatures->Length(right)) > limit) {
-                return false;
-            }
-            return BoundedLevenshtein(slot.strings->dict.Value(left),
-                                      slot.strings->dict.Value(right), limit) <= limit;
-        }
-
-        case LevelType::kJaroWinkler: {
-            if (left == kNullId || right == kNullId) return false;
-            if (left == right) return true;
-            if (signatures != nullptr &&
                 JaroWinklerUpperBound(signatures->Mask(left), signatures->Length(left),
                                       signatures->Mask(right),
-                                      signatures->Length(right)) < level.threshold) {
-                return false;
+                                      signatures->Length(right)) < threshold) {
+                continue;
             }
-            return JaroWinklerAtLeast(slot.strings->dict.Value(left),
-                                      slot.strings->dict.Value(right), level.threshold);
+            if (!computed) {
+                const std::string_view a = slot.strings->dict.Value(left);
+                const std::string_view b = slot.strings->dict.Value(right);
+                length_bound = JaroWinklerLengthBound(a.size(), b.size());
+                if (length_bound < screen) return none;
+                similarity = JaroWinklerScreened(a, b, screen);
+                computed = true;
+            }
+            // Both bounds are the ones `JaroWinklerAtLeast` tests, in its order.
+            if (length_bound < threshold) continue;
+            if (similarity >= threshold) return static_cast<uint8_t>(i);
         }
-
-        default:
-            return false;
+        return none;
     }
+
+    int distance = 0;
+    bool computed = false;
+    for (size_t i = first; i < end; ++i) {
+        const int limit = static_cast<int>(levels[i].threshold);
+        if (signatures != nullptr &&
+            LevenshteinLowerBound(signatures->Mask(left), signatures->Length(left),
+                                  signatures->Mask(right),
+                                  signatures->Length(right)) > limit) {
+            continue;
+        }
+        if (!computed) {
+            // Bounded at the widest rung: exact wherever any rung could fire, and
+            // past every one of them otherwise.
+            distance = BoundedLevenshtein(slot.strings->dict.Value(left),
+                                          slot.strings->dict.Value(right),
+                                          static_cast<int>(screen));
+            computed = true;
+        }
+        if (distance <= limit) return static_cast<uint8_t>(i);
+    }
+    return none;
 }
 
 // The pairwise levels, over the cross product of two cells.
@@ -415,18 +488,31 @@ uint8_t ComparisonSet::LevelForValues(size_t comparison, uint32_t left,
                                       uint32_t right) const {
     const BoundComparison& bound = bound_[comparison];
     const std::vector<LevelSpec>& levels = bound.spec->levels;
-    for (size_t i = 0; i < levels.size(); ++i) {
-        if (levels[i].type == LevelType::kNull) continue;  // not a value's business
-        if (levels[i].type == LevelType::kElse) return static_cast<uint8_t>(i);
-        if (StringLevelFires(bound, levels[i], left, right)) {
+    for (size_t i = 0; i < levels.size();) {
+        const LevelSpec& level = levels[i];
+        if (level.type == LevelType::kElse) return static_cast<uint8_t>(i);
+        if (level.type == LevelType::kLevenshtein ||
+            level.type == LevelType::kJaroWinkler) {
+            const size_t end = bound.run_end[i];
+            const uint8_t hit = StringRunLevel(bound, i, end, left, right);
+            if (hit < end) return hit;
+            i = end;
+            continue;
+        }
+        // The null level is not a value's business; every other type falls to
+        // StringLevelFires, which answers false for what it does not evaluate.
+        if (level.type != LevelType::kNull &&
+            StringLevelFires(bound, level, left, right)) {
             return static_cast<uint8_t>(i);
         }
+        ++i;
     }
     return static_cast<uint8_t>(levels.size() - 1);
 }
 
-bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpec& level,
+bool ComparisonSet::LevelFires(const BoundComparison& comparison, size_t index,
                                uint64_t a, uint64_t b) const {
+    const LevelSpec& level = comparison.spec->levels[index];
     switch (level.type) {
         case LevelType::kNull:
             return IsNull(comparison, a) || IsNull(comparison, b);
@@ -449,21 +535,39 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
                 return left != kNullBoolean && left == comparison.booleans->values[b];
             }
             if (comparison.lists != nullptr) return SameSet(*comparison.lists, a, b);
+            if (comparison.numbers != nullptr) {
+                const double left = comparison.numbers->values[a];
+                return !std::isnan(left) && left == comparison.numbers->values[b];
+            }
             return false;
 
         case LevelType::kLevenshtein:
         case LevelType::kJaroWinkler: {
+            // A fuzzy level alone is a run of one: the same code, one rung.
             const StringColumn& strings = *comparison.slots[level.column].strings;
-            return StringLevelFires(comparison, level, strings.ids[a], strings.ids[b]);
+            return StringRunLevel(comparison, index, index + 1, strings.ids[a],
+                                  strings.ids[b]) == index;
         }
 
         case LevelType::kDateWithin: {
             const int32_t left = comparison.dates->values[a];
             const int32_t right = comparison.dates->values[b];
             if (left == kNullDate || right == kNullDate) return false;
-            const int64_t difference =
-                std::abs(static_cast<int64_t>(left) - static_cast<int64_t>(right));
-            return static_cast<double>(difference) <= level.threshold;
+            int64_t difference = static_cast<int64_t>(right) - static_cast<int64_t>(left);
+            if (level.directed) {
+                // Later input minus earlier input, whichever argument is which:
+                // the sampler and the enumerator do not agree on the order of a
+                // pair, and the level must not depend on it. Two rows of one
+                // input have no earlier side and fall through to the window.
+                const size_t side_a = DatasetOf(a);
+                const size_t side_b = DatasetOf(b);
+                if (side_a != side_b) {
+                    if (side_a > side_b) difference = -difference;
+                    return difference >= 0 &&
+                           static_cast<double>(difference) <= level.threshold;
+                }
+            }
+            return static_cast<double>(std::abs(difference)) <= level.threshold;
         }
 
         case LevelType::kNumericWithin: {
@@ -471,6 +575,19 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
             const double right = comparison.numbers->values[b];
             if (std::isnan(left) || std::isnan(right)) return false;
             return std::abs(left - right) <= level.threshold;
+        }
+
+        case LevelType::kPercentageWithin: {
+            // splink's definition, kept strict and with its denominator: the
+            // larger of the two values, not their mean or the left one. Two
+            // equal values, zero included, are at zero difference and fire.
+            const double left = comparison.numbers->values[a];
+            const double right = comparison.numbers->values[b];
+            if (std::isnan(left) || std::isnan(right)) return false;
+            if (left == right) return true;
+            const double larger = std::max(left, right);
+            if (larger == 0.0) return false;
+            return std::abs(left - right) / larger < level.threshold;
         }
 
         case LevelType::kGeoWithin: {
@@ -532,18 +649,20 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, const LevelSpe
 // The cheap half of `LevelFires`. Every case here either evaluates the level
 // exactly, because that costs a load and a compare, or answers with an admissible
 // bound that can only ever say "maybe" where the truth is "no".
-bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, const LevelSpec& level,
+bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, size_t index,
                                uint64_t a, uint64_t b) const {
+    const LevelSpec& level = comparison.spec->levels[index];
     switch (level.type) {
         case LevelType::kNull:
         case LevelType::kElse:
         case LevelType::kExact:
         case LevelType::kDateWithin:
         case LevelType::kNumericWithin:
+        case LevelType::kPercentageWithin:
         case LevelType::kListContains:
             // Exact already, and cheaper than any bound would be: two integer
             // lookups and a walk over a cell that holds a handful of ids.
-            return LevelFires(comparison, level, a, b);
+            return LevelFires(comparison, index, a, b);
 
         case LevelType::kLevenshtein: {
             const BoundComparison::StringSlot& slot = comparison.slots[level.column];
@@ -629,14 +748,27 @@ bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, const LevelSpe
 bool ComparisonSet::LevelPossible(size_t comparison, size_t level, uint64_t a,
                                   uint64_t b) const {
     const BoundComparison& bound = bound_[comparison];
-    return LevelMaybe(bound, bound.spec->levels[level], a, b);
+    return LevelMaybe(bound, level, a, b);
 }
 
 uint8_t ComparisonSet::EvaluateOne(size_t comparison, uint64_t a, uint64_t b) const {
     const BoundComparison& bound = bound_[comparison];
     const std::vector<LevelSpec>& levels = bound.spec->levels;
-    for (size_t i = 0; i < levels.size(); ++i) {
-        if (LevelFires(bound, levels[i], a, b)) return static_cast<uint8_t>(i);
+    for (size_t i = 0; i < levels.size();) {
+        const LevelSpec& level = levels[i];
+        if (level.type == LevelType::kLevenshtein ||
+            level.type == LevelType::kJaroWinkler) {
+            // A run of fuzzy levels is one metric call, whichever rung it lands on.
+            const size_t end = bound.run_end[i];
+            const StringColumn& strings = *bound.slots[level.column].strings;
+            const uint8_t hit =
+                StringRunLevel(bound, i, end, strings.ids[a], strings.ids[b]);
+            if (hit < end) return hit;
+            i = end;
+            continue;
+        }
+        if (LevelFires(bound, i, a, b)) return static_cast<uint8_t>(i);
+        ++i;
     }
     // Parsing guarantees a trailing "else", so this is unreachable in practice.
     return static_cast<uint8_t>(levels.size() - 1);

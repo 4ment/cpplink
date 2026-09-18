@@ -38,19 +38,31 @@ and cluster output. Optional: without it the row index is the id, but then `reca
 
 ```json
 "columns": [
-  {"name": "last_name",      "type": "string"},
-  {"name": "dob",            "type": "date"},
-  {"name": "latitude",       "type": "double"},
-  {"name": "address_tokens", "type": "string_list"}
+  {"name": "last_name"},
+  {"name": "dob"},
+  {"name": "latitude"},
+  {"name": "address_tokens"}
 ]
 ```
 
-| `type` | Stored as | Term frequencies? |
-| --- | --- | --- |
-| `string` *(default)* | interned to a dense `uint32` id | yes |
-| `string_list` | CSR of interned ids, sorted and deduplicated per row | yes |
-| `date` | `int32` days since 1970-01-01 | yes, dense over the observed range |
-| `double` | as-is | **no** |
+A parquet file already knows what its columns are, so `type` is optional: a column that says nothing takes its type from the file.
+
+| Arrow type in the file | `type` | Stored as | Term frequencies? |
+| --- | --- | --- | --- |
+| `string`, `large_string`, any integer | `string` | interned to a dense `uint32` id | yes |
+| `list` or `large_list` of the same | `string_list` | CSR of interned ids, sorted and deduplicated per row | yes |
+| `date32`, `date64`, `timestamp` | `date` | `int32` days since 1970-01-01 | yes, dense over the observed range |
+| `bool` | `boolean` | `int8` | yes |
+| `float`, `double` | `double` | as-is | **no** |
+
+The first column is wider than the second because a file written from Python rarely holds the type its author had in mind.
+pandas and polars write text as `large_string` and lists as `large_list`, and a column that was numeric in the frame arrives as an integer: a postcode, a year, a phone number, or the `unique_id` itself.
+An integer is text: it is read as its decimal digits, so `2000` in one file and `"2000"` in another intern to the same id and compare equal, and a writer who wanted a double wrote one.
+A floating point column is a `double`, never text, so an integer column that pandas promoted to `float64` over a missing value (`2000.0`) is refused where a string is wanted; cast it to a nullable integer (`Int64`) or to text before writing.
+
+Declaring `type` still works, and what it says is checked against the file rather than used instead of it: `{"name": "dob", "type": "string"}` over a `date32` column is an error at load.
+The one thing a declaration buys is an earlier error.
+The checks a type decides, which levels a comparison may apply, which transforms a derivation may chain, which columns a source may block on, run when the schema is parsed for the columns it types and when the first file's footer is read for the rest, so either way they fail before a row is read.
 
 Interning is not a memory trick — it is why the hot loop is fast. An `exact` level becomes a
 `uint32` equality, one or two nanoseconds, no string touched. Sorting list cells at load time

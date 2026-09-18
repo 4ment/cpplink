@@ -216,6 +216,47 @@ TEST(DeriveSchemaTest, SameSourceReadsTheDeclaredDependency) {
     EXPECT_FALSE(SameSource(schema, "surname_key", "town"));
 }
 
+// A key the file's preparer computed is declared with `derived_from` and is the
+// same tie: it names what it came from, one column or several, and two keys
+// sharing a source are one evidence as much as a key and its source are.
+TEST(DeriveSchemaTest, ADeclaredExternalDerivationIsATie) {
+    const cpplink::Schema schema = Parse(R"({
+      "columns": [
+        {"name": "memo", "type": "string"},
+        {"name": "amount", "type": "double"},
+        {"name": "when", "type": "date"},
+        {"name": "memo9", "type": "string", "derived_from": "memo"},
+        {"name": "amount_week", "type": "string", "derived_from": ["amount", "when"]},
+        {"name": "memo3_month", "type": "string", "derived_from": ["memo", "when"]},
+        {"name": "memo_key", "derive": {"from": "memo", "transform": "soundex"}}
+      ]
+    })");
+    EXPECT_TRUE(SameSource(schema, "memo9", "memo"));
+    EXPECT_TRUE(SameSource(schema, "memo", "memo9"));
+    EXPECT_TRUE(SameSource(schema, "amount_week", "amount"));
+    EXPECT_TRUE(SameSource(schema, "amount_week", "when"));
+    EXPECT_FALSE(SameSource(schema, "amount_week", "memo"));
+    // Shared sources, declared either way, tie the keys to each other.
+    EXPECT_TRUE(SameSource(schema, "amount_week", "memo3_month"));
+    EXPECT_TRUE(SameSource(schema, "memo9", "memo_key"));
+    EXPECT_FALSE(SameSource(schema, "memo9", "amount"));
+
+    EXPECT_NE(Refuse(R"({"columns": [
+        {"name": "memo9", "type": "string", "derived_from": "memo"}]})")
+                  .find("not a column"),
+              std::string::npos);
+    EXPECT_NE(Refuse(R"({"columns": [
+        {"name": "memo", "type": "string", "derived_from": ["memo"]}]})")
+                  .find("derived from itself"),
+              std::string::npos);
+    EXPECT_NE(Refuse(R"({"columns": [
+        {"name": "memo", "type": "string"},
+        {"name": "key", "derived_from": "memo",
+         "derive": {"from": "memo", "transform": "soundex"}}]})")
+                  .find("both"),
+              std::string::npos);
+}
+
 // ---------------------------------------------------------------------------
 // The store half: a derived column is built once per distinct value, and is a
 // column like any other by the time anything downstream sees it.

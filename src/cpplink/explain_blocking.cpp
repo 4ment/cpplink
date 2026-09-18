@@ -65,6 +65,31 @@ void PrintBlockingReport(const BlockingPlan& plan, const RecordStore& store,
         }
     }
 
+    // A window is over the inputs interleaved by value, so of a row's W nearest
+    // neighbours only those from another input are candidates in link mode. The
+    // expected share is 1 - sum_d (N_d / N)^2, which is a half for two equal inputs:
+    // the parameter a plan says is not the reach it gets, and the report says so.
+    if (plan.mode() == PairMode::kCrossDataset) {
+        double same = 0.0;
+        for (size_t d = 0; d < store.NumDatasets(); ++d) {
+            const double share =
+                static_cast<double>(store.DatasetEnd(d) - store.DatasetStart(d)) /
+                static_cast<double>(rows);
+            same += share * share;
+        }
+        for (size_t s = 0; s < plan.Size(); ++s) {
+            if (plan.at(s).kind != SourceKind::kSortedNeighbourhood) continue;
+            const double window = static_cast<double>(plan.at(s).window);
+            char buffer[160];
+            std::snprintf(
+                buffer, sizeof(buffer),
+                "\n%s: a window of %u over the inputs interleaved reaches about "
+                "%.1f cross partners a row",
+                plan.at(s).name.c_str(), plan.at(s).window, window * (1.0 - same));
+            out << buffer;
+        }
+    }
+
     const double reduction =
         all_pairs > 0 ? static_cast<double>(sum) / static_cast<double>(all_pairs) : 0.0;
     // An unblocked source has reduced nothing, so the footer says that rather than

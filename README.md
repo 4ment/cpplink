@@ -30,6 +30,7 @@ Blocking is a lazy iterator rather than a join, candidate pairs are deduplicated
 Measured against Splink on the same data, the same schema and the same machine, [`bench/scale/`](bench/scale/) runs 4M records over 1.44bn candidate pairs in **89.2 s at 1.16 GB resident with no scratch file**.
 At 1M records, where both tools finish, cpplink is **4.4x** faster end to end than Splink's best configuration here and uses 8.9x less memory, for the same quality (F1 0.9974 against 0.9961).
 Splink did not finish at 2M on this machine, and what it ran out of was temp space rather than memory.
+On a link between two tables, splink's own [transactions example](https://moj-analytical-services.github.io/splink/demos/examples/duckdb/transactions.html) run with identical candidates and the same two EM sessions, cpplink scores F1 0.7741 against splink's 0.7730, agreeing to the pair at every threshold from 0.9 up, in 1.7 s and 95 MiB against 16.7 s and 1.2 GiB; see [`bench/README.md`](bench/README.md#linking-two-tables-the-transactions-benchmark).
 
 Blocking is also **automatic**. Rather than hand-written rules, candidates come from the term-frequency tables the model already needs — pairs are generated from agreement on *rare* values, which is exactly the high-evidence event the model scores — supplemented by MinHash LSH and sorted-neighbourhood passes.
 Sources that select on a whole record rather than a column (an ANN index, for instance) are used for prediction only, because they break the conditional-independence argument that makes EM's parameter estimates unbiased.
@@ -97,7 +98,10 @@ A comparison can span more than one column: a coordinate pair is one comparison,
   {"type": "else"}]}
 ```
 
-Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`, `numeric_within`, `geo_within`, `list_overlap`, `list_jaccard`, `list_contains`, `contains_levenshtein`, `contains_jaro_winkler`, `list_levenshtein`, `list_jaro_winkler`, `else`.
+Available level types: `null`, `exact`, `levenshtein`, `jaro_winkler`, `date_within`, `numeric_within`, `percentage_within`, `geo_within`, `list_overlap`, `list_jaccard`, `list_contains`, `contains_levenshtein`, `contains_jaro_winkler`, `list_levenshtein`, `list_jaro_winkler`, `else`.
+`percentage_within` is splink's percentage difference, the gap over the larger of the two values and strictly below the threshold, for an amount whose tolerance scales with its size; `exact` on a double is equality to the last digit.
+A `date_within` level may say `"direction": "forward"`, which fires when the later input's date is on or after the earlier input's within the threshold: a payment arrives after it is sent, and a window either side would admit every near-date pair with the dates the wrong way round.
+It reads which input a row came from, so it needs two.
 A configuration that applies a level to a column type it cannot read, omits a trailing `else`, or overflows the 32-bit packed pattern is rejected at parse time, before a file is opened.
 
 A comparison can also name several string columns and let each level say which one it reads, so a field and a key derived from it are ranked inside one comparison rather than counted twice.
@@ -181,11 +185,26 @@ Every source here selects on a single column, which is what makes it usable for 
   {"type": "exact_value", "column": "email"},
   {"type": "rare_value", "column": "last_name", "max_frequency": 100},
   {"type": "minhash", "column": "last_name", "bands": 10, "rows_per_band": 4},
-  {"type": "sorted_neighbourhood", "column": "last_name", "window": 20}
+  {"type": "sorted_neighbourhood", "column": "last_name", "window": 20},
+  {"type": "exact_value", "column": "phone", "use": "estimate"}
 ]
 ```
 
+A source may say what it is for: `"use": "estimate"` conditions an EM session and produces no candidate, `"use": "predict"` is the reverse, and the default does both.
+That is splink's split between the rule passed to its EM call and its `blocking_rules_to_generate_predictions`, and it is how a session can be blocked on a column the run has no reason to score on.
+A column the file already holds a key of, a memo prefix or a rounded amount beside its week, is declared `"derived_from": ["memo"]` so a session blocked on the key holds the comparisons on its sources out; the values are read from the file, the declaration carries the dependency.
+
 ```sh
+# Draft that schema from the file: guess what each column is from its name and
+# its type, and write a default comparison per column, the derived columns a
+# role wants, and the blocking sources a role is strong enough to carry.
+# --role overrides a guess and --id names the record id; without --out the
+# schema is stdout and the report stderr
+cpplink init --out schema.json data.parquet
+cpplink init --role notes=text --role reg_no=national_id data.parquet > schema.json
+# For a link, draft from the first file and check the others hold the same columns
+cpplink init --out schema.json census.parquet tax.parquet
+
 # Report cardinality, null rates and the memory each structure costs
 cpplink inspect --schema examples/sample_schema.json data.parquet
 
@@ -231,9 +250,10 @@ cpplink rescore --schema examples/sample_schema.json --model tuned.json \
                 --spill spill/ --out predictions2/ --threshold 20 data.parquet
 
 # Join those predictions into duplicate clusters, and score the result against
-# known pairs; --predictions takes the merged file or the shard directory
+# known pairs; --predictions takes the merged file or the shard directory, and
+# the extension of --out picks csv or parquet
 cpplink cluster --schema examples/sample_schema.json --predictions predictions.parquet \
-                --out clusters.csv --truth truth.csv data.parquet
+                --out clusters.parquet --truth truth.csv data.parquet
 
 # Combine the shards of an existing run into one file something else can open
 cpplink merge-predictions --schema examples/sample_schema.json --shards predictions/ \
@@ -241,6 +261,23 @@ cpplink merge-predictions --schema examples/sample_schema.json --shards predicti
 
 # Write a sample file with realistic cardinalities and planted duplicates
 cpplink gen-sample --out sample.parquet --rows 18000000 --truth sample.truth.csv
+# ... or split across files for a link fixture: originals to --out, every planted
+# duplicate to one of the --out-b files, so every recorded pair crosses them
+cpplink gen-sample --out a.parquet --out-b b.parquet --out-b c.parquet --rows 100000 --truth truth.csv
+
+# Link two files instead of deduplicating one: find the rows of census.parquet
+# and tax.parquet that are the same person. Every command takes several parquet
+# files, and two with nothing said means scoring only the pairs with one row in
+# each file; --mode link-and-dedup also scores the pairs inside each file.
+cpplink predict --schema schema.json --model model.json --out predictions.parquet \
+                --threshold 20 census.parquet tax.parquet
+
+# Each file is a dataset named by its stem, and an id need only be unique within
+# its file: both files may number their rows 1, 2, 3, ... Wherever the files
+# share ids a record is named <dataset>:<id>, so census:17 is the row with
+# unique_id 17 in census.parquet. The prediction and cluster files carry the
+# dataset beside the id for the same reason.
+cpplink explain --schema schema.json --pair census:17,tax:17 census.parquet tax.parquet
 ```
 
 `gen-sample` exists because the memory claims above are only worth making if they are measured.
@@ -262,13 +299,14 @@ It plants corrupted copies of earlier rows and records them, so the file also se
 - Multicore, shared-memory parallelism *(estimation and scoring done)*
 - Connected-component clustering of the predictions *(done)*
 - Spill of (a, b, γ) and re-scoring under a new model without a second comparison pass *(done)*
-- Deduplication and record linkage across datasets through the same interfaces *(done)*
+- Deduplication and record linkage across datasets through the same interfaces, with ids unique per input and qualified as `dataset:id`, directed date levels and estimation-only blocking sources *(done, measured against splink's transactions example)*
 - A pair-global score ceiling that refuses a candidate before any string metric runs *(done)*
 - Blocking recall estimated with no ground truth at all *(done)*
 - Term-frequency adjustment and exact `u` for the fuzzy levels, from neighbourhood mass *(done)*
 - Pre-model data profiling: what each column can be worth, what a matching pair will score,
   and which columns are the same evidence twice *(done)*
 - Fuzzy thresholds placed from the data rather than by hand *(done)*
+- A schema drafted from the column names and types, with default comparisons and blocking *(done)*
 - Columns derived from other columns at load, once per distinct value *(done)*
 - Merging the comparison levels a run cannot tell apart *(done)*
 - Two-way corrections for the columns that are not conditionally independent *(done)*

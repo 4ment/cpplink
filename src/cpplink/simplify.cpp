@@ -58,6 +58,8 @@ bool Implies(const LevelSpec& upper, const LevelSpec& lower) {
             case LevelType::kNumericWithin:
             case LevelType::kGeoWithin:
                 return lower.threshold >= 0.0;
+            case LevelType::kPercentageWithin:
+                return lower.threshold > 0.0;  // strict: equal values are at 0 < t
             case LevelType::kJaroWinkler:
                 return lower.threshold <= 1.0;
             default:
@@ -79,10 +81,16 @@ bool Implies(const LevelSpec& upper, const LevelSpec& lower) {
         }
     }
     if (upper.type != lower.type) return false;
+    // A directed window sits inside the window either side at the same threshold,
+    // and not the other way round.
+    if (upper.type == LevelType::kDateWithin && !upper.directed && lower.directed) {
+        return false;
+    }
     switch (upper.type) {
         case LevelType::kLevenshtein:
         case LevelType::kDateWithin:
         case LevelType::kNumericWithin:
+        case LevelType::kPercentageWithin:
         case LevelType::kGeoWithin:
         case LevelType::kListLevenshtein:
         case LevelType::kContainsLevenshtein:

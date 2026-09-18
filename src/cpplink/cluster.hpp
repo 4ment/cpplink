@@ -56,7 +56,9 @@ struct ClusterOptions {
     // `.parquet` file it was merged into. A merged file names records by
     // `unique_id` rather than by row, so clustering one costs an id index.
     std::string edge_path;
-    std::string out_path;  // empty writes no file
+    // Empty writes no file; the extension picks csv or parquet, as `predict
+    // --out` does.
+    std::string out_path;
     // Edges carry their weight, so clustering at a threshold above the one
     // predict wrote at costs a re-read and no re-scoring.
     double threshold = -std::numeric_limits<double>::infinity();
@@ -85,6 +87,9 @@ struct ClusterReport {
     // Edges naming an id no loaded record has. Wrong data file, wrong schema, or
     // a merged file from another run; either way they are counted, not fatal.
     uint64_t unresolved = 0;
+    // Of the unresolved, ids that several inputs hold and the file did not
+    // qualify with a dataset. Guessing would join the wrong rows.
+    uint64_t ambiguous = 0;
     std::vector<SizeBucket> buckets;
     std::vector<std::string> shards;  // empty when a single file was read
     std::string edge_file;            // empty when the shards were read
@@ -123,8 +128,12 @@ bool Cluster(const RecordStore& store, const ClusterOptions& options,
              ClusterAssignment* assignment, ClusterReport* report, std::string* error);
 
 // Writes `unique_id,cluster_id,cluster_size` for every record in a cluster of at
-// least `min_size`. The cluster id is the representative's own unique id, so the
-// output says which record the others collapse onto.
+// least `min_size`, as csv or parquet by the extension of `out_path`. The cluster
+// id is the representative's own unique id, so the output says which record the
+// others collapse onto. A store of several inputs writes `dataset` first and
+// qualifies the cluster id as `dataset:id`, because an id alone may name a
+// record in each input.
+const char* ClusterCsvHeader(bool datasets);
 bool WriteClusters(const ClusterAssignment& assignment, const RecordStore& store,
                    const ClusterOptions& options, uint64_t* written, std::string* error);
 
