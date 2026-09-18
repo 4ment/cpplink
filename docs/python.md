@@ -153,6 +153,7 @@ Its `weight` is the scorer's own, and the parity test asserts it equals the weig
 Every report is a bound C++ struct with a read-only attribute per field.
 `repr(report)` and `report.text` are the table the command prints, produced by the same printer, so the two cannot disagree.
 Where a command has `--json`, the report has `json()`.
+Where `estimate` has `--report <file>`, `EstimateReport` has `full_text`: `text` names each session's worst residual pair, `full_text` lists every pair of every session and is what to write to a file.
 `cpplink.to_dict(report)` walks the attributes and returns plain Python, recursing into lists and nested reports.
 
 Reports whose printer needs more than the report itself, such as `predict`'s, which prices its zones against the scorer, carry their text from the moment they were made.

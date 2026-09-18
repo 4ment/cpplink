@@ -15,6 +15,7 @@
 #include "bindings/common.hpp"
 #include "cpplink/cluster.hpp"
 #include "cpplink/estimate.hpp"
+#include "cpplink/fit.hpp"
 #include "cpplink/merge_edges.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/neighbourhood.hpp"
@@ -373,6 +374,35 @@ void BindStages(py::module_& m, SessionClass* session) {
         .def_readwrite("tie_sample_rows", &EstimateOptions::tie_sample_rows)
         .def_readwrite("interactions", &EstimateOptions::interactions);
 
+    py::class_<PairResidual>(m, "PairResidual",
+                             "One pair of free comparisons against the fitted mixture.")
+        .def_readonly("left", &PairResidual::left)
+        .def_readonly("right", &PairResidual::right)
+        .def_readonly("g2", &PairResidual::g2)
+        .def_readonly("degrees", &PairResidual::degrees)
+        .def_readonly("p_value", &PairResidual::p_value)
+        .def_readonly("bits", &PairResidual::bits)
+        .def_readonly("corrected", &PairResidual::corrected)
+        .def_readonly("corrected_g2", &PairResidual::corrected_g2)
+        .def_readonly("corrected_bits", &PairResidual::corrected_bits);
+
+    py::class_<SessionFit>(m, "SessionFit",
+                           "A session's fitted mixture against its own histogram.")
+        .def_readonly("measured", &SessionFit::measured)
+        .def_readonly("refusal", &SessionFit::refusal)
+        .def_readonly("pairs", &SessionFit::pairs)
+        .def_readonly("patterns", &SessionFit::patterns)
+        .def_readonly("deviance", &SessionFit::deviance)
+        .def_readonly("degrees", &SessionFit::degrees)
+        .def_readonly("p_value", &SessionFit::p_value)
+        .def_readonly("bits", &SessionFit::bits)
+        .def_readonly("floor_bits", &SessionFit::floor_bits)
+        .def_readonly("corrected", &SessionFit::corrected)
+        .def_readonly("corrected_refusal", &SessionFit::corrected_refusal)
+        .def_readonly("corrected_deviance", &SessionFit::corrected_deviance)
+        .def_readonly("corrected_bits", &SessionFit::corrected_bits)
+        .def_readonly("residuals", &SessionFit::residuals);
+
     py::class_<SessionReport>(m, "SessionReport", "One EM session of `estimate`.")
         .def_readonly("column", &SessionReport::column)
         .def_readonly("sources", &SessionReport::sources)
@@ -390,6 +420,7 @@ void BindStages(py::module_& m, SessionClass* session) {
         .def_readonly("lambda_", &SessionReport::lambda)
         .def_readonly("implied_matches", &SessionReport::implied_matches)
         .def_readonly("merged", &SessionReport::merged)
+        .def_readonly("fit", &SessionReport::fit)
         .def_readonly("notes", &SessionReport::notes)
         .def_readonly("warnings", &SessionReport::warnings);
 
@@ -450,6 +481,14 @@ void BindStages(py::module_& m, SessionClass* session) {
                                [](const EstimateReport& r) {
                                    return CaptureText([&](std::ostream& out) {
                                        PrintEstimateReport(r, out);
+                                   });
+                               })
+        // The command line's --report <file>: every residual pair of every
+        // session, where `text` names each session's worst pair only.
+        .def_property_readonly("full_text",
+                               [](const EstimateReport& r) {
+                                   return CaptureText([&](std::ostream& out) {
+                                       PrintEstimateReport(r, out, ReportDetail::kFull);
                                    });
                                })
         .def("__repr__", [](const EstimateReport& r) {

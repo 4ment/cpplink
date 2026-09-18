@@ -25,7 +25,9 @@ FIELDS = {
     "ModelComparison": 5,
     "ModelLevel": 7,
     "EstimateReport": 11,
-    "SessionReport": 18,
+    "SessionReport": 19,
+    "SessionFit": 14,
+    "PairResidual": 9,
     "InteractionReport": 8,
     "PredictReport": 20,
     "RescoreReport": 12,
@@ -43,7 +45,7 @@ FIELDS = {
     "RecallResult": 3,
     "RecallMetrics": 12,
     "MissReport": 13,
-    "ProfileReport": 34,
+    "ProfileReport": 37,
     "ColumnProfile": 13,
     "LevelsReport": 10,
     "ComparisonLevels": 29,
@@ -82,6 +84,8 @@ def reports(sample, tmp_path_factory: pytest.TempPathFactory) -> dict[str, objec
         "ModelLevel": model.comparisons[0].levels[0],
         "EstimateReport": sample.estimate_report,
         "SessionReport": sample.estimate_report.sessions[0],
+        "SessionFit": sample.estimate_report.sessions[0].fit,
+        "PairResidual": sample.estimate_report.sessions[0].fit.residuals[0],
         "InteractionReport": sample.estimate_report.interactions,
         "PredictReport": predict,
         "RescoreReport": rescore,
@@ -157,3 +161,22 @@ def test_options_are_read_write() -> None:
         cpplink.CompletenessOptions,
     ):
         cls()
+
+
+def test_estimate_full_text_lists_every_residual_pair(sample) -> None:
+    """`text` is the terminal's compact report and `full_text` is `--report`."""
+    report = sample.estimate_report
+    assert "worst pair" in report.text
+    assert "residuals" not in report.text
+    assert "residuals" in report.full_text
+    assert "worst pair" not in report.full_text
+    listed = sum(len(session.fit.residuals) for session in report.sessions)
+    assert listed > 0
+    rows = [
+        line
+        for line in report.full_text.splitlines()
+        if line.startswith("             ")
+        and not line.lstrip().startswith(("Comparison", "patterns"))
+        and " patterns over " not in line
+    ]
+    assert len(rows) == listed

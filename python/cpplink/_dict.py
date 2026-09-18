@@ -5,14 +5,14 @@
 Every report is a C++ struct bound with one read-only property per field, so a
 dictionary is had by walking the class for those properties rather than by a
 second list of field names that would have to be kept in sync by hand. ``text``
-is left out, being the printed form of the same fields.
+and ``full_text`` are left out, being printed forms of the same fields.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-_SKIP = frozenset({"text"})
+_SKIP = frozenset({"text", "full_text"})
 
 
 def _properties(cls: type) -> list[str]:

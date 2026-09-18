@@ -345,9 +345,17 @@ void BindProfile(py::module_& m) {
         .def_readonly("m_joint", &ColumnPairProfile::m_joint)
         .def_readonly("m_redundant_bits", &ColumnPairProfile::m_redundant_bits)
         .def_readonly("m_resolved", &ColumnPairProfile::m_resolved)
+        .def_readonly("truth_m_resolved", &ColumnPairProfile::truth_m_resolved)
+        .def_readonly("truth_m_pairs", &ColumnPairProfile::truth_m_pairs)
+        .def_readonly("truth_m_left", &ColumnPairProfile::truth_m_left)
+        .def_readonly("truth_m_right", &ColumnPairProfile::truth_m_right)
+        .def_readonly("truth_m_joint", &ColumnPairProfile::truth_m_joint)
+        .def_readonly("truth_m_redundant_bits",
+                      &ColumnPairProfile::truth_m_redundant_bits)
         .def("net_redundant_bits", &ColumnPairProfile::NetRedundantBits)
         .def("suspect", &ColumnPairProfile::Suspect)
-        .def("verdict", &ColumnPairProfile::Verdict);
+        .def("verdict", &ColumnPairProfile::Verdict)
+        .def("remedy", &ColumnPairProfile::Remedy);
 
     py::class_<AnchorSession>(m, "AnchorSession")
         .def_readonly("anchor", &AnchorSession::anchor)
@@ -415,6 +423,10 @@ void BindProfile(py::module_& m) {
         .def_readonly("truth_expected_bits", &ProfileReport::truth_expected_bits)
         .def_readonly("truth_margin_bits", &ProfileReport::truth_margin_bits)
         .def_readonly("truth_mean_error", &ProfileReport::truth_mean_error)
+        .def_readonly("truth_double_counted_bits",
+                      &ProfileReport::truth_double_counted_bits)
+        .def_readonly("truth_pair_mean_error", &ProfileReport::truth_pair_mean_error)
+        .def_readonly("truth_pairs_scored", &ProfileReport::truth_pairs_scored)
         .def_readonly("walked", &ProfileReport::walked)
         .def_readonly("sampled_rows", &ProfileReport::sampled_rows)
         .def_readonly("sampled", &ProfileReport::sampled)
