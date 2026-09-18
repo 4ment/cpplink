@@ -754,6 +754,15 @@ void BuildTruthSide(const RecordStore& store, const TruthPairs& truth,
 
     std::vector<uint64_t> both(report->columns.size(), 0);
     std::vector<uint64_t> agree(report->columns.size(), 0);
+    // And the same per pair of columns: the M side of the dependence map, read
+    // off the pairs that are known to match rather than the ones an anchor
+    // selected.
+    std::vector<uint64_t> pair_both(report->pairs.size(), 0);
+    std::vector<uint64_t> pair_left(report->pairs.size(), 0);
+    std::vector<uint64_t> pair_right(report->pairs.size(), 0);
+    std::vector<uint64_t> pair_joint(report->pairs.size(), 0);
+    std::vector<uint8_t> has(report->columns.size(), 0);
+    std::vector<uint8_t> same(report->columns.size(), 0);
     uint64_t pairs = 0;
     for (const std::pair<uint32_t, uint32_t>& known : truth.rows) {
         // Link mode's pair space is the cross product, so a known pair inside one
@@ -763,17 +772,62 @@ void BuildTruthSide(const RecordStore& store, const TruthPairs& truth,
             continue;
         }
         ++pairs;
-        for (ColumnMatchProfile& match : report->matches) {
-            const ScalarView& view = views[match.column];
+        for (size_t column = 0; column < report->columns.size(); ++column) {
+            const ScalarView& view = views[column];
+            has[column] = 0;
+            same[column] = 0;
             if (!view.Valid()) continue;
             const uint32_t left = view.Key(known.first);
             const uint32_t right = view.Key(known.second);
             if (left == kNullId || right == kNullId) continue;
-            ++both[match.column];
-            if (left == right) ++agree[match.column];
+            has[column] = 1;
+            same[column] = left == right ? 1 : 0;
+            ++both[column];
+            if (left == right) ++agree[column];
+        }
+        for (size_t p = 0; p < report->pairs.size(); ++p) {
+            const ColumnPairProfile& pair = report->pairs[p];
+            if (has[pair.left] == 0 || has[pair.right] == 0) continue;
+            ++pair_both[p];
+            if (same[pair.left] != 0) ++pair_left[p];
+            if (same[pair.right] != 0) ++pair_right[p];
+            if (same[pair.left] != 0 && same[pair.right] != 0) ++pair_joint[p];
         }
     }
     if (pairs == 0) return;
+
+    double pair_error = 0.0;
+    for (size_t p = 0; p < report->pairs.size(); ++p) {
+        ColumnPairProfile& pair = report->pairs[p];
+        pair.truth_m_pairs = pair_both[p];
+        if (pair_both[p] < kMinAnchorPairs) continue;
+        const double total = static_cast<double>(pair_both[p]);
+        pair.truth_m_left = static_cast<double>(pair_left[p]) / total;
+        pair.truth_m_right = static_cast<double>(pair_right[p]) / total;
+        pair.truth_m_joint = static_cast<double>(pair_joint[p]) / total;
+        if (pair.truth_m_left <= 0.0 || pair.truth_m_right <= 0.0 ||
+            pair.truth_m_joint <= 0.0) {
+            continue;
+        }
+        pair.truth_m_resolved = true;
+        pair.truth_m_redundant_bits =
+            Log2(pair.truth_m_joint / (pair.truth_m_left * pair.truth_m_right));
+        if (pair.m_resolved) {
+            pair_error += std::abs(pair.m_redundant_bits - pair.truth_m_redundant_bits);
+            ++report->truth_pairs_scored;
+        }
+        // The ledger's double count, with the known pairs' overlap in place of
+        // the anchors': the same netting against the u side, the same rule that
+        // an anti-correlation is not credited back.
+        if (pair.resolved) {
+            const double net = pair.truth_m_redundant_bits - pair.redundant_bits;
+            if (net > 0.0) report->truth_double_counted_bits -= pair.truth_m_joint * net;
+        }
+    }
+    if (report->truth_pairs_scored > 0) {
+        report->truth_pair_mean_error =
+            pair_error / static_cast<double>(report->truth_pairs_scored);
+    }
 
     report->truthed = true;
     report->truth_pairs = pairs;
@@ -805,8 +859,8 @@ void BuildTruthSide(const RecordStore& store, const TruthPairs& truth,
         }
     }
     if (scored > 0) report->truth_mean_error = error / static_cast<double>(scored);
-    report->truth_margin_bits =
-        report->prior_bits + report->truth_expected_bits + report->double_counted_bits;
+    report->truth_margin_bits = report->prior_bits + report->truth_expected_bits +
+                                report->truth_double_counted_bits;
 }
 
 }  // namespace
@@ -907,21 +961,14 @@ std::string ColumnPairProfile::Verdict() const {
     const bool right_determines =
         right_informative && determines_left >= kDeterminedShare;
     if (left_determines && right_determines) {
-        return left_name + " and " + right_name +
-               " determine each other: drop one, or make the two one comparison";
+        return left_name + " and " + right_name + " determine each other";
     }
-    if (left_determines) {
-        return left_name + " determines " + right_name + ": drop " + right_name +
-               ", or make the two one comparison";
-    }
-    if (right_determines) {
-        return right_name + " determines " + left_name + ": drop " + left_name +
-               ", or make the two one comparison";
-    }
+    if (left_determines) return left_name + " determines " + right_name;
+    if (right_determines) return right_name + " determines " + left_name;
     if (containment >= kContainedShare) {
         const std::string& inner = left_inside_right ? left_name : right_name;
         const std::string& outer = left_inside_right ? right_name : left_name;
-        return inner + " occurs inside " + outer + ": make the two one comparison";
+        return inner + " occurs inside " + outer;
     }
     if (NetRedundantBits() >= kRedundantBits) {
         return left_name + " and " + right_name +
@@ -930,6 +977,40 @@ std::string ColumnPairProfile::Verdict() const {
     }
     return left_name + " and " + right_name +
            " are correlated under u: " + Fixed(redundant_bits, 2) + " bits counted twice";
+}
+
+// Cheapest remedy first, and the one the finding actually calls for: a column
+// that is a function of another carries nothing the other does not, so it can
+// go; a column that contains another is one comparison's worth of evidence, so
+// the two become one comparison; an association that is only statistical is what
+// the two-way correction exists for, and it is priced per level rather than
+// guessed at from one number.
+std::string ColumnPairProfile::Remedy() const {
+    const bool left_determines = left_informative && determines_right >= kDeterminedShare;
+    const bool right_determines =
+        right_informative && determines_left >= kDeterminedShare;
+    if (left_determines && right_determines) {
+        return "drop one of them, or make the two one comparison; a session blocking "
+               "on either holds the other out";
+    }
+    if (left_determines || right_determines) {
+        const std::string& kept = left_determines ? left_name : right_name;
+        const std::string& dropped = left_determines ? right_name : left_name;
+        return "drop " + dropped + ", or make the two one comparison; a session " +
+               "blocking on " + kept + " holds " + dropped + " out";
+    }
+    if (containment >= kContainedShare) {
+        const std::string& inner = left_inside_right ? left_name : right_name;
+        const std::string& outer = left_inside_right ? right_name : left_name;
+        return "make the two one comparison, or declare " + outer + " derived from " +
+               inner + " so both hold-outs are told";
+    }
+    if (NetRedundantBits() >= kRedundantBits) {
+        return "estimate --interactions prices the association per level and "
+               "subtracts it from the weight; or drop the weaker column";
+    }
+    return "estimate --interactions nets the u-side association off per level; "
+           "or make the two one comparison";
 }
 
 ProfileReport BuildProfile(const RecordStore& store, PairMode mode,
@@ -1291,9 +1372,12 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
             if (rows == 0) {
                 out << std::left << std::setw(18) << "Column" << std::setw(18)
                     << "Against" << std::right << std::setw(11) << "M pairs"
-                    << std::setw(9) << "Both" << std::setw(9) << "M redu" << std::setw(9)
-                    << "U redu" << std::setw(9) << "Net" << "\n";
-                out << std::string(83, '-') << "\n";
+                    << std::setw(9) << "M joint" << std::setw(9) << "M redu"
+                    << std::setw(9) << "U redu" << std::setw(9) << "Net";
+                if (report.truthed)
+                    out << std::setw(11) << "True redu" << std::setw(8) << "Err";
+                out << "\n";
+                out << std::string(report.truthed ? 102 : 83, '-') << "\n";
             }
             ++rows;
             out << std::left << std::setw(18) << Truncate(pair.left_name, 17)
@@ -1302,7 +1386,21 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
                 << Fixed(pair.m_joint, 3) << std::setw(9)
                 << Fixed(pair.m_redundant_bits, 2) << std::setw(9)
                 << (pair.resolved ? Fixed(pair.redundant_bits, 2) : "-") << std::setw(9)
-                << (pair.resolved ? Signed(pair.NetRedundantBits()) : "-") << "\n";
+                << (pair.resolved ? Signed(pair.NetRedundantBits()) : "-");
+            if (report.truthed) {
+                out << std::setw(11)
+                    << (pair.truth_m_resolved ? Fixed(pair.truth_m_redundant_bits, 2)
+                                              : "-")
+                    << std::setw(8)
+                    << (pair.truth_m_resolved
+                            ? Signed(pair.m_redundant_bits - pair.truth_m_redundant_bits)
+                            : "-");
+            }
+            out << "\n";
+        }
+        if (rows > 0 && report.truthed && report.truth_pairs_scored > 0) {
+            out << std::left << std::setw(18) << "mean |error|" << std::right
+                << std::setw(84) << Fixed(report.truth_pair_mean_error, 2) << "\n";
         }
         if (rows > 0) out << "\n";
     }
@@ -1312,7 +1410,7 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
         if (!pair.Suspect()) continue;
         if (shown == 0) out << "Suspects\n";
         ++shown;
-        out << "  " << pair.Verdict() << "\n";
+        out << "  " << pair.Verdict() << "\n    -> " << pair.Remedy() << "\n";
     }
     if (shown == 0) {
         out << "No column pair is redundant enough to act on.\n";
@@ -1355,7 +1453,8 @@ void PrintProfileReport(const ProfileReport& report, std::ostream& out) {
                "above it\never read. Err is how far the anchor estimate sits from it, "
                "and it is expected\nto be positive: what that column of numbers "
                "measures is the selection an anchor\nmakes, not an error in the "
-               "arithmetic.\n";
+               "arithmetic. True redu is M redu over the same known\npairs, and its "
+               "Err is the anchor reading of the overlap less the true one.\n";
     }
 }
 
@@ -1386,6 +1485,9 @@ void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
     root["truth_expected_bits"] = report.truth_expected_bits;
     root["truth_margin_bits"] = report.truth_margin_bits;
     root["truth_mean_error"] = report.truth_mean_error;
+    root["truth_double_counted_bits"] = report.truth_double_counted_bits;
+    root["truth_pair_mean_error"] = report.truth_pair_mean_error;
+    root["truth_pairs_scored"] = report.truth_pairs_scored;
     root["walked"] = report.walked;
     root["sampled"] = report.sampled;
     root["sampled_rows"] = report.sampled_rows;
@@ -1482,8 +1584,19 @@ void WriteProfileJson(const ProfileReport& report, std::ostream& out) {
         item["m_redundant_bits"] = pair.m_redundant_bits;
         item["m_resolved"] = pair.m_resolved;
         item["net_redundant_bits"] = pair.NetRedundantBits();
+        item["truth_m_resolved"] = pair.truth_m_resolved;
+        if (pair.truth_m_resolved) {
+            item["truth_m_pairs"] = pair.truth_m_pairs;
+            item["truth_m_left"] = pair.truth_m_left;
+            item["truth_m_right"] = pair.truth_m_right;
+            item["truth_m_joint"] = pair.truth_m_joint;
+            item["truth_m_redundant_bits"] = pair.truth_m_redundant_bits;
+        }
         item["suspect"] = pair.Suspect();
-        if (pair.Suspect()) item["verdict"] = pair.Verdict();
+        if (pair.Suspect()) {
+            item["verdict"] = pair.Verdict();
+            item["remedy"] = pair.Remedy();
+        }
         root["pairs"].push_back(std::move(item));
     }
     out << root.dump(2) << "\n";
