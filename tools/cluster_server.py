@@ -27,6 +27,13 @@ a click is one lookup, so the ledger is the scorer's own arithmetic and nothing
 is computed or spawned here. The level labels and rates come from `--model`.
 Predictions clustering kept apart -- above the write threshold, below the
 clustering one -- are kept and listed under both of their clusters as `rejected`.
+
+`--threshold` keeps only the predictions at or above it. With `--clusters` the
+file is taken as what `cpplink cluster --threshold` wrote at that threshold and
+read as it stands, which is the fast path; without one the predictions are
+clustered here, by the same union-find over the same predictions in the same
+order, so the cache holds exactly the partition that command writes, named by
+the same representatives.
 """
 
 import argparse
@@ -42,6 +49,8 @@ from urllib.parse import urlparse, parse_qs
 import duckdb
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -49,7 +58,7 @@ from cluster_view import (EDGE_DTYPE, EDGE_MAGIC, cell, ledger,  # noqa: E402
                           read_model_levels, read_truth, schema_columns)
 
 EDGE_CHUNK = 1 << 20
-CACHE_VERSION = 6
+CACHE_VERSION = 7
 
 
 def quoted(name):
@@ -118,21 +127,155 @@ def load_shard_edges(conn, directory):
     return total
 
 
+def read_shard_edges(directory, floor):
+    """Every shard edge at or above `floor` as one (a, b, w) table of rows, in
+    the order `cpplink cluster` reads them: shard by shard, sorted by name."""
+    blocks = []
+    for name in sorted(n for n in os.listdir(directory) if n.endswith(".bin")):
+        with open(os.path.join(directory, name), "rb") as handle:
+            if handle.read(len(EDGE_MAGIC)) != EDGE_MAGIC:
+                raise SystemExit(f"{name}: not a cpplink edge shard")
+            block = np.frombuffer(handle.read(), dtype=EDGE_DTYPE)
+            blocks.append(block[block["w"] >= floor])
+    block = np.concatenate(blocks) if blocks else np.empty(0, dtype=EDGE_DTYPE)
+    return pa.table({"a": block["a"], "b": block["b"], "w": block["w"]})
+
+
+def read_file_edges(path, floor):
+    """Every prediction of a merged file at or above `floor` as one (a, b, w)
+    table of ids, in file order, which DuckDB would not promise once the build
+    connection stops preserving it."""
+    if path.endswith(".parquet"):
+        table = pq.read_table(path, columns=["id_a", "id_b", "match_weight"])
+    else:
+        table = pacsv.read_csv(path, convert_options=pacsv.ConvertOptions(
+            include_columns=["id_a", "id_b", "match_weight"],
+            column_types={"id_a": pa.string(), "id_b": pa.string(),
+                          "match_weight": pa.float64()}))
+    table = table.filter(pc.greater_equal(table["match_weight"], floor))
+    return pa.table({"a": table["id_a"].cast(pa.string()),
+                     "b": table["id_b"].cast(pa.string()), "w": table["match_weight"]})
+
+
+def id_rows(conn, files, id_column, keys, by):
+    """`(uid, rid)` of the records `keys` names, by uid or by rid.
+
+    One pass over the id column, which is the index `cpplink cluster` builds to
+    read a merged file back, and what a shard needs to name its rows.
+    """
+    conn.register("keys", pa.table({"key": keys}))
+    parts, offset = [], 0
+    for path in files:
+        parts.append(f"""
+            SELECT CAST({quoted(id_column)} AS VARCHAR) AS uid,
+                   {offset} + file_row_number AS rid
+            FROM read_parquet('{path}', file_row_number = true)""")
+        offset += pq.ParquetFile(path).metadata.num_rows
+    found = conn.execute(f"""
+        SELECT uid, rid FROM ({" UNION ALL ".join(parts)})
+        WHERE {by} IN (SELECT key FROM keys)
+    """).to_arrow_table()
+    conn.unregister("keys")
+    return found
+
+
+def union_find(edges, count):
+    """The binary's union-find, edge for edge: union by rank, a tie keeping the
+    first end's root, so each cluster comes out named by the representative
+    `cpplink cluster` names it by. Returns the root of every index."""
+    parent = list(range(count))
+    rank = [0] * count
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in edges:
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            continue
+        if rank[ra] < rank[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        if rank[ra] == rank[rb]:
+            rank[ra] += 1
+    return [find(x) for x in range(count)]
+
+
+def recluster(conn, args, files, id_column, say):
+    """`members` and `named_edges` from the predictions at or above the
+    threshold, as `cpplink cluster --threshold` would write them.
+
+    A prediction naming a record no input holds is skipped as the binary skips
+    it, which is why the id pass comes before the union-find rather than after.
+    """
+    say("reading the predictions at the threshold")
+    if os.path.isdir(args.predictions):
+        edges = read_shard_edges(args.predictions, args.threshold)
+        keys = pc.unique(pa.concat_arrays([edges["a"].combine_chunks(),
+                                           edges["b"].combine_chunks()]))
+        names = id_rows(conn, files, id_column, keys, "rid")
+        by_rid = dict(zip(names["rid"].to_pylist(), names["uid"].to_pylist()))
+        a = [by_rid.get(r) for r in edges["a"].to_pylist()]
+        b = [by_rid.get(r) for r in edges["b"].to_pylist()]
+    else:
+        edges = read_file_edges(args.predictions, args.threshold)
+        keys = pc.unique(pa.concat_arrays([edges["a"].combine_chunks(),
+                                           edges["b"].combine_chunks()]))
+        names = id_rows(conn, files, id_column, keys, "uid")
+        known = set(names["uid"].to_pylist())
+        a = [u if u in known else None for u in edges["a"].to_pylist()]
+        b = [u if u in known else None for u in edges["b"].to_pylist()]
+    weights = edges["w"].to_pylist()
+    kept = [(x, y, w) for x, y, w in zip(a, b, weights) if x is not None and y is not None]
+
+    say("clustering them")
+    index = {}
+    for x, y, _ in kept:
+        index.setdefault(x, len(index))
+        index.setdefault(y, len(index))
+    root = union_find(((index[x], index[y]) for x, y, _ in kept), len(index))
+    uids = list(index)
+    size = {}
+    for r in root:
+        size[r] = size.get(r, 0) + 1
+    rows = [(uids[i], uids[root[i]], size[root[i]]) for i in range(len(uids))
+            if size[root[i]] >= args.min_size
+            and (not args.max_size or size[root[i]] <= args.max_size)]
+    conn.register("assignment", pa.table({
+        "uid": pa.array([r[0] for r in rows], pa.string()),
+        "cluster_id": pa.array([r[1] for r in rows], pa.string()),
+        "size": pa.array([r[2] for r in rows], pa.int64())}))
+    conn.execute("CREATE TABLE members AS SELECT uid, cluster_id, size FROM assignment")
+    conn.unregister("assignment")
+    conn.register("kept", pa.table({
+        "a": pa.array([k[0] for k in kept], pa.string()),
+        "b": pa.array([k[1] for k in kept], pa.string()),
+        "weight": pa.array([k[2] for k in kept], pa.float64())}))
+    conn.execute("CREATE TABLE named_edges AS SELECT a, b, weight FROM kept")
+    conn.unregister("kept")
+
+
 def build(conn, args, id_column, columns, say):
     """Fill the cache: members, their records, their edges, per-cluster stats."""
     files = [os.path.abspath(p) for p in args.data]
     picked = ", ".join(quoted(c) for c in columns)
 
-    say("reading the cluster assignment")
-    ceiling = f" AND cluster_size <= {args.max_size}" if args.max_size else ""
-    conn.execute(f"""
-        CREATE TABLE members AS
-        SELECT CAST(unique_id AS VARCHAR) AS uid,
-               CAST(cluster_id AS VARCHAR) AS cluster_id,
-               CAST(cluster_size AS BIGINT) AS size
-        FROM {scan(args.clusters, ("unique_id", "cluster_id"))}
-        WHERE cluster_size >= {args.min_size}{ceiling}
-    """)
+    if args.threshold is not None and not args.clusters:
+        recluster(conn, args, files, id_column, say)
+    else:
+        say("reading the cluster assignment")
+        ceiling = f" AND cluster_size <= {args.max_size}" if args.max_size else ""
+        conn.execute(f"""
+            CREATE TABLE members AS
+            SELECT CAST(unique_id AS VARCHAR) AS uid,
+                   CAST(cluster_id AS VARCHAR) AS cluster_id,
+                   CAST(cluster_size AS BIGINT) AS size
+            FROM {scan(args.clusters, ("unique_id", "cluster_id"))}
+            WHERE cluster_size >= {args.min_size}{ceiling}
+        """)
 
     say("reading the clustered records")
     # A record keeps its store row (`rid`): the position in the inputs read in
@@ -151,7 +294,9 @@ def build(conn, args, id_column, columns, say):
     conn.execute("CREATE TABLE records AS " + " UNION ALL ".join(parts))
 
     if args.predictions:
-        if os.path.isdir(args.predictions):
+        if args.threshold is not None and not args.clusters:
+            pass  # `named_edges` is what `recluster` clustered
+        elif os.path.isdir(args.predictions):
             say("naming the predictions")
             # A shard names rows, and the clustered records carry theirs.
             load_shard_edges(conn, args.predictions)
@@ -178,7 +323,9 @@ def build(conn, args, id_column, columns, say):
         # cluster ids, since it is the prediction clustering overruled and the
         # one most worth explaining; a pair with an end no cluster holds has no
         # record to show and is dropped. `--threshold` drops the predictions
-        # below it here, so the cache never holds them.
+        # below it here, so the cache never holds them; when the clusters were
+        # computed here they are the components of these very predictions, so
+        # every pair lands inside one cluster and none is rejected.
         floor = (f" WHERE e.weight >= {args.threshold}"
                  if args.threshold is not None else "")
         conn.execute(f"""
@@ -525,7 +672,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("data", nargs="+", help="the parquet file(s) the run read, in order")
     ap.add_argument("--schema", required=True)
-    ap.add_argument("--clusters", required=True,
+    ap.add_argument("--clusters",
                     help="the csv or parquet cpplink cluster wrote")
     ap.add_argument("--predictions", "--edges", dest="predictions",
                     help="the run's predictions -- one csv or parquet file, or the "
@@ -541,8 +688,10 @@ def main():
     ap.add_argument("--min-size", type=int, default=2)
     ap.add_argument("--max-size", type=int, default=0, help="0 = no ceiling")
     ap.add_argument("--threshold", type=float,
-                    help="keep only the predictions whose match_weight is at "
-                         "least this; the default keeps every one the run wrote")
+                    help="keep only the predictions at or above this match_weight; "
+                         "with --clusters that file is read as the clustering at "
+                         "this threshold, without one the predictions are clustered "
+                         "here exactly as cpplink cluster --threshold would")
     ap.add_argument("--max-rows", type=int, default=200,
                     help="members shown per cluster; the rest are counted only")
     ap.add_argument("--memory", default="4GB",
@@ -555,6 +704,14 @@ def main():
         ap.error("--waterfalls and --model go together")
     if args.waterfalls and not args.predictions:
         ap.error("--waterfalls needs --predictions")
+    if args.threshold is not None:
+        if not args.predictions:
+            ap.error("--threshold prunes the predictions, so it needs --predictions")
+        if not args.clusters and args.min_size < 2:
+            ap.error("--threshold lists only what a prediction reaches, so a "
+                     "singleton is never shown; --min-size must be at least 2")
+    elif not args.clusters:
+        ap.error("--clusters is needed without --threshold")
 
     id_column, columns = schema_columns(args.schema)
     stamp = fingerprint(args, columns)
