@@ -9,7 +9,7 @@ interface and how to read what it prints.
 ## Synopsis
 
 ```sh
-cpplink estimate --schema <schema.json> [--out <model.json>]
+cpplink estimate --schema <schema.json> [--out <model.json>] [--report <file>]
                  [--u-sample N] [--session-pairs N] [--threads N]
                  [--iterations N] [--lambda F] [--seed N] [--mode MODE]
                  [--interactions] [--max-interactions N] [--interaction-bits F]
@@ -20,6 +20,7 @@ cpplink estimate --schema <schema.json> [--out <model.json>]
 | --- | --- | --- |
 | `--schema <file>` | — | required; must declare both `comparisons` and `blocking` |
 | `--out <file>` | none | write the model as JSON. Without it the model is printed and discarded |
+| `--report <file>` | none | write the full report, every residual pair of every session and the parameter table, to a text file. The terminal always gets the compact report, which names each session's worst pair only |
 | `--u-sample N` | 1,000,000 | uniformly random pairs drawn to estimate `u` for levels the closed form cannot reach |
 | `--session-pairs N` | 10,000,000 | per-session cap on pairs actually *compared*. Above it, the fold becomes a Bernoulli sample |
 | `--threads N` | hardware | threads for the histogram fold |
@@ -155,8 +156,26 @@ Session last_name
 ```
 
 `held out` is the identifiability mechanism: every comparison reading that column is excluded
-from this session's EM, because blocking selected on it and its `m` is degenerate. `implies`
-is what feeds λ.
+from this session's EM, because blocking selected on it and its `m` is degenerate.
+`implies` is what feeds λ.
+
+Then the session's fit, which is [its own section](#does-the-mixture-fit) below:
+
+```text
+  fit        G^2 864,017 on 17,976 df (p 0.0e+00), 0.4023 bits per pair
+             3,209 patterns over 1,549,081 pairs put the sampling floor at 0.0015 bits
+  worst pair postcode_fake x gender at 0.0789 bits per pair; 21 pairs in the full report
+```
+
+With `--report <file>` the file holds the same session with every pair listed:
+
+```text
+  residuals  Comparison        Comparison                 G^2    df        p    bits
+             postcode_fake     gender                 169,543     6  0.0e+00  0.0789
+             postcode_fake     occupation             160,029     6  0.0e+00  0.0745
+             first_name        first_and_surname      145,316    16  0.0e+00  0.0677
+             ...
+```
 
 `also tied` is the same discipline one step wider, and it is not optional:
 
@@ -240,6 +259,49 @@ In the run above, `location within 1.00 km` at 20.83 bits and `address exact` at
 both rest on `u` below the sampling floor. They are the weights to distrust, and raising
 `--u-sample` is the way to firm them up — geo radii and list-set equality are precisely what
 the closed form cannot reach.
+
+## Does the mixture fit?
+
+EM maximises the likelihood of each session's histogram under a two-class model whose comparisons are independent within each class, and the likelihood it reaches says nothing about whether that model is the right shape.
+The `fit` block under every session is the check the fit itself cannot make, and it costs one pass over the patterns, which are hundreds to a few thousand whatever the run size.
+
+The fitted model predicts every pattern's count over the comparisons the session left free,
+
+\[
+E[\gamma] = N\Big(\lambda \prod_c m_c(\gamma_c) + (1-\lambda)\prod_c u_c(\gamma_c)\Big)
+\]
+
+with the session's own λ and `m`, and the deviance against what was counted is
+
+\[
+G^2 = 2\sum_\gamma O[\gamma]\,\ln\frac{O[\gamma]}{E[\gamma]}
+\]
+
+Divided by \(2N\ln 2\) it is the Kullback-Leibler divergence of the observed table from the fitted one in **bits per pair**: the average number of bits the model is wrong by on one of the session's pairs, which is the scale everything else here is on.
+The theory is on [the dependence page](../dependence.md#the-fit-residual).
+
+| Line | Meaning |
+| --- | --- |
+| `fit` | `G^2` over every observed pattern, its degrees of freedom (reachable cells less one, less λ and every free `m`; `u` is fixed and not counted), the chi-square tail, and the bits per pair |
+| `sampling floor` | what an exactly right model would still read, because `N` pairs over `K` patterns are a sample: about `(K - 1) / (2 N ln 2)` bits. Misfit is what sits above it, and on a small run most of the number can be floor |
+| `with terms` | the same `G^2` and bits with the admitted interactions in the model; only under `--interactions`, and only where a term touches two comparisons the session left free |
+| `worst pair` | the largest residual, on the terminal, and how many pairs the full report holds |
+| `residuals` | in the full report: the same deviance over one pair of comparisons at a time, worst first. This is the bivariate residual of the latent class literature, and it names the pair conditional independence fails on. `df` is `(L_c - 1)(L_d - 1)` over the reachable levels |
+| `after` | that pair's residual with the terms in |
+
+The terminal report names each session's worst pair and stops, because a schema of ten comparisons has forty-five pairs per session; `--report <file>` writes every pair of every session, followed by the parameter table, so the file stands on its own.
+
+**Read bits, not `p`.** `G^2` grows with the run at a fixed misfit, so every pair on `historical_50k` reads `p = 0` and every session on `febrl3` reads `p = 1.0` on the whole table while its worst pair reads `5e-179`; the p-value is printed because it is the diagnostic and decides nothing.
+
+**What it found, measured.** On `historical_50k` the pairs the interaction fit admits are exactly the ones a term takes away: `first_name` against `first_and_surname` goes **0.7538 to 0.0029** bits per pair in the `postcode_fake` session and `surname` against `first_and_surname` 0.3255 to 0.0059, with the whole table going 1.78 to 0.60 bits per pair, and a pair the terms do not touch keeps its residual to the fourth decimal.
+But the largest residuals in the `dob` session are not name columns at all: `postcode_fake` against `gender`, `postcode_fake` against `occupation` and `occupation` against `gender`, at 0.07 to 0.08 bits per pair each.
+Those are the **null levels**.
+A record missing its postcode is 1.6 times as likely to be missing its gender, 1.3 times as likely to be missing its occupation, and the mixture multiplies two independent null rates.
+The interaction fit sees the same pairs and refuses them, correctly for what it is: it ranks on what a term moves a *match* by, and correlated missingness moves a match by under a tenth of a bit because it is nearly the same under both classes.
+A residual is a misfit of the mixture; whether it costs the weight anything is the interaction table's `per match`, and the two answer different questions.
+
+On `febrl3`, whose corruption is applied field by field on independent coins, the whole-table deviance is 4,137 on 22,475 df in the `soc_sec_id` session, and the 0.53 bits per pair it reads is 0.13 bits of sampling floor over 972 patterns and 5,601 pairs plus one pair, `given_name` against `surname` at 0.11 bits, that the interaction fit refuses because its `u` side is the file's own duplicates.
+Nothing else on that file clears a hundredth of a bit.
 
 ## Output
 
@@ -359,6 +421,8 @@ The two terms admitted here are exactly the two pairs
 [`profile`](profile.md) names from the rows alone — `first_and_surname` contains both name
 columns — reached from the histograms with no notion of containment at all.
 
+Whether the admitted terms were enough is the `with terms` line of each session's [fit](#does-the-mixture-fit): the deviance the whole table keeps once the terms are in is what they did not reach.
+
 !!! warning "`G^2` cannot choose the number of terms, for the same reason it could not in `levels` or `simplify`"
     Its power is the size of the run. All 28 candidate pairs here read `p = 0` over
     `historical_50k`'s 18.4M candidate pairs. The effect size decides: `--interaction-bits`
@@ -462,3 +526,9 @@ visible to two sessions, which is the interaction form of the `sessions == 0` re
     The hypothesis was that a spurious term would read differently in each session and a real
     one would not. On `fake_1000` the sessions agree to within 0.06 bits on corrections that
     have the wrong sign. The bias is systematic, so nothing that looks for noise can find it.
+
+## See also
+
+- [Dependence between comparisons](../dependence.md): the hold-outs, the corrections and the fit, with their formulas
+- [Estimation and EM](../em.md): why each parameter comes from where it does
+- [`profile`](profile.md): the same dependence read from the rows before any model exists

@@ -39,6 +39,7 @@ nav:
       - The model: model.md
       - Comparisons: comparisons.md
       - Estimation and EM: em.md
+      - Dependence between comparisons: dependence.md
       - Blocking: blocking.md
       - Linking two files: linking.md
   - Commands:

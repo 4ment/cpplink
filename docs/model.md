@@ -144,6 +144,9 @@ hurdle every pair starts behind.
     `febrl3`, whose columns are independent by construction, it fits nothing and the model is
     byte-identical. It is off by default.
 
+    Every measure of the assumption, from the rows before a model exists to the fit residual
+    after one, is collected on [Dependence between comparisons](dependence.md).
+
 ## Term-frequency adjustment
 
 A shared surname of "Zolnerowich" is far stronger evidence than a shared "Smith", but both

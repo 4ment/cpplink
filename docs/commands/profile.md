@@ -38,16 +38,16 @@ cpplink profile --schema <schema.json> [--sample-rows N] [--no-pairs]
 
 ### One: can these columns separate the classes at all?
 
-A comparison is worth `log2(m/u)` bits when it agrees.
-For an exact-match level `u` is the rate two random rows carry the same value, which is
-`sum_v p_v^2` over the term-frequency table the loader already built, and `m <= 1` always.
+A comparison is worth \(\log_2(m/u)\) bits when it agrees.
+For an exact-match level \(u\) is the rate two random rows carry the same value, which is
+\(\sum_v p_v^2\) over the term-frequency table the loader already built, and \(m \leq 1\) always.
 So the most a column can ever be worth is
 
-```
-bits(c) = -log2(sum_v p_v^2)
-```
+\[
+\textrm{bits}(c) = -\log_2 \left(\sum_v p_v^2\right)
+\]
 
-and its inverse `1 / sum_v p_v^2` is the **effective cardinality**: the number of equally likely
+and its inverse $1 / \sum_v p_v^2$ is the **effective cardinality**: the number of equally likely
 values the column behaves as if it had.
 That is the number the distinct count in [`inspect`](inspect.md) is a bad proxy for.
 900,000 distinct surnames with one value on 40% of the rows behaves as about six.
@@ -78,20 +78,22 @@ The U half of that assumption is a property of the value distributions alone, so
 matches and no sampling of pairs.
 The pairwise version of the same closed form is
 
-```
-u_cd = sum over (v,w) of p_vw^2        phi_cd = u_cd / (u_c * u_d)
-```
+\[
+u_{cd} = \frac{\sum_{v,w} c_{vw}(c_{vw}-1)}{n(n-1)}
+\qquad
+\phi_{cd} = \frac{u_{cd}}{u_c\,u_d}
+\]
 
-over the joint value table of two interned columns, and `log2(phi_cd)` is the number of bits the
-score double-counts.
-It is reported in bits rather than as a correlation because bits are the correction term that
-would appear in the weight, which is what makes it actionable.
+over the joint value table of two interned columns, where \(c_{vw}\) counts the rows holding \(v\) in one column and \(w\) in the other, and \(\log_2(\phi_{cd})\) is the number of bits the score double-counts.
+It is reported in bits rather than as a correlation because bits are the correction term that would appear in the weight, which is what makes it actionable.
 
 Two structural checks ride the same pass.
 **Determination** is the share of rows kept by mapping each value of one column to its commonest
 partner in the other, which is 1 exactly when the first column determines the second.
 **Containment** is the share of rows on which one value occurs literally inside the other, which
 is the detector for a column built out of another.
+
+The M half of the same question, among matching pairs, comes from the anchor pairs of question two, and with `--truth` from the known pairs as well. [Dependence between comparisons](../dependence.md) holds every one of these measures with its formula and says which report column is which; the descriptions below point there.
 
 ## Reading the output
 
@@ -145,7 +147,7 @@ it agrees and its disagreement penalty when it does not; `Double counted` is wha
 over-counts once the M-side overlap is set against the U-side one; and `Est. margin` is the
 prior plus both.
 On this file the ceiling says a match has 31.38 bits of headroom and the estimate says 18.35,
-which is closer to the truth of 6.51.
+which is closer to the truth of 6.52.
 
 Then `m` per column, and the anchors it came from:
 
@@ -170,10 +172,10 @@ Anchors, over 50,578 rows
 
 `Cov` here is the share of *anchor pairs* carrying the column on both rows, which is coverage
 among matches and not the row coverage in the table above.
-`Weight` is `log2(m/u)`, and it can never exceed `Bits`, because `m <= 1`.
+`Weight` is \(\log_2(m/u)\), and it can never exceed `Bits`, because `m <= 1`.
 `Spread` is the same `m` read off anchors of different strengths, and a wide one is the estimate
 saying it depends on which matches it was shown.
-`post` is how far above even odds a pair agreeing on that anchor sits, under `m <= 1`.
+`post` is how far above even odds a pair agreeing on that anchor sits, under \(m \leq 1\).
 A column where every anchor pair agreed, or none did, has an `m` of exactly 1 or 0 and no finite
 weight; it is floored half a pair off the edge and named in a footer, rather than floored
 quietly.
@@ -188,17 +190,59 @@ surname           first_and_surname       46,063    0.514    1.000    1.000     
 postcode_fake     birth_place             34,706    0.921    0.298    0.000        -
 ...
 first_name        occupation              25,270    0.336    0.149    0.001     0.53
-
-Suspects
-  first_and_surname determines first_name: drop first_name, or make the two one comparison
-  first_and_surname determines surname: drop surname, or make the two one comparison
 ```
+
+| Column | Meaning | Formula |
+| --- | --- | --- |
+| `Rows` | sampled rows carrying a value in both columns; everything in the row is over these | |
+| `L->R` | the **determination share**: map every value of `Column` to its commonest partner in `Against` and count the rows that mapping keeps, as a share. 1.000 means `Column` determines `Against` | [determination](../dependence.md#determination-and-containment) |
+| `R->L` | the same the other way round | |
+| `Substr` | the **containment** share: rows on which one value occurs literally inside the other. Which way round is in the JSON as `left_inside_right` | [containment](../dependence.md#determination-and-containment) |
+| `Redund` | the **U-side overlap** `log2(u_cd / (u_c u_d))`: bits of agreement the weight counts twice if both columns agree. `-` where the joint cannot be read, see [below](#on-a-file-holding-duplicates-the-joint-measures-the-duplicates) | [U-side overlap](../dependence.md#u-side-overlap) |
+
+A `-` under `L->R` or `R->L` is a direction refused rather than read, for one of the [two reasons](#mutual-information-is-not-estimable-at-this-cardinality) below.
 
 `first_and_surname` is the concatenation of the other two name columns, and the profile names it
 from the rows alone in under a second: it determines both of them exactly (`R->L` of 1.000) and
 both occur inside it on every row (`Substr` of 1.000).
 That is the same dependence the [`completeness`](completeness.md) diagnostic finds from the
 model, reached here with no model at all.
+
+When the M side ran, the same pairs are read again among matches:
+
+```text
+Column            Against               M pairs  M joint   M redu   U redu      Net
+-----------------------------------------------------------------------------------
+surname           first_and_surname      38,888    0.575     0.28        -        -
+postcode_fake     birth_place            27,179    0.671     0.02        -        -
+...
+first_name        occupation             31,799    0.617     0.03     0.53    -0.51
+first_name        gender                 51,536    0.614     0.02     0.36    -0.35
+```
+
+| Column | Meaning | Formula |
+| --- | --- | --- |
+| `M pairs` | anchor pairs carrying both columns on both rows, over the sessions whose anchor holds neither | |
+| `M joint` | the share of those pairs agreeing on **both** columns | |
+| `M redu` | the **M-side overlap** `log2(M joint / (a_c a_d))`, with `a_c` the share agreeing on each column alone: bits the two agree together beyond what agreeing apart predicts, among matches | [M-side overlap](../dependence.md#m-side-overlap) |
+| `U redu` | `Redund` from the table above, repeated so the two sides sit together | |
+| `Net` | `M redu - U redu`: what the weight actually double-counts, since the score adds `log2(m/u)` for each column and only the association the U side does not share is counted twice. `-` where `Redund` was refused | [Net](../dependence.md#m-side-overlap) |
+
+With `--truth` the table gains `True redu`, the same `M redu` over the known pairs, and `Err`, the anchor reading less the true one, with a `mean |error|` line under them; that is [below](#scoring-it-against-known-pairs).
+A pair is listed only where the M side resolved, and `Net` feeds the ledger's `Double counted` line: the sum over pairs of `M joint` times the positive part of `Net`, the bits an average match is over-scored by.
+
+The suspects close the section, each with the finding and the remedy that finding calls for:
+
+```text
+Suspects
+  first_and_surname determines first_name
+    -> drop first_name, or make the two one comparison; a session blocking on first_and_surname holds first_name out
+  first_and_surname determines surname
+    -> drop surname, or make the two one comparison; a session blocking on first_and_surname holds surname out
+```
+
+A pair is a suspect when a determination share reaches 0.99, containment reaches 0.90, or `Net` or a resolved `Redund` reaches one bit.
+The remedies are [below](#what-to-do-about-a-suspect).
 
 ## Checking it against the model
 
@@ -240,9 +284,9 @@ On `historical_50k` that put **9.4 spurious bits** of redundancy on a pair of in
 columns.
 Every `u` here is the without-replacement collision form
 
-```
-sum_v c_v (c_v - 1) / (n (n - 1))
-```
+\[
+\frac{\sum_v c_v (c_v - 1)}{(n (n - 1))}
+\]
 
 which reads exactly zero on a table of singletons, and which is what `u` means anyway: the rate
 two *distinct* rows collide.
@@ -254,7 +298,7 @@ Two distinct rows agreeing is rarer there than one value in however many the col
 ### Mutual information is not estimable at this cardinality
 
 The uncertainty coefficient read `U(L|R) = 0.920` for two independent high-cardinality columns,
-because the two marginals and the joint all saturate at `log2(n)` together.
+because the two marginals and the joint all saturate at \(\log_2(n)\) together.
 Sample size cannot fix it and the Miller-Madow correction is orders of magnitude too small to
 repair it, so mutual information is not reported at all.
 The determination share degrades far more gracefully and replaces it.
@@ -269,9 +313,9 @@ A direction that fails either test is shown as `-`.
 ### On a file holding duplicates, the joint measures the duplicates
 
 `u` is the rate two *non-matching* rows collide, and what is actually observed on a
-deduplication file is `(1 - lambda) * u + lambda * m`.
+deduplication file is \((1 - \lambda) * u + \lambda * m\).
 For one column that is a small inflation.
-For the joint of two high-cardinality columns the independent rate is far below `lambda` and the
+For the joint of two high-cardinality columns the independent rate is far below \(\lambda\) and the
 measurement is nothing but the duplicates.
 On `historical_50k` the joint of `first_and_surname` and `postcode_fake` holds **85,584
 collisions where independence predicts 52**, and every one of the extras is a duplicate row
@@ -290,7 +334,7 @@ is flagged and its ceiling read as a floor, which is the safe direction for a ma
 
 ## Sampling
 
-The pairwise pass is the only part that reads rows, and it is `O(columns^2)` per row.
+The pairwise pass is the only part that reads rows, and it is \(\mathcal{O}(\textrm{columns}^2)\) per row.
 `--sample-rows` bounds it.
 Rows are selected by a hash of the row index, so the choice is deterministic, independent of
 input order and spread evenly across the inputs.
@@ -360,7 +404,7 @@ Measured against the ground truth the benchmark datasets ship and the tools neve
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `febrl3` | **0.003** | 0.008 | +57.12 | **+31.42** | +31.63 |
 | `fake_1000` | **0.016** | 0.024 | +18.74 | **-0.83** | -1.16 |
-| `historical_50k` | **0.117** | 0.228 | +31.38 | **+18.35** | +6.51 |
+| `historical_50k` | **0.117** | 0.228 | +31.38 | **+18.35** | +6.52 |
 
 The ceiling overstates a matching pair's score by a factor of two to three on all three.
 The estimate closes 99% of that gap on `febrl3`, 94% on `fake_1000` and 54% on `historical_50k`.
@@ -387,6 +431,20 @@ mean |error|                                                                    
 
 and adds a `Truth margin` line to the ledger beside `Est. margin`, summed over exactly the
 columns the anchor estimate covers so the two are the same question about the same columns.
+
+The M-side dependence table is read off the known pairs the same way:
+
+```text
+Column            Against               M pairs  M joint   M redu   U redu      Net  True redu     Err
+------------------------------------------------------------------------------------------------------
+surname           first_and_surname      38,888    0.575     0.28        -        -       0.49   -0.20
+postcode_fake     birth_place            27,179    0.671     0.02        -        -       0.03   -0.01
+...
+mean |error|                                                                                      0.02
+```
+
+`True redu` is [`M redu`](../dependence.md#m-side-overlap) over the known pairs, `Err` is the anchor reading less it, and `Truth margin` nets the true overlaps rather than the anchors'.
+On `historical_50k` the anchor reading of the overlap is within 0.02 bits of the truth on average and 0.20 bits low on its worst pair, `surname` against `first_and_surname`, which is the pair whose `m` the anchors also read worst.
 
 Nothing above the truth reading depends on it.
 The anchors are chosen, walked and averaged identically whether the flag is given or not, which
@@ -516,9 +574,9 @@ Each entry of `columns` carries `name`, `type`, `scored`, `distinct`, `nulls`, `
 `top_share`, `collision`, `effective_values`, `bits`, `covered_bits` and `bits_floored`.
 Each entry of `pairs` carries the two names, `rows`, `determines_left` and `determines_right`
 with their `informative` flags and baselines, `containment`, the three `u` values,
-`redundant_bits`, `joint_collisions`, `expected_collisions`, `resolved`, `suspect` and the
-`verdict` string, plus the M side: `m_pairs`, `m_left`, `m_right`, `m_joint`,
-`m_redundant_bits`, `m_resolved` and `net_redundant_bits`.
+`redundant_bits`, `joint_collisions`, `expected_collisions`, `resolved`, `suspect` and, for a
+suspect, the `verdict` and `remedy` strings, plus the M side: `m_pairs`, `m_left`, `m_right`,
+`m_joint`, `m_redundant_bits`, `m_resolved` and `net_redundant_bits`.
 A pair with `resolved` false has a `redundant_bits` of zero that means *not readable* rather
 than *not redundant*, and the same holds for `m_resolved`.
 
@@ -530,27 +588,22 @@ Each entry of `matches` carries `name`, `estimated`, `sessions`, `pairs`, `cover
 Each entry of `sessions` carries `anchor`, `learns`, `bits`, `posterior_bits`, `groups`,
 `pairs`, `oversized_groups`, `capped` and `used`.
 
-With `--truth` the top level gains `truthed`, `truth_pairs`, `truth_expected_bits`,
-`truth_margin_bits` and `truth_mean_error`, and each entry of `matches` gains `truthed` and,
-where it is true, `truth_pairs`, `truth_coverage`, `truth_m`, `truth_weight` and
-`truth_expected_bits`.
+With `--truth` the top level gains `truthed`, `truth_pairs`, `truth_expected_bits`, `truth_double_counted_bits`, `truth_margin_bits`, `truth_mean_error`, `truth_pair_mean_error` and `truth_pairs_scored`; each entry of `matches` gains `truthed` and, where it is true, `truth_pairs`, `truth_coverage`, `truth_m`, `truth_weight` and `truth_expected_bits`; and each entry of `pairs` gains `truth_m_resolved` and, where it is true, `truth_m_pairs`, `truth_m_left`, `truth_m_right`, `truth_m_joint` and `truth_m_redundant_bits`.
 
 ## What to do about a suspect
 
-Cheapest first:
+Cheapest first, and the suspects table prints the one its finding calls for:
 
-1. **Drop one of the columns.** If one determines the other, the second carries no information
-   the first does not, and dropping it costs nothing and removes the double count exactly.
-2. **Make the two one comparison.** Levels are ordered and the first hit wins, so a single
-   comparison over both columns counts the evidence once by construction.
-   This is what the `list_contains` level does for a name against an alias list.
-3. **Subtract the bits.** `Redund` is the correction term, so a comparison whose columns overlap
-   by 0.5 bits is worth 0.5 bits less than the model thinks.
-   This is the only option that keeps both columns as they are, and it is approximate, because
-   the correction is exact only on the U side.
+1. **Drop one of the columns.** If one determines the other, the second carries no information the first does not, and dropping it costs nothing and removes the double count exactly.
+   Either way [`estimate`](estimate.md) already holds the determined column out of a session blocking on the determinant, which is what the remedy line says.
+2. **Make the two one comparison.** Levels are ordered and the first hit wins, so a single comparison over both columns counts the evidence once by construction.
+   This is what the `list_contains` level does for a name against an alias list, and what a `derived_from` declaration tells the hold-outs about a column built from another.
+3. **Fit the correction.** For an association that is statistical rather than structural, [`estimate --interactions`](estimate.md#relaxing-conditional-independence) prices `Net` level by level and subtracts it from the weight.
+   `Redund` alone is not the correction: what the weight double-counts is the M-side overlap less the U-side one, which is why the report nets the two.
 
 ## See also
 
+- [Dependence between comparisons](../dependence.md): every measure here, with its formula, and which report column is which
 - [`inspect`](inspect.md): the same file, from the loader's side: cardinality and memory
 - [`completeness`](completeness.md): the M-side dependence between comparisons, once a model exists
 - [`estimate`](estimate.md): where the `u` this predicts actually comes from
