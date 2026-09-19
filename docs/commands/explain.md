@@ -14,6 +14,10 @@ cpplink explain --schema <schema.json> --pair <id_a>,<id_b> <file.parquet>
 cpplink explain --schema <schema.json> --rows <i>,<j> <file.parquet>
 cpplink explain --schema <schema.json> --pair <id_a>,<id_b> \
                 --model <model.json> [--threshold BITS] <file.parquet>
+cpplink explain --schema <schema.json> --model <model.json> --json \
+                --pairs <file|-> <file.parquet>
+cpplink explain --schema <schema.json> --model <model.json> \
+                --predictions <predictions.parquet> --out <waterfalls.parquet> <file.parquet>
 ```
 
 | Option | Meaning |
@@ -21,14 +25,22 @@ cpplink explain --schema <schema.json> --pair <id_a>,<id_b> \
 | `--schema <file>` | required |
 | `--pair <id_a>,<id_b>` | the two records by their `unique_id` values |
 | `--rows <i>,<j>` | the two records by zero-based row index |
+| `--pairs <file>` | many pairs, one `<id_a>,<id_b>` per line; `-` reads them from stdin |
+| `--row-pairs <file>` | the same, with `<i>,<j>` row indices per line |
+| `--predictions <file>` | every prediction in the csv or parquet `predict --out` wrote; needs `--out` |
+| `--out <file>` | where to write the waterfalls, one wide row per prediction; `.csv` or `.parquet` |
 | `--model <file>` | optional; adds the score waterfall below the level table |
 | `--threshold BITS` | default 0; only affects the zone and the emit/drop line |
 | `--tf-damping F` | default 1.0; scale the term-frequency move, as in [`predict`](predict.md) |
+| `--fuzzy-tf`, `--ball-budget N` | adjust fuzzy levels by neighbourhood mass, as in [`predict`](predict.md) |
+| `--no-interactions` | score the plain model out of a file that carries two-way corrections |
+| `--json` | one JSON object per pair instead of the text report; needs `--model` |
 | *(positional)* | required; the parquet file |
 
-Give **exactly one** of `--pair` or `--rows`. The schema must declare `comparisons`;
-`blocking` is not needed. Without `--model` there is no weight to explain, and the waterfall
-is simply not printed.
+Give **exactly one** of `--pair`, `--rows`, `--pairs`, `--row-pairs` or `--predictions`. The
+schema must declare `comparisons`; `blocking` is not needed. Without `--model` there is no
+weight to explain, and the waterfall is simply not printed.
+Give `explain` the same scoring options the run used, or it explains a different weight than the one the run wrote.
 
 ## Example
 
@@ -178,6 +190,34 @@ skips it without touching a term-frequency table.
     The running total ends at exactly the number `predict` computes — that equality is
     asserted over every pair in a fixture, because a report that plausibly explains a
     *different* calculation from the one that runs would be worse than no report at all.
+
+## Many pairs from one load
+
+`--pairs` and `--row-pairs` answer one pair per input line, from a single load of the store.
+That is the difference between a tool that can ask about a pair and one that cannot: at 20M records the load is the cost, and the pair is free.
+With `-` the lines come from stdin and each answer is flushed as it is written, so a process can be held open and asked one pair at a time.
+A line that names no record is reported on its own line and does not end the batch.
+
+`--json` writes the waterfall as one object per line, with the same numbers as the text report: `prior`, one entry per comparison in `steps` (`name`, `level`, `label`, the two `values`, `m`, `u`, `bits`, `tf`, `frequency` where a move was made, and the `running` total), the `interactions`, then `weight`, `probability`, the pattern `bracket`, `threshold`, `zone` and `emitted`.
+
+## Every prediction of a run, as a file
+
+`--predictions <file> --out <file>` explains the whole prediction file `predict --out` wrote and writes one wide row per pair, csv or parquet by the extension:
+
+```text
+id_a, id_b, gamma, prior, match_weight, match_probability,
+bracket_low, bracket_high, threshold, zone, emitted,
+<comparison>_level, <comparison>_bits, <comparison>_tf, <comparison>_frequency,   one set per comparison
+<left>_x_<right>_bits                                                             one per two-way correction
+```
+
+`prior` plus every `_bits` and `_tf` plus every interaction column is `match_weight`, to the last bit the run wrote.
+A level's label, `m` and `u` are the model's rather than the pair's, so the file does not repeat them; the model file carries them, indexed by `<comparison>_level`.
+Ids are resolved through a sorted index over the id column, 4 bytes a record, so a file of millions of predictions costs one load and one pass.
+A prediction naming an id no record holds is skipped and counted, and so is one whose stored `gamma` the comparisons no longer produce, which means the schema changed after `predict` ran and the ledgers explain today's schema rather than the file's weights.
+
+This is what the cluster viewers in `tools/` draw from: `tools/cluster_view.py --waterfalls` embeds a ledger per prediction, and `tools/cluster_server.py --waterfalls` loads the file beside the predictions so a click is one lookup.
+Nothing in either recomputes a bit of the weight, and neither runs this binary.
 
 ## See also
 
