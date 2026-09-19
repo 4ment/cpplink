@@ -9,6 +9,8 @@ One rule scopes the package: no number is computed in Python.
 The binding calls the functions the command line calls, through the same pipeline glue, so a model estimated from Python with a seed is byte for byte the model `cpplink estimate --seed` writes.
 That is a test, `python/tests/test_parity.py`.
 
+A worked example over a real dataset, with plots and tables at every stage, is the notebook `python/examples/historical_50k.ipynb`.
+
 ## Install
 
 The extension links the Arrow C++ the environment holds, which is also the Arrow that `pyarrow` loads in the same process, so the two must be the same build.
