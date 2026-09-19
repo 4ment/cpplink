@@ -36,3 +36,30 @@ rebuild = false
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]
+
+[tool.ruff]
+# The same column limit as the C++ side.
+line-length = 90
+target-version = "py310"
+src = ["python"]
+# Sources only: the build tree and the rendered site are not ours to lint, and
+# the notebook and the code fences in the docs keep their own layout.
+extend-exclude = ["build", "build-*", "site", "temp", "*.ipynb", "*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+]
+
+[tool.ruff.format]
+quote-style = "preserve"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+known-first-party = ["cpplink"]

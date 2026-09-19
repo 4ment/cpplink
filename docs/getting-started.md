@@ -31,6 +31,18 @@ ctest --test-dir build
 `-DCMAKE_PREFIX_PATH=$CONDA_PREFIX` is what makes `find_package(GTest)` succeed; without it
 the test configure step fails even inside the activated environment.
 
+The presets in `CMakePresets.json` hold the same configuration, plus two instrumented ones: `asan` builds with AddressSanitizer and UndefinedBehaviorSanitizer, `tsan` with ThreadSanitizer, each into its own `build-<preset>/`.
+The threaded stages (the histogram fold, `predict`, `rescore` and the neighbourhood self-join) share the record store `const` across threads with no lock, and the `tsan` preset is what checks that claim rather than asserting it.
+
+```sh
+cmake --preset asan
+cmake --build --preset asan
+ctest --preset asan
+```
+
+`release` and `debug` are the plain builds with tests on, and `ctest --preset <name>` runs the suite with output on failure.
+The GitHub Actions workflow runs `release`, `asan` and `tsan` on Linux and macOS, then the Python suite and the format and lint checks.
+
 ## The whole pipeline in seven commands
 
 Everything below runs against the synthetic sample cpplink can write for itself. The numbers

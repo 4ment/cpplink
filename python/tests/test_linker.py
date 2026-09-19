@@ -8,10 +8,9 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
+from conftest import ROWS
 
 import cpplink
-
-from conftest import ROWS
 
 
 def test_linker_loads_the_store(sample) -> None:

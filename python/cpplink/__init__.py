@@ -13,17 +13,18 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from . import _cpplink
 from ._cpplink import (  # noqa: F401  (re-exported)
     BallOptions,
     BlockingReport,
+    CliResult,
     ClusterAssignment,
     ClusterQuality,
     ClusterReport,
     ClusterResult,
-    CliResult,
     CompletenessOptions,
     CompletenessReport,
     DraftReport,
@@ -632,7 +633,12 @@ class Linker:
         the report and the simplified schema, or None where nothing merged."""
         opts = options or SimplifyOptions()
         _apply(
-            opts, alpha=alpha, min_gap=min_gap, pair_cap=pair_cap, threads=threads, seed=seed
+            opts,
+            alpha=alpha,
+            min_gap=min_gap,
+            pair_cap=pair_cap,
+            threads=threads,
+            seed=seed,
         )
         report = self._session.simplify(_model(model), opts)
         if report.merged_levels == 0:

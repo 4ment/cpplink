@@ -13,10 +13,9 @@ import json
 from pathlib import Path
 
 import pyarrow.parquet as pq
+from conftest import SEED
 
 import cpplink
-
-from conftest import SEED
 
 
 def _run(*args: str) -> cpplink.CliResult:
@@ -118,12 +117,13 @@ def test_explain_parity(sample) -> None:
 def test_report_parity(sample) -> None:
     """The diagnostic commands print the same tables the reports carry."""
     common = ["--schema", sample.schema_path, sample.parquet]
-    assert _run("explain-blocking", *common).stdout == sample.linker.explain_blocking().text
+    assert (
+        _run("explain-blocking", *common).stdout == sample.linker.explain_blocking().text
+    )
     recall = sample.linker.recall(sample.truth)
     assert _run("recall", "--truth", sample.truth, *common).stdout == recall.text
     assert (
-        _run("recall", "--truth", sample.truth, "--json", *common).stdout
-        == recall.json()
+        _run("recall", "--truth", sample.truth, "--json", *common).stdout == recall.json()
     )
     # `completeness` and `inspect` print timings, so their tables are compared
     # through the JSON and the fields rather than the text.

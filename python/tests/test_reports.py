@@ -10,7 +10,6 @@ binding raises it, so the number is bumped here when the addition is meant.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 

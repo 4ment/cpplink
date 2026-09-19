@@ -407,6 +407,7 @@ Tools used:
 
 - clang-format for formatting: `cmake --build build --target format`
 - cpplint for static analysis: `cpplint --recursive src tests python/bindings`
+- ruff for the Python code, lint and format: `ruff check .` and `ruff format .`
 
 ## License
 

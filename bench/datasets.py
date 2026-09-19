@@ -14,8 +14,8 @@ date, numeric and geo levels have no bit-identical splink counterpart and are
 out of scope for a parity benchmark.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
 
 # ---------------------------------------------------------------- comparisons
 
@@ -60,19 +60,19 @@ class Dataset:
     rows: int  # expected, for a sanity check in prepare.py
     id_column: str  # in the source frame
     entity: Callable  # frame -> series of true entity ids
-    comparisons: List[Comparison]
-    block_columns: List[str]  # exact agreement; identical in both tools
+    comparisons: list[Comparison]
+    block_columns: list[str]  # exact agreement; identical in both tools
     # Conjunctions of columns that are near-certain matches when they all
     # agree. Used once, offline, to derive lambda; see LAMBDA_RECALL.
-    lambda_rules: List[tuple] = field(default_factory=list)
-    cpplink_extra: List[dict] = field(default_factory=list)
+    lambda_rules: list[tuple] = field(default_factory=list)
+    cpplink_extra: list[dict] = field(default_factory=list)
     lam: float = 0.0001  # probability two random records match;
     # refresh with run_splink.py <name> --estimate-lambda
     drop: tuple = ()  # source columns neither tool may see
-    rename: Optional[Callable] = None
+    rename: Callable | None = None
 
     @property
-    def columns(self) -> List[str]:
+    def columns(self) -> list[str]:
         return [c.column for c in self.comparisons]
 
     def cpplink_schema(self, track: str) -> dict:
@@ -138,8 +138,11 @@ DATASETS = {
             Comparison("state", ()),
         ],
         block_columns=["soc_sec_id", "date_of_birth", "surname", "given_name"],
-        lambda_rules=[("soc_sec_id",), ("given_name", "surname", "date_of_birth"),
-                      ("surname", "date_of_birth", "postcode")],
+        lambda_rules=[
+            ("soc_sec_id",),
+            ("given_name", "surname", "date_of_birth"),
+            ("surname", "date_of_birth", "postcode"),
+        ],
         cpplink_extra=[
             {"type": "rare_value", "column": "address_1", "max_frequency": 10},
             {"type": "sorted_neighbourhood", "column": "surname", "window": 10},
@@ -166,9 +169,11 @@ DATASETS = {
             Comparison("gender", ()),
         ],
         block_columns=["dob", "surname", "postcode_fake", "first_name"],
-        lambda_rules=[("first_name", "surname", "dob"),
-                      ("first_and_surname", "postcode_fake"),
-                      ("surname", "dob", "birth_place")],
+        lambda_rules=[
+            ("first_name", "surname", "dob"),
+            ("first_and_surname", "postcode_fake"),
+            ("surname", "dob", "birth_place"),
+        ],
         cpplink_extra=[
             {"type": "rare_value", "column": "first_and_surname", "max_frequency": 20},
             {"type": "sorted_neighbourhood", "column": "first_and_surname", "window": 10},
