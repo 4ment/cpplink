@@ -3,6 +3,7 @@
 
 #include "cpplink/explain.hpp"
 
+#include <cmath>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -153,8 +154,11 @@ TEST_F(ExplainFixture, JsonCarriesTheSameLedger) {
             model_.comparisons[i].levels[w.steps[i].level];
         EXPECT_DOUBLE_EQ(step["m"].get<double>(), learned.m);
         EXPECT_DOUBLE_EQ(step["u"].get<double>(), learned.u);
-        // The frequency is reported exactly where a term-frequency move is.
-        EXPECT_EQ(step.contains("frequency"), step["tf"].get<double>() != 0.0);
+        // The frequency is reported exactly where the level is an adjusted one:
+        // surname's exact level, and nowhere on city. A move of zero bits over a
+        // value held by exactly u * records rows still names its count.
+        EXPECT_EQ(step.contains("frequency"), i == 0 && w.steps[i].level == 1);
+        if (step["tf"].get<double>() != 0.0) EXPECT_TRUE(step.contains("frequency"));
     }
     EXPECT_DOUBLE_EQ(running, w.weight);
 
@@ -237,6 +241,42 @@ TEST_F(ExplainFixture, ReportShowsTheRunningTotalAndTheDecision) {
               std::string::npos)
         << text;
     EXPECT_NE(text.find(cpplink::ZoneName(scorer_.Classify(gamma))), std::string::npos);
+}
+
+// A value held by exactly u * records rows moves the weight by exactly zero bits,
+// and that is an adjustment of zero over a count, not the absence of one. The
+// ledger, the JSON and the text all still name the count, or the report reads as if
+// the level carried no term frequency at all. This is not a corner the sampler
+// cannot reach: a fixture drawn by one standard library held such a value.
+TEST_F(ExplainFixture, AZeroMoveStillNamesItsFrequency) {
+    // Rows 0 and 1 share name0, which 60 of the 200 rows hold.
+    const uint32_t gamma = comparisons_.Evaluate(0, 1);
+    ASSERT_EQ(comparisons_.LevelOf(gamma, 0), 1);
+    ASSERT_EQ(scorer_.FrequencyFor(0, gamma, 0), 60u);
+    cpplink::Model model = model_;
+    model.comparisons[0].levels[1].u = 0.3;
+    // The premise: the folded log the adjustment keeps is the frequency's own.
+    ASSERT_EQ(std::log2(0.3 * static_cast<double>(kRecords)), std::log2(60.0));
+    cpplink::Scorer scorer;
+    cpplink::ScoreOptions options;
+    options.threshold = 1.0;
+    std::string error;
+    ASSERT_TRUE(scorer.Bind(model, comparisons_, *store_, options, &error)) << error;
+
+    const cpplink::PairWaterfall w =
+        cpplink::BuildPairWaterfall(*store_, comparisons_, scorer, 0, 1, &model);
+    EXPECT_EQ(w.steps[0].tf, 0.0);
+    EXPECT_EQ(w.steps[0].frequency, 60u);
+    EXPECT_EQ(w.steps[1].frequency, 0u) << "city carries no term frequency";
+
+    const nlohmann::json root = nlohmann::json::parse(cpplink::PairWaterfallJson(w));
+    EXPECT_EQ(root["steps"][0]["frequency"].get<uint32_t>(), 60u);
+    EXPECT_FALSE(root["steps"][1].contains("frequency"));
+
+    std::ostringstream out;
+    cpplink::PrintPairWaterfall(w, out);
+    EXPECT_NE(out.str().find("Term frequency"), std::string::npos) << out.str();
+    EXPECT_NE(out.str().find("60 rows"), std::string::npos) << out.str();
 }
 
 TEST_F(ExplainFixture, NoTermFrequencySectionWhenNothingAgreedExactly) {

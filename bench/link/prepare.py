@@ -27,8 +27,16 @@ import duckdb
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from transactions import (  # noqa: E402
-    DATA, DESTINATION, KEYS, ORIGIN, ROWS, SCHEMA_TRACKS, SCHEMAS, TRUTH,
-    cpplink_schema, schema_path,
+    DATA,
+    DESTINATION,
+    KEYS,
+    ORIGIN,
+    ROWS,
+    SCHEMA_TRACKS,
+    SCHEMAS,
+    TRUTH,
+    cpplink_schema,
+    schema_path,
 )
 
 
@@ -70,8 +78,10 @@ def main():
         if not frame["unique_id"].is_unique:
             raise SystemExit(f"{name}: unique_id is not unique")
         if not (frame["ground_truth"] == frame["unique_id"]).all():
-            raise SystemExit(f"{name}: ground_truth is not unique_id; the truth "
-                             "file below assumes it is")
+            raise SystemExit(
+                f"{name}: ground_truth is not unique_id; the truth "
+                "file below assumes it is"
+            )
 
     connection = duckdb.connect()
     write_side(connection, origin, ORIGIN, "origin")
@@ -90,11 +100,14 @@ def main():
 
     for name, path in (("origin", ORIGIN), ("destination", DESTINATION)):
         distinct = connection.execute(
-            "SELECT " + ", ".join(f"count(DISTINCT {k[0]})" for k in KEYS)
+            "SELECT "
+            + ", ".join(f"count(DISTINCT {k[0]})" for k in KEYS)
             + f" FROM read_parquet('{path}')"
         ).fetchone()
-        print(f"  {name}: {ROWS:,} rows; distinct keys "
-              + ", ".join(f"{k[0]}={d:,}" for k, d in zip(KEYS, distinct)))
+        print(
+            f"  {name}: {ROWS:,} rows; distinct keys "
+            + ", ".join(f"{k[0]}={d:,}" for k, d in zip(KEYS, distinct, strict=True))
+        )
     print(f"  {ROWS:,} truth pairs, one per origin record")
 
 

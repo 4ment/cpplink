@@ -32,6 +32,7 @@
 #include "cpplink/model.hpp"
 #include "cpplink/neighbourhood.hpp"
 #include "cpplink/parquet_loader.hpp"
+#include "cpplink/pipeline.hpp"
 #include "cpplink/predict.hpp"
 #include "cpplink/profile.hpp"
 #include "cpplink/recall.hpp"
@@ -48,16 +49,6 @@ namespace cpplink {
 const char* const kVersion = "0.1.0";
 
 namespace {
-
-// The schema for a data command: parsed, then given the column types it left to
-// the file. Every command that builds a store from a schema goes through here,
-// because the store's layout is the types and they must be settled first.
-bool LoadSchemaFor(const std::string& schema_path,
-                   const std::vector<std::string>& data_paths, Schema* schema,
-                   std::string* error) {
-    return LoadSchema(schema_path, schema, error) &&
-           ResolveColumnTypes(data_paths, schema, error);
-}
 
 void PrintUsage(std::ostream& out) {
     out << "usage: cpplink <command> [options]\n"
@@ -202,28 +193,49 @@ bool TakeValue(const std::vector<std::string>& args, size_t* index, std::string*
     return true;
 }
 
-// "dedup" is every pair the store holds, which over more than one input is
-// link-and-dedup; "link" is the cross-product of the inputs alone.
+// `--mode`, with the reason a bad one is refused printed where a command's
+// other argument errors go.
 bool ParseMode(const std::string& text, PairMode* mode, std::ostream& err) {
-    if (text == "dedup" || text == "link-and-dedup") {
-        *mode = PairMode::kAll;
-        return true;
-    }
-    if (text == "link") {
-        *mode = PairMode::kCrossDataset;
-        return true;
-    }
-    err << "cpplink: --mode must be dedup, link or link-and-dedup, not '" << text
-        << "'\n";
+    std::string error;
+    if (cpplink::ParseMode(text, mode, &error)) return true;
+    err << "cpplink: " << error << "\n";
     return false;
 }
 
-// A second file with nothing said about it means linking the two, which is what a
-// second file is for; asking for the within-file pairs as well is --mode
-// link-and-dedup.
-PairMode DefaultMode(bool given, PairMode mode, size_t inputs) {
-    if (given) return mode;
-    return inputs > 1 ? PairMode::kCrossDataset : PairMode::kAll;
+// The pipeline's loaders, with their reason printed as a command prints one.
+bool LoadForBlocking(const std::string& schema_path,
+                     const std::vector<std::string>& data_paths, PairMode mode,
+                     Schema* schema, std::unique_ptr<RecordStore>* store,
+                     BlockingPlan* plan, std::ostream& err, bool all_pairs = false,
+                     LoadStats* stats = nullptr, bool for_estimation = false) {
+    std::string error;
+    if (cpplink::LoadForBlocking(schema_path, data_paths, mode, schema, store, plan,
+                                 &error, all_pairs, stats, for_estimation)) {
+        return true;
+    }
+    err << "cpplink: " << error << "\n";
+    return false;
+}
+
+bool LoadIdsOnly(const std::string& schema_path,
+                 const std::vector<std::string>& data_paths,
+                 std::unique_ptr<RecordStore>* store, std::ostream& err) {
+    std::string error;
+    if (cpplink::LoadIdsOnly(schema_path, data_paths, store, &error)) return true;
+    err << "cpplink: " << error << "\n";
+    return false;
+}
+
+bool ResolveEdgeOutput(const std::string& command, const std::string& out,
+                       bool format_given, std::string* out_dir, std::string* merge_path,
+                       std::ostream& err) {
+    std::string error;
+    if (cpplink::ResolveEdgeOutput(command, out, format_given, out_dir, merge_path,
+                                   &error)) {
+        return true;
+    }
+    err << "cpplink " << error << "\n";
+    return false;
 }
 
 // The schema goes to --out, or to stdout where there is none so the command can
@@ -684,64 +696,6 @@ int RunSimplify(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
-// Splits "a,b" into its two halves.
-bool SplitPair(const std::string& text, std::string* first, std::string* second) {
-    const size_t comma = text.find(',');
-    if (comma == std::string::npos || comma == 0 || comma + 1 >= text.size()) {
-        return false;
-    }
-    *first = text.substr(0, comma);
-    *second = text.substr(comma + 1);
-    return true;
-}
-
-void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
-                     const BallOptions& options, BallTables* balls, std::ostream& out);
-
-// Resolves one `<a>,<b>` line of `explain` to two rows, by id or by row index.
-bool ResolvePair(const RecordStore& store, const std::string& text, bool by_row,
-                 uint64_t* row_a, uint64_t* row_b, std::string* error) {
-    std::string first;
-    std::string second;
-    if (!SplitPair(text, &first, &second)) {
-        *error = by_row ? "wants <i>,<j>" : "wants <id_a>,<id_b>";
-        return false;
-    }
-    if (by_row) {
-        char* end_a = nullptr;
-        char* end_b = nullptr;
-        *row_a = std::strtoull(first.c_str(), &end_a, 10);
-        *row_b = std::strtoull(second.c_str(), &end_b, 10);
-        if (*end_a != '\0' || *end_b != '\0') {
-            *error = "wants <i>,<j>";
-            return false;
-        }
-        if (*row_a >= store.NumRecords() || *row_b >= store.NumRecords()) {
-            *error = "row out of range; the file has " +
-                     std::to_string(store.NumRecords()) + " records";
-            return false;
-        }
-        return true;
-    }
-    const auto resolve = [&](const std::string& text, uint64_t* row) {
-        const IdLookup found = FindRowById(store, text, row);
-        if (found == IdLookup::kMissing) {
-            *error = "no record with id '" + text + "'";
-            return false;
-        }
-        if (found == IdLookup::kAmbiguous) {
-            *error = "more than one record has id '" + text +
-                     "'; name its input as <dataset>:<id>, where the datasets are";
-            for (size_t d = 0; d < store.NumDatasets(); ++d) {
-                *error += (d == 0 ? " " : ", ") + store.DatasetName(d);
-            }
-            return false;
-        }
-        return true;
-    };
-    return resolve(first, row_a) && resolve(second, row_b);
-}
-
 int RunExplain(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
@@ -949,76 +903,6 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
         out.flush();
     }
     return 0;
-}
-
-// Builds the neighbourhood masses a fuzzy term-frequency adjustment needs, and
-// says which columns got one. A column too large for the budget keeps today's
-// behaviour, which is worth saying out loud rather than degrading quietly.
-void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
-                     const BallOptions& options, BallTables* balls, std::ostream& out) {
-    balls->Build(comparisons, store.NumRecords(), options);
-    out << "Neighbourhood masses in " << std::fixed << std::setprecision(1)
-        << balls->seconds << " s";
-    if (store.NumDatasets() > 1) {
-        out << ", over the " << store.NumDatasets()
-            << " inputs pooled: a value's neighbourhood is as heavy as it is across all "
-               "of them";
-    }
-    out << "\n";
-    for (size_t c = 0; c < comparisons.Size(); ++c) {
-        out << "  " << comparisons.at(c).spec->name << ": ";
-        if (balls->Has(c)) {
-            out << balls->tables[c].Values() << " values, "
-                << balls->tables[c].ValuePairs() << " value pairs, "
-                << std::setprecision(2) << balls->tables[c].Seconds() << " s\n";
-        } else {
-            out << balls->reasons[c] << "\n";
-        }
-    }
-    out << "\n";
-}
-
-// Loads a schema and a parquet file, the opening move of every blocking command.
-// `--all-pairs` replaces whatever the schema declares with the one source that
-// blocks on nothing, so the same schema can be run blocked and unblocked without
-// being edited. It is what makes the schema's "blocking" section optional: on an
-// input small enough to enumerate, there is nothing for it to say.
-//
-// `for_estimation` says which union the plan is: estimation keeps the sources
-// declared `"use": "estimate"` and drops the `"use": "predict"` ones, prediction
-// the other way round, so the two purposes see only their own sources.
-bool LoadForBlocking(const std::string& schema_path,
-                     const std::vector<std::string>& data_paths, PairMode mode,
-                     Schema* schema, std::unique_ptr<RecordStore>* store,
-                     BlockingPlan* plan, std::ostream& err, bool all_pairs = false,
-                     LoadStats* stats = nullptr, bool for_estimation = false) {
-    std::string error;
-    if (!LoadSchemaFor(schema_path, data_paths, schema, &error)) {
-        err << "cpplink: " << error << "\n";
-        return false;
-    }
-    *schema =
-        for_estimation ? SchemaForEstimation(*schema) : SchemaForPrediction(*schema);
-    if (all_pairs) {
-        BlockingSpec spec;
-        spec.kind = SourceKind::kAllPairs;
-        spec.name = "all pairs";
-        schema->blocking.assign(1, spec);
-    } else if (schema->blocking.empty()) {
-        err << "cpplink: the schema declares no \"blocking\" sources; pass "
-               "--all-pairs to\n         enumerate every pair instead\n";
-        return false;
-    }
-    *store = std::make_unique<RecordStore>(*schema);
-    if (!LoadParquetFiles(data_paths, *schema, store->get(), stats, &error)) {
-        err << "cpplink: " << error << "\n";
-        return false;
-    }
-    if (!plan->Build(*schema, **store, mode, &error)) {
-        err << "cpplink: " << error << "\n";
-        return false;
-    }
-    return true;
 }
 
 // The width of the terminal behind `stream`, or zero when it is not one. Progress
@@ -1427,30 +1311,6 @@ int RunEstimate(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
-// `--out` names either a directory of shards or the single file they are to be
-// merged into, and the extension is what says which. The staging directory sits
-// beside the file so a run that dies mid-merge leaves its shards somewhere
-// obvious rather than in a temporary directory nobody looks in.
-bool ResolveEdgeOutput(const std::string& command, const std::string& out,
-                       bool format_given, std::string* out_dir, std::string* merge_path,
-                       std::ostream& err) {
-    MergeFormat format = MergeFormat::kCsv;
-    if (!MergedFormatOf(out, &format)) {
-        *out_dir = out;
-        return true;
-    }
-    if (format_given) {
-        err << "cpplink " << command << ": --format names the shard format, and --out "
-            << out
-            << " asks for a single file; the file's extension picks csv or "
-               "parquet\n";
-        return false;
-    }
-    *merge_path = out;
-    *out_dir = out + ".shards";
-    return true;
-}
-
 int RunPredict(const std::vector<std::string>& args, std::ostream& out,
                std::ostream& err) {
     std::string schema_path;
@@ -1625,28 +1485,6 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
     }
     PrintPredictReport(report, scorer, out);
     return 0;
-}
-
-// Clustering needs only the identifiers: the edges already carry every row index
-// and weight, so the comparison columns are left on disk rather than interned.
-bool LoadIdsOnly(const std::string& schema_path,
-                 const std::vector<std::string>& data_paths,
-                 std::unique_ptr<RecordStore>* store, std::ostream& err) {
-    Schema schema;
-    std::string error;
-    if (!LoadSchema(schema_path, &schema, &error)) {
-        err << "cpplink: " << error << "\n";
-        return false;
-    }
-    schema.columns.clear();
-    schema.comparisons.clear();
-    schema.blocking.clear();
-    *store = std::make_unique<RecordStore>(schema);
-    if (!LoadParquetFiles(data_paths, schema, store->get(), nullptr, &error)) {
-        err << "cpplink: " << error << "\n";
-        return false;
-    }
-    return true;
 }
 
 int RunCluster(const std::vector<std::string>& args, std::ostream& out,

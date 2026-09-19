@@ -21,8 +21,7 @@ import pandas as pd
 
 
 def score(predictions_path, truth_pairs, thresholds):
-    frame = pd.read_csv(predictions_path,
-                        dtype={"origin_id": str, "destination_id": str})
+    frame = pd.read_csv(predictions_path, dtype={"origin_id": str, "destination_id": str})
     hit = frame["origin_id"] == frame["destination_id"]
     rows = []
     for threshold in thresholds:
@@ -31,10 +30,17 @@ def score(predictions_path, truth_pairs, thresholds):
         true = int((above & hit).sum())
         precision = true / predicted if predicted else 0.0
         recall = true / truth_pairs if truth_pairs else 0.0
-        f1 = (2 * precision * recall / (precision + recall)
-              if precision + recall else 0.0)
-        rows.append({"threshold": threshold, "predicted": predicted, "true": true,
-                     "precision": precision, "recall": recall, "f1": f1})
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        rows.append(
+            {
+                "threshold": threshold,
+                "predicted": predicted,
+                "true": true,
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+            }
+        )
     return rows
 
 

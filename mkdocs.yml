@@ -35,6 +35,7 @@ theme:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - From Python: python.md
   - Concepts:
       - The model: model.md
       - Comparisons: comparisons.md

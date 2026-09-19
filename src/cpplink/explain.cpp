@@ -195,7 +195,11 @@ PairWaterfall BuildPairWaterfall(const RecordStore& store,
         }
         step.bits = scorer.LevelWeight(i, step.level);
         step.tf = scorer.AdjustmentFor(i, w.gamma, a, b);
-        if (step.tf != 0.0) step.frequency = scorer.FrequencyFor(i, w.gamma, a);
+        // Zero wherever the level carries no exact adjustment, and the count
+        // otherwise: a value held by exactly u * records rows moves the weight by
+        // exactly nothing, and that is a move of zero bits over a frequency, not
+        // the absence of one.
+        step.frequency = scorer.FrequencyFor(i, w.gamma, a);
         running += step.bits + step.tf;
         step.running = running;
         w.steps.push_back(std::move(step));
@@ -253,7 +257,7 @@ void PrintPairWaterfall(const PairWaterfall& w, std::ostream& out) {
     // is an unexplained number, and this is the report whose job is to explain it.
     bool any = false;
     for (const WaterfallStep& step : w.steps) {
-        if (step.tf == 0.0) continue;
+        if (step.tf == 0.0 && step.frequency == 0) continue;
         if (!any) {
             out << "\nTerm frequency, for the comparisons that moved the weight:\n";
             any = true;
@@ -331,7 +335,7 @@ std::string PairWaterfallJson(const PairWaterfall& w) {
         PutRate(&item, "u", step.u);
         item["bits"] = step.bits;
         item["tf"] = step.tf;
-        if (step.tf != 0.0) item["frequency"] = step.frequency;
+        if (step.frequency != 0) item["frequency"] = step.frequency;
         item["running"] = step.running;
         root["steps"].push_back(std::move(item));
     }

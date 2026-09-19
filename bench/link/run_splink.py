@@ -29,8 +29,15 @@ from splink import DuckDBAPI, Linker, SettingsCreator, block_on
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from transactions import (  # noqa: E402
-    AMOUNT_PERCENTAGES, DATE_DAYS, DEMO_RULES_SQL, DESTINATION, LAMBDA, MATCHED_KEYS,
-    MEMO_EDITS, ORIGIN, THRESHOLDS,
+    AMOUNT_PERCENTAGES,
+    DATE_DAYS,
+    DEMO_RULES_SQL,
+    DESTINATION,
+    LAMBDA,
+    MATCHED_KEYS,
+    MEMO_EDITS,
+    ORIGIN,
+    THRESHOLDS,
 )
 
 RSS_SCALE = 1 if sys.platform == "darwin" else 1024
@@ -54,14 +61,17 @@ def date_comparison(directed):
     # cpplink's `date_within` with `"direction": "forward"`. The symmetric
     # track's: within n days either way.
     if directed:
-        template = ("transaction_date_r - transaction_date_l <= {n} "
-                    "and transaction_date_r >= transaction_date_l")
+        template = (
+            "transaction_date_r - transaction_date_l <= {n} "
+            "and transaction_date_r >= transaction_date_l"
+        )
     else:
         template = "abs(transaction_date_r - transaction_date_l) <= {n}"
     levels = [cll.NullLevel("transaction_date")]
     for n in DATE_DAYS:
-        levels.append({"sql_condition": template.format(n=n),
-                       "label_for_charts": f"<={n} days"})
+        levels.append(
+            {"sql_condition": template.format(n=n), "label_for_charts": f"<={n} days"}
+        )
     levels.append(cll.ElseLevel())
     return {
         "output_column_name": "transaction_date",
@@ -104,15 +114,19 @@ class Timer:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--track", default="demo",
-                        choices=("demo", "matched", "symmetric"))
+    parser.add_argument(
+        "--track", default="demo", choices=("demo", "matched", "symmetric")
+    )
     parser.add_argument("--out", required=True)
     parser.add_argument("--thresholds", default=THRESHOLDS)
     parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--u-sample", type=int, default=1000000)
     parser.add_argument("--seed", type=int, default=20260904)
-    parser.add_argument("--count-comparisons", action="store_true",
-                        help="price each blocking rule and exit")
+    parser.add_argument(
+        "--count-comparisons",
+        action="store_true",
+        help="price each blocking rule and exit",
+    )
     args = parser.parse_args()
     thresholds = [float(t) for t in args.thresholds.split(",")]
     os.makedirs(args.out, exist_ok=True)
@@ -130,52 +144,77 @@ def main():
         # Aliases sorted so that origin is `l` and destination is `r`, as the
         # demo arranges with "__ori" and "_dest": the directed date levels and
         # the two asymmetric rules read the sides by name.
-        linker = Linker(["origin", "destination"], build_settings(args.track),
-                        input_table_aliases=["__ori", "_dest"], db_api=db_api)
+        linker = Linker(
+            ["origin", "destination"],
+            build_settings(args.track),
+            input_table_aliases=["__ori", "_dest"],
+            db_api=db_api,
+        )
 
     if args.count_comparisons:
         from splink.blocking_analysis import (
             count_comparisons_from_blocking_rule as count,
         )
-        rules = (DEMO_RULES_SQL if args.track == "demo"
-                 else [block_on(k) for k in MATCHED_KEYS])
-        names = ([f"rule_{i}" for i in range(len(rules))] if args.track == "demo"
-                 else MATCHED_KEYS)
+
+        rules = (
+            DEMO_RULES_SQL
+            if args.track == "demo"
+            else [block_on(k) for k in MATCHED_KEYS]
+        )
+        names = (
+            [f"rule_{i}" for i in range(len(rules))]
+            if args.track == "demo"
+            else MATCHED_KEYS
+        )
         counts = {}
-        for name, rule in zip(names, rules):
-            result = count(table_or_tables=["origin", "destination"],
-                           blocking_rule=rule, link_type="link_only", db_api=db_api)
+        for name, rule in zip(names, rules, strict=True):
+            result = count(
+                table_or_tables=["origin", "destination"],
+                blocking_rule=rule,
+                link_type="link_only",
+                db_api=db_api,
+            )
             counts[name] = int(
-                result["number_of_comparisons_to_be_scored_post_filter_conditions"])
+                result["number_of_comparisons_to_be_scored_post_filter_conditions"]
+            )
         print(json.dumps(counts, indent=2))
         return
 
     with timer("estimate_u"):
         linker.training.estimate_u_using_random_sampling(
-            max_pairs=args.u_sample, seed=args.seed)
+            max_pairs=args.u_sample, seed=args.seed
+        )
     # The demo's two sessions, in its order, in both tracks: each holds out the
     # comparison it blocks on and fits the other two.
     for column in ("memo", "amount"):
         with timer("estimate_m"):
             linker.training.estimate_parameters_using_expectation_maximisation(
-                block_on(column))
+                block_on(column)
+            )
     model = linker.misc.save_model_to_json()
     with open(os.path.join(args.out, "model.json"), "w") as handle:
         json.dump(model, handle, indent=2)
 
     with timer("predict"):
         predictions = linker.inference.predict(
-            threshold_match_probability=min(thresholds))
+            threshold_match_probability=min(thresholds)
+        )
         frame = predictions.as_pandas_dataframe()[
-            ["source_dataset_l", "unique_id_l", "source_dataset_r", "unique_id_r",
-             "match_probability"]]
+            [
+                "source_dataset_l",
+                "unique_id_l",
+                "source_dataset_r",
+                "unique_id_r",
+                "match_probability",
+            ]
+        ]
     # Origin is always l here, but the file says so rather than assuming it.
     swap = frame["source_dataset_l"] != "__ori"
     origin = frame["unique_id_l"].where(~swap, frame["unique_id_r"])
     destination = frame["unique_id_r"].where(~swap, frame["unique_id_l"])
-    out = frame.assign(origin_id=origin.astype(str),
-                       destination_id=destination.astype(str))[
-        ["origin_id", "destination_id", "match_probability"]]
+    out = frame.assign(
+        origin_id=origin.astype(str), destination_id=destination.astype(str)
+    )[["origin_id", "destination_id", "match_probability"]]
     predictions_path = os.path.join(args.out, "predictions.csv")
     out.to_csv(predictions_path, index=False)
 
@@ -185,8 +224,10 @@ def main():
         "track": args.track,
         "threads": args.threads,
         "stages": stages,
-        "pipeline_seconds": stages["load"] + stages["estimate_u"]
-        + stages["estimate_m"] + stages["predict"],
+        "pipeline_seconds": stages["load"]
+        + stages["estimate_u"]
+        + stages["estimate_m"]
+        + stages["predict"],
         "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * RSS_SCALE,
         "predictions": len(out),
         "lambda": model["probability_two_random_records_match"],

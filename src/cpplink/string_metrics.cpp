@@ -29,17 +29,29 @@ constexpr double kBoostThreshold = 0.7;
 
 double ToRadians(double degrees) { return degrees * 3.14159265358979323846 / 180.0; }
 
-// The prefix bonus, over a Jaro similarity already in hand. Non-decreasing in
-// `jaro` on both sides of the boost threshold -- and non-decreasing in floating
-// point too, since every step of it is -- which is what lets an upper bound on the
+// The longest common prefix the bonus rewards.
+constexpr size_t kPrefixLimit = 4;
+
+// The prefix bonus over a Jaro similarity, spelled once. The two bounds below apply
+// it to a bound on the similarity, and they must round exactly as the metric does:
+// `0.4 + 0.6 * jaro` is the same number on paper and one ulp under it in floating
+// point on a target without fused multiply-add, which rejected a pair sitting
+// exactly on a threshold on Linux where macOS accepted it. Non-decreasing in `jaro`
+// and in `prefix`, in floating point too, which is what lets an upper bound on the
 // similarity stand in for an upper bound on the whole metric.
+double WinklerBoost(double jaro, size_t prefix, double prefix_scale) {
+    return jaro + static_cast<double>(prefix) * prefix_scale * (1.0 - jaro);
+}
+
+// The prefix bonus, over a Jaro similarity already in hand. Non-decreasing in
+// `jaro` on both sides of the boost threshold.
 double ApplyWinkler(std::string_view a, std::string_view b, double jaro,
                     double prefix_scale, double boost_threshold) {
     if (jaro < boost_threshold) return jaro;
     size_t prefix = 0;
-    const size_t limit = std::min<size_t>({a.size(), b.size(), 4});
+    const size_t limit = std::min<size_t>({a.size(), b.size(), kPrefixLimit});
     while (prefix < limit && a[prefix] == b[prefix]) ++prefix;
-    return jaro + static_cast<double>(prefix) * prefix_scale * (1.0 - jaro);
+    return WinklerBoost(jaro, prefix, prefix_scale);
 }
 
 // The one instruction, asked for by name. `std::bitset<64>::count()` does not
@@ -315,10 +327,13 @@ double JaroWinklerUpperBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
     const int reach_b = static_cast<int>(len_b) - deficit_b;
     const int matches = std::min(reach_a, reach_b);
     if (matches <= 0) return 0.0;
-    const double m = static_cast<double>(matches);
-    const double jaro =
-        (m / static_cast<double>(len_a) + m / static_cast<double>(len_b) + 1.0) / 3.0;
-    return 0.4 + 0.6 * jaro;
+    // Spelled as the metric spells it, term for term, so a pair the bound reads as
+    // exactly on a threshold is one the metric reads there too.
+    const double matched = static_cast<double>(matches);
+    const double jaro = (matched / static_cast<double>(len_a) +
+                         matched / static_cast<double>(len_b) + 1.0) /
+                        3.0;
+    return WinklerBoost(jaro, kPrefixLimit, kPrefixScale);
 }
 
 int LevenshteinLowerBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
@@ -332,8 +347,14 @@ double JaroWinklerLengthBound(size_t len_a, size_t len_b) {
     const size_t shorter = std::min(len_a, len_b);
     const size_t longer = std::max(len_a, len_b);
     if (longer == 0) return 1.0;
-    const double ratio = static_cast<double>(shorter) / static_cast<double>(longer);
-    return 0.4 + 0.6 * ((2.0 + ratio) / 3.0);
+    // Every character of the shorter value matched, in order, under a full prefix:
+    // the metric's own three terms with `matches` at the shorter length, in the
+    // metric's own order, so the two round alike.
+    const double matched = static_cast<double>(shorter);
+    const double jaro = (matched / static_cast<double>(shorter) +
+                         matched / static_cast<double>(longer) + 1.0) /
+                        3.0;
+    return WinklerBoost(jaro, kPrefixLimit, kPrefixScale);
 }
 
 double JaroWinklerScreened(std::string_view a, std::string_view b, double screen) {

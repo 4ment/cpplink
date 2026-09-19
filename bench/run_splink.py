@@ -89,10 +89,16 @@ def main():
     parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--u-sample", type=int, default=1000000)
     parser.add_argument("--seed", type=int, default=20260904)
-    parser.add_argument("--estimate-lambda", action="store_true",
-                        help="print lambda from deterministic rules and exit")
-    parser.add_argument("--count-comparisons", action="store_true",
-                        help="price the blocking rules and exit")
+    parser.add_argument(
+        "--estimate-lambda",
+        action="store_true",
+        help="print lambda from deterministic rules and exit",
+    )
+    parser.add_argument(
+        "--count-comparisons",
+        action="store_true",
+        help="price the blocking rules and exit",
+    )
     args = parser.parse_args()
 
     dataset = DATASETS[args.dataset]
@@ -112,20 +118,24 @@ def main():
             "CREATE OR REPLACE TABLE bench_input AS "
             f"SELECT * FROM read_parquet('{parquet}')"
         )
-        linker = Linker("bench_input", build_settings(dataset, args.track),
-                        db_api=db_api)
+        linker = Linker("bench_input", build_settings(dataset, args.track), db_api=db_api)
 
     if args.count_comparisons:
         from splink.blocking_analysis import (
             count_comparisons_from_blocking_rule as count,
         )
+
         counts = {}
         for column in dataset.block_columns:
-            result = count(table_or_tables="bench_input",
-                           blocking_rule=block_on(column),
-                           link_type="dedupe_only", db_api=db_api)
-            counts[column] = {k: int(v) for k, v in result.items()
-                              if isinstance(v, (int, float))}
+            result = count(
+                table_or_tables="bench_input",
+                blocking_rule=block_on(column),
+                link_type="dedupe_only",
+                db_api=db_api,
+            )
+            counts[column] = {
+                k: int(v) for k, v in result.items() if isinstance(v, (int, float))
+            }
         print(json.dumps(counts, indent=2))
         return
 
@@ -134,10 +144,15 @@ def main():
         linker.training.estimate_probability_two_random_records_match(
             rules, recall=LAMBDA_RECALL
         )
-        print(json.dumps({
-            "dataset": dataset.name,
-            "lambda": linker._settings_obj._probability_two_random_records_match,
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "dataset": dataset.name,
+                    "lambda": linker._settings_obj._probability_two_random_records_match,
+                },
+                indent=2,
+            )
+        )
         return
 
     with timer("estimate_u"):
@@ -180,8 +195,11 @@ def main():
         "threads": args.threads,
         "stages": stages,
         "pipeline_seconds": (
-            stages["load"] + stages["estimate_u"] + stages["estimate_m"]
-            + stages["predict"] + cluster_once
+            stages["load"]
+            + stages["estimate_u"]
+            + stages["estimate_m"]
+            + stages["predict"]
+            + cluster_once
         ),
         "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * RSS_SCALE,
         "edges": edge_count,

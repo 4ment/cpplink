@@ -8,6 +8,7 @@ left to differ is the execution. Peak duckdb spill is sampled from the temp
 directory rather than assumed, because scratch disk is the resource the design
 claim is actually about.
 """
+
 import argparse
 import json
 import os

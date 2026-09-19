@@ -18,6 +18,7 @@ Usage:
     python3 bench/scale/plot_scale.py --from-json bench/scale/single_thread.json \\
         --outdir docs/img
 """
+
 import argparse
 import json
 import math
@@ -53,7 +54,9 @@ def collect(workdir, tag):
     blocking = read(os.path.join(workdir, f"{tag}.blocking.log"))
     predict = read(os.path.join(workdir, f"{tag}.predict.log"))
     cluster = read(os.path.join(workdir, f"{tag}.cluster.log"))
-    stages = {n: stage(workdir, tag, n) for n in ("blocking", "estimate", "predict", "cluster")}
+    stages = {
+        n: stage(workdir, tag, n) for n in ("blocking", "estimate", "predict", "cluster")
+    }
     pipeline = [stages[n] for n in ("estimate", "predict", "cluster")]
     record = {
         "tag": tag,
@@ -184,7 +187,7 @@ def memory_values(tracks):
 
 
 def spill_note(row):
-    return f'{row["peak_spill_bytes"] / 1e9:.1f} GB of scratch'
+    return f"{row['peak_spill_bytes'] / 1e9:.1f} GB of scratch"
 
 
 SPILL_LABEL = "splink peak scratch disk"
@@ -308,16 +311,32 @@ def mpl_time_figure(plt, tracks, path):
         linestyle=(0, (5, 4)),
         label="linear in pairs",
     )
-    mpl_ticks(axes, decades(min(pairs), max(pairs)), decades(min(times), max(times)),
-              seconds_label)
+    mpl_ticks(
+        axes,
+        decades(min(pairs), max(pairs)),
+        decades(min(times), max(times)),
+        seconds_label,
+    )
     for row in tracks[0]["rows"]:
-        mpl_note(axes, row["candidate_pairs"], row["wall_seconds"],
-                 f'{si(row["records"])} rows')
+        mpl_note(
+            axes,
+            row["candidate_pairs"],
+            row["wall_seconds"],
+            f"{si(row['records'])} rows",
+        )
     for track in tracks[1:]:
         end = track["rows"][-1]
         if track.get("note"):
-            mpl_note(axes, end["candidate_pairs"], end["wall_seconds"], track["note"],
-                     dx=-4, dy=12, ha="right", colour=track["colour"])
+            mpl_note(
+                axes,
+                end["candidate_pairs"],
+                end["wall_seconds"],
+                track["note"],
+                dx=-4,
+                dy=12,
+                ha="right",
+                colour=track["colour"],
+            )
     mpl_legend(axes)
     mpl_save(figure, path)
 
@@ -350,16 +369,29 @@ def mpl_memory_figure(plt, tracks, path):
                 markersize=9,
                 label=SPILL_LABEL,
             )
-            mpl_note(axes, row["candidate_pairs"], row["peak_spill_bytes"] / 1e9,
-                     spill_note(row), colour=GUIDE)
+            mpl_note(
+                axes,
+                row["candidate_pairs"],
+                row["peak_spill_bytes"] / 1e9,
+                spill_note(row),
+                colour=GUIDE,
+            )
     top = int(max(values)) + 2
-    mpl_ticks(axes, decades(min(pairs), max(pairs)),
-              [t for t in range(0, top) if t <= axes.get_ylim()[1]], lambda v: f"{v:g}")
+    mpl_ticks(
+        axes,
+        decades(min(pairs), max(pairs)),
+        [t for t in range(0, top) if t <= axes.get_ylim()[1]],
+        lambda v: f"{v:g}",
+    )
     main_rows = tracks[0]["rows"]
     for row in (main_rows[0], main_rows[-1]):
-        mpl_note(axes, row["candidate_pairs"], row["peak_rss_bytes"] / 1e9,
-                 f'{row["peak_rss_bytes"] / 1e9:.2f} GB',
-                 ha="right" if row is main_rows[-1] else "left")
+        mpl_note(
+            axes,
+            row["candidate_pairs"],
+            row["peak_rss_bytes"] / 1e9,
+            f"{row['peak_rss_bytes'] / 1e9:.2f} GB",
+            ha="right" if row is main_rows[-1] else "left",
+        )
     mpl_legend(axes)
     mpl_save(figure, path)
 
@@ -410,7 +442,8 @@ class Plot:
             )
             self.parts.append(
                 f'<text x="{x:.1f}" y="{HEIGHT - BOTTOM + 18}" fill="{TEXT}" '
-                f'font-size="12" font-family="{FONT}" text-anchor="middle">{xfmt(value)}</text>'
+                f'font-size="12" font-family="{FONT}" text-anchor="middle">'
+                f"{xfmt(value)}</text>"
             )
         for value in yticks:
             y = self.py(value)
@@ -466,17 +499,19 @@ class Plot:
             f'y2="{HEIGHT - BOTTOM}" stroke="{AXIS}" stroke-opacity="0.5"/>',
             f'<line x1="{LEFT}" y1="{TOP}" x2="{LEFT}" y2="{HEIGHT - BOTTOM}" '
             f'stroke="{AXIS}" stroke-opacity="0.5"/>',
-            f'<text x="{(LEFT + WIDTH - RIGHT) / 2:.0f}" y="{HEIGHT - 16}" fill="{TEXT}" '
-            f'font-size="12" font-family="{FONT}" text-anchor="middle">{self.xlabel}</text>',
-            f'<text x="16" y="{(TOP + HEIGHT - BOTTOM) / 2:.0f}" fill="{TEXT}" font-size="12" '
-            f'font-family="{FONT}" text-anchor="middle" transform="rotate(-90 16 '
+            f'<text x="{(LEFT + WIDTH - RIGHT) / 2:.0f}" y="{HEIGHT - 16}" '
+            f'fill="{TEXT}" font-size="12" font-family="{FONT}" text-anchor="middle">'
+            f"{self.xlabel}</text>",
+            f'<text x="16" y="{(TOP + HEIGHT - BOTTOM) / 2:.0f}" fill="{TEXT}" '
+            f'font-size="12" font-family="{FONT}" text-anchor="middle" '
+            f'transform="rotate(-90 16 '
             f'{(TOP + HEIGHT - BOTTOM) / 2:.0f})">{self.ylabel}</text>',
         ]
         keys = []
         x, y = LEFT + 6, TOP - 32
         for colour, label, dashed in self.legend:
             width = 34 + 7.2 * len(label)
-            if x + width > WIDTH - RIGHT:          # wrap rather than run off the edge
+            if x + width > WIDTH - RIGHT:  # wrap rather than run off the edge
                 x, y = LEFT + 6, y + 18
             dash = ' stroke-dasharray="5 4"' if dashed else ""
             keys.append(
@@ -513,7 +548,10 @@ def svg_time_figure(tracks, path):
     plot.line(linear_guide(tracks[0]["rows"]), GUIDE, "linear in pairs", dash="5 4")
     for row in tracks[0]["rows"]:
         plot.annotate(
-            row["candidate_pairs"], row["wall_seconds"], f'{si(row["records"])} rows', dy=-13
+            row["candidate_pairs"],
+            row["wall_seconds"],
+            f"{si(row['records'])} rows",
+            dy=-13,
         )
     for track in tracks[1:]:
         end = track["rows"][-1]
@@ -568,7 +606,7 @@ def svg_memory_figure(tracks, path):
         plot.annotate(
             row["candidate_pairs"],
             row["peak_rss_bytes"] / 1e9,
-            f'{row["peak_rss_bytes"] / 1e9:.2f} GB',
+            f"{row['peak_rss_bytes'] / 1e9:.2f} GB",
             dy=-13,
             anchor="end" if row is main_rows[-1] else "start",
         )
@@ -687,12 +725,12 @@ def main():
         print(track["label"])
         for row in track["rows"]:
             print(
-                f'  {row["tag"]:>6}  {row["records"]:>10,} rows  '
-                f'{row["candidate_pairs"]:>15,} pairs  '
-                f'{row["wall_seconds"]:8.1f} s  '
-                f'{row["peak_rss_bytes"] / 1e9:5.2f} GB  '
-                f'spill {(row.get("peak_spill_bytes") or 0) / 1e9:5.2f} GB  '
-                f'F1 {row.get("f1")}'
+                f"  {row['tag']:>6}  {row['records']:>10,} rows  "
+                f"{row['candidate_pairs']:>15,} pairs  "
+                f"{row['wall_seconds']:8.1f} s  "
+                f"{row['peak_rss_bytes'] / 1e9:5.2f} GB  "
+                f"spill {(row.get('peak_spill_bytes') or 0) / 1e9:5.2f} GB  "
+                f"F1 {row.get('f1')}"
             )
 
 
