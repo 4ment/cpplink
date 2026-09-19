@@ -10,6 +10,10 @@
 #include <utility>
 #include <vector>
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 namespace cpplink {
 namespace {
 
@@ -57,7 +61,26 @@ double ApplyWinkler(std::string_view a, std::string_view b, double jaro,
 // The one instruction, asked for by name. `std::bitset<64>::count()` does not
 // lower to it here -- it leaves a call to the generic bit-iterator count in the
 // binary, which a profile of the scoring loop finds among the hot leaves.
-int PopCount(uint64_t value) { return __builtin_popcountll(value); }
+int PopCount(uint64_t value) {
+#if defined(_MSC_VER) && defined(_M_ARM64)
+    return static_cast<int>(_CountOneBits64(value));
+#elif defined(_MSC_VER)
+    return static_cast<int>(__popcnt64(value));
+#else
+    return __builtin_popcountll(value);
+#endif
+}
+
+// The index of the lowest set bit; `value` must not be zero.
+int TrailingZeros(uint64_t value) {
+#ifdef _MSC_VER
+    unsigned long index = 0;  // NOLINT(runtime/int): the intrinsic's own type
+    _BitScanForward64(&index, value);
+    return static_cast<int>(index);
+#else
+    return __builtin_ctzll(value);
+#endif
+}
 
 // Myers' bit-vector edit distance (1999). The DP's column of vertical deltas is
 // carried in two words -- vp for +1, vn for -1 -- so a whole column costs a dozen
@@ -187,7 +210,7 @@ double JaroWords(std::string_view a, std::string_view b, double screen) {
     uint64_t left = claimed;
     uint64_t right = taken;
     while (left != 0) {
-        if (a[__builtin_ctzll(left)] != b[__builtin_ctzll(right)]) ++transpositions;
+        if (a[TrailingZeros(left)] != b[TrailingZeros(right)]) ++transpositions;
         left &= left - 1;
         right &= right - 1;
     }

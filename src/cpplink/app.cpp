@@ -14,8 +14,22 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX  // windows.h's min/max macros would break std::min below.
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <cstdio>
+
+#include <io.h>
+#include <windows.h>
+#else
 #include <sys/ioctl.h>
 #include <unistd.h>
+#endif
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/cluster.hpp"
@@ -910,10 +924,19 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
 // string stream -- it is printed as lines. The stream is compared to the process's
 // own stderr because an ostream carries no descriptor to ask.
 unsigned TerminalColumns(const std::ostream& stream) {
-    if (&stream != &std::cerr || isatty(STDERR_FILENO) == 0) return 0;
+    if (&stream != &std::cerr) return 0;
+#ifdef _WIN32
+    if (_isatty(_fileno(stderr)) == 0) return 0;
+    CONSOLE_SCREEN_BUFFER_INFO info{};
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_ERROR_HANDLE), &info) == 0) return 80;
+    const int columns = info.srWindow.Right - info.srWindow.Left + 1;
+    return columns > 0 ? static_cast<unsigned>(columns) : 80;
+#else
+    if (isatty(STDERR_FILENO) == 0) return 0;
     winsize size{};
     if (ioctl(STDERR_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0) return 80;
     return size.ws_col;
+#endif
 }
 
 int RunExplainBlocking(const std::vector<std::string>& args, std::ostream& out,
