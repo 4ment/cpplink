@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include "cpplink/comparison.hpp"
 #include "cpplink/model.hpp"
@@ -66,15 +67,15 @@ class ExplainFixture : public ::testing::Test {
         store_->Finalize();
         ASSERT_TRUE(comparisons_.Bind(schema_, *store_, &error)) << error;
 
-        cpplink::Model model;
-        model.lambda = 0.05;
-        model.records = kRecords;
-        model.comparisons = {
+        model_.lambda = 0.05;
+        model_.records = kRecords;
+        model_.comparisons = {
             Comparison("surname", true, {{1e-9, 1e-9}, {0.9, 0.02}, {0.1, 0.98}}),
             Comparison("city", false, {{0.8, 0.25}, {0.2, 0.75}})};
         cpplink::ScoreOptions options;
         options.threshold = 1.0;
-        ASSERT_TRUE(scorer_.Bind(model, comparisons_, *store_, options, &error)) << error;
+        ASSERT_TRUE(scorer_.Bind(model_, comparisons_, *store_, options, &error))
+            << error;
     }
 
     static cpplink::ModelComparison Comparison(
@@ -96,6 +97,7 @@ class ExplainFixture : public ::testing::Test {
     cpplink::Schema schema_;
     std::unique_ptr<cpplink::RecordStore> store_;
     cpplink::ComparisonSet comparisons_;
+    cpplink::Model model_;
     cpplink::Scorer scorer_;
 };
 
@@ -104,16 +106,64 @@ class ExplainFixture : public ::testing::Test {
 TEST_F(ExplainFixture, TheStepsSumToTheScore) {
     for (uint64_t a = 0; a < 40; ++a) {
         for (uint64_t b = a + 1; b < 40; ++b) {
-            const uint32_t gamma = comparisons_.Evaluate(a, b);
-            double running = scorer_.PriorWeight();
-            for (size_t c = 0; c < comparisons_.Size(); ++c) {
-                running += scorer_.LevelWeight(c, comparisons_.LevelOf(gamma, c));
-                running += scorer_.AdjustmentFor(c, gamma, a, b);
+            const cpplink::PairWaterfall w = cpplink::BuildPairWaterfall(
+                *store_, comparisons_, scorer_, a, b, &model_);
+            double running = w.prior;
+            for (const cpplink::WaterfallStep& step : w.steps) {
+                running += step.bits + step.tf;
+                ASSERT_NEAR(running, step.running, 1e-12);
             }
-            ASSERT_NEAR(running, scorer_.Weight(gamma, a, b), 1e-9)
-                << "rows " << a << " and " << b;
+            for (const cpplink::WaterfallInteraction& term : w.interactions) {
+                running += term.bits;
+                ASSERT_NEAR(running, term.running, 1e-12);
+            }
+            ASSERT_NEAR(running, w.weight, 1e-9) << "rows " << a << " and " << b;
+            ASSERT_NEAR(w.weight, scorer_.Weight(w.gamma, a, b), 1e-12);
+            ASSERT_EQ(w.gamma, comparisons_.Evaluate(a, b));
         }
     }
+}
+
+// The JSON object carries the same ledger as the text, so a tool drawing it draws
+// the run's own arithmetic. The rates come from the model the report was given.
+TEST_F(ExplainFixture, JsonCarriesTheSameLedger) {
+    const cpplink::PairWaterfall w =
+        cpplink::BuildPairWaterfall(*store_, comparisons_, scorer_, 3, 11, &model_);
+    const nlohmann::json root = nlohmann::json::parse(cpplink::PairWaterfallJson(w));
+    EXPECT_EQ(root["id_a"], "r3");
+    EXPECT_EQ(root["id_b"], "r11");
+    EXPECT_EQ(root["gamma"].get<uint32_t>(), w.gamma);
+    EXPECT_DOUBLE_EQ(root["prior"].get<double>(), w.prior);
+    EXPECT_DOUBLE_EQ(root["weight"].get<double>(), w.weight);
+    EXPECT_DOUBLE_EQ(root["probability"].get<double>(), w.probability);
+    EXPECT_EQ(root["threshold"].get<double>(), 1.0);
+    EXPECT_EQ(root["emitted"].get<bool>(), w.weight >= 1.0);
+    ASSERT_EQ(root["steps"].size(), 2u);
+    ASSERT_EQ(root["bracket"].size(), 2u);
+    double running = w.prior;
+    for (size_t i = 0; i < 2; ++i) {
+        const nlohmann::json& step = root["steps"][i];
+        EXPECT_EQ(step["name"], w.steps[i].name);
+        EXPECT_EQ(step["label"], w.steps[i].label);
+        EXPECT_EQ(step["level"].get<int>(), w.steps[i].level);
+        EXPECT_EQ(step["values"].size(), 2u);
+        running += step["bits"].get<double>() + step["tf"].get<double>();
+        EXPECT_DOUBLE_EQ(step["running"].get<double>(), running);
+        const cpplink::ModelLevel& learned =
+            model_.comparisons[i].levels[w.steps[i].level];
+        EXPECT_DOUBLE_EQ(step["m"].get<double>(), learned.m);
+        EXPECT_DOUBLE_EQ(step["u"].get<double>(), learned.u);
+        // The frequency is reported exactly where a term-frequency move is.
+        EXPECT_EQ(step.contains("frequency"), step["tf"].get<double>() != 0.0);
+    }
+    EXPECT_DOUBLE_EQ(running, w.weight);
+
+    // Without a model the rates are absent rather than null.
+    const cpplink::PairWaterfall bare =
+        cpplink::BuildPairWaterfall(*store_, comparisons_, scorer_, 3, 11);
+    const nlohmann::json plain = nlohmann::json::parse(cpplink::PairWaterfallJson(bare));
+    EXPECT_FALSE(plain["steps"][0].contains("m"));
+    EXPECT_DOUBLE_EQ(plain["weight"].get<double>(), w.weight);
 }
 
 TEST_F(ExplainFixture, AdjustmentAppliesOnlyToAnAdjustedLevel) {
