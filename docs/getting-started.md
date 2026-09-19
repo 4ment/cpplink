@@ -33,6 +33,7 @@ the test configure step fails even inside the activated environment.
 
 The presets in `CMakePresets.json` hold the same configuration, plus two instrumented ones: `asan` builds with AddressSanitizer and UndefinedBehaviorSanitizer, `tsan` with ThreadSanitizer, each into its own `build-<preset>/`.
 The threaded stages (the histogram fold, `predict`, `rescore` and the neighbourhood self-join) share the record store `const` across threads with no lock, and the `tsan` preset is what checks that claim rather than asserting it.
+Arrow and Parquet are not instrumented, so `tests/sanitizer_suppressions.cpp` compiles a `called_from_lib` suppression for the two libraries into the test binary: their own IO threads would otherwise report a race the sanitizer cannot see the ordering of, while every access cpplink makes stays checked.
 
 ```sh
 cmake --preset asan
