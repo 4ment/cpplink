@@ -54,21 +54,56 @@ def methods(dataset):
     """
     points = []
     for column in dataset.columns:
-        points.append(("exact_value", column, None,
-                       [{"type": "exact_value", "column": column}]))
+        points.append(
+            ("exact_value", column, None, [{"type": "exact_value", "column": column}])
+        )
     for column in dataset.columns:
         for frequency in FREQUENCY_GRID:
-            points.append(("rare_value", column, frequency,
-                           [{"type": "rare_value", "column": column,
-                             "max_frequency": frequency}]))
+            points.append(
+                (
+                    "rare_value",
+                    column,
+                    frequency,
+                    [
+                        {
+                            "type": "rare_value",
+                            "column": column,
+                            "max_frequency": frequency,
+                        }
+                    ],
+                )
+            )
         for window in WINDOW_GRID:
-            points.append(("sorted_neighbourhood", column, window,
-                           [{"type": "sorted_neighbourhood", "column": column,
-                             "window": window}]))
+            points.append(
+                (
+                    "sorted_neighbourhood",
+                    column,
+                    window,
+                    [
+                        {
+                            "type": "sorted_neighbourhood",
+                            "column": column,
+                            "window": window,
+                        }
+                    ],
+                )
+            )
         for bands in BANDS_GRID:
-            points.append(("minhash", column, bands,
-                           [{"type": "minhash", "column": column, "bands": bands,
-                             "rows_per_band": ROWS_PER_BAND}]))
+            points.append(
+                (
+                    "minhash",
+                    column,
+                    bands,
+                    [
+                        {
+                            "type": "minhash",
+                            "column": column,
+                            "bands": bands,
+                            "rows_per_band": ROWS_PER_BAND,
+                        }
+                    ],
+                )
+            )
     return points
 
 
@@ -95,9 +130,12 @@ def run_recall(dataset, blocking, parquet, truth, scratch, count):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--datasets", default=",".join(DATASETS))
-    parser.add_argument("--count", action="store_true",
-                        help="enumerate the deduplicated union instead of "
-                             "bounding it by the sum over sources")
+    parser.add_argument(
+        "--count",
+        action="store_true",
+        help="enumerate the deduplicated union instead of "
+        "bounding it by the sum over sources",
+    )
     parser.add_argument("--out", default=OUT)
     args = parser.parse_args()
 
@@ -115,18 +153,33 @@ def main():
 
         # Isolated curves: what each method reaches on its own.
         for family, label, knob, blocking in methods(dataset):
-            result = run_recall(dataset, blocking, parquet, truth, scratch,
-                                args.count)
-            rows.append({"pass": "isolated", "family": family, "column": label,
-                         "knob": knob, **summarise(result)})
-            print(f"{name} {family:22} {label:20} {str(knob):>5} "
-                  f"{format_row(rows[-1])}", flush=True)
+            result = run_recall(dataset, blocking, parquet, truth, scratch, args.count)
+            rows.append(
+                {
+                    "pass": "isolated",
+                    "family": family,
+                    "column": label,
+                    "knob": knob,
+                    **summarise(result),
+                }
+            )
+            print(
+                f"{name} {family:22} {label:20} {str(knob):>5} {format_row(rows[-1])}",
+                flush=True,
+            )
 
         # Marginal pass: what each automatic source adds to the declared plan.
         declared = dataset.cpplink_schema("matched")["blocking"]
         base = run_recall(dataset, declared, parquet, truth, scratch, args.count)
-        rows.append({"pass": "plan", "family": "declared", "column": "-",
-                     "knob": None, **summarise(base)})
+        rows.append(
+            {
+                "pass": "plan",
+                "family": "declared",
+                "column": "-",
+                "knob": None,
+                **summarise(base),
+            }
+        )
         # Only the columns the plan already blocks on are skipped. Excluding
         # standard blocking wholesale would hide the cheapest fix there is: a
         # column that agrees *exactly* on the missed pairs wants an exact-value
@@ -136,10 +189,18 @@ def main():
         for family, label, knob, blocking in methods(dataset):
             if label in blocked and family == "exact_value":
                 continue
-            result = run_recall(dataset, declared + blocking, parquet, truth,
-                                scratch, args.count)
-            rows.append({"pass": "marginal", "family": family, "column": label,
-                         "knob": knob, **summarise(result)})
+            result = run_recall(
+                dataset, declared + blocking, parquet, truth, scratch, args.count
+            )
+            rows.append(
+                {
+                    "pass": "marginal",
+                    "family": family,
+                    "column": label,
+                    "knob": knob,
+                    **summarise(result),
+                }
+            )
 
         path = os.path.join(args.out, f"{name}.json")
         with open(path, "w") as handle:
@@ -163,9 +224,11 @@ def summarise(result):
 def format_row(row):
     if "error" in row:
         return "-- " + row["error"].splitlines()[0][:60]
-    return (f"PC {row['pair_completeness']:.4f}  "
-            f"PQ {row['pair_quality']:.6f}  "
-            f"cand {row['candidates']:,}")
+    return (
+        f"PC {row['pair_completeness']:.4f}  "
+        f"PQ {row['pair_quality']:.6f}  "
+        f"cand {row['candidates']:,}"
+    )
 
 
 def report(name, rows):
@@ -183,9 +246,11 @@ def report(name, rows):
         if row["pair_completeness"] <= best:
             continue
         best = row["pair_completeness"]
-        print(f"| {row['candidates']:,} | {row['pair_completeness']:.4f} | "
-              f"{row['pair_quality']:.6f} | {row['family']} | {row['column']} | "
-              f"{'' if row['knob'] is None else row['knob']} |")
+        print(
+            f"| {row['candidates']:,} | {row['pair_completeness']:.4f} | "
+            f"{row['pair_quality']:.6f} | {row['family']} | {row['column']} | "
+            f"{'' if row['knob'] is None else row['knob']} |"
+        )
     print()
 
 

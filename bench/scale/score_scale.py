@@ -10,6 +10,7 @@ list counts genuine duplicates as false positives.
 The three counts are contingency sums rather than enumerations, so a
 catastrophic merge is priced correctly without materialising its pairs.
 """
+
 import argparse
 import csv
 import sys
@@ -76,9 +77,11 @@ def main():
     precision = true_positives / asserted_all if asserted_all else 0.0
     recall = true_positives / truth_pairs if truth_pairs else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    print(f"{args.label or args.clusters}: truth {truth_pairs:,} asserted "
-          f"{asserted_all:,} tp {true_positives:,} "
-          f"P {precision:.4f} R {recall:.4f} F1 {f1:.4f}")
+    print(
+        f"{args.label or args.clusters}: truth {truth_pairs:,} asserted "
+        f"{asserted_all:,} tp {true_positives:,} "
+        f"P {precision:.4f} R {recall:.4f} F1 {f1:.4f}"
+    )
 
 
 if __name__ == "__main__":

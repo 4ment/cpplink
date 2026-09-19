@@ -271,10 +271,13 @@ TEST_F(ExplainBatch, WaterfallFileExplainsEveryPrediction) {
     const auto threshold =
         std::static_pointer_cast<arrow::DoubleArray>(column("threshold"));
     const auto emitted = std::static_pointer_cast<arrow::BooleanArray>(column("emitted"));
+    std::vector<std::shared_ptr<arrow::UInt8Array>> level;
     std::vector<std::shared_ptr<arrow::DoubleArray>> bits;
     std::vector<std::shared_ptr<arrow::DoubleArray>> tf;
     std::vector<std::shared_ptr<arrow::UInt32Array>> frequency;
     for (const std::string& name : names) {
+        level.push_back(std::static_pointer_cast<arrow::UInt8Array>(
+            column((name + "_level").c_str())));
         bits.push_back(std::static_pointer_cast<arrow::DoubleArray>(
             column((name + "_bits").c_str())));
         tf.push_back(
@@ -291,8 +294,16 @@ TEST_F(ExplainBatch, WaterfallFileExplainsEveryPrediction) {
         double running = prior->Value(i);
         for (size_t c = 0; c < names.size(); ++c) {
             running += bits[c]->Value(i) + tf[c]->Value(i);
-            EXPECT_EQ(tf[c]->Value(i) != 0.0, frequency[c]->Value(i) != 0)
-                << names[c] << " row " << i;
+            // The frequency is the count on an adjusted exact level and zero
+            // elsewhere. It is not "where the move is nonzero": last_name's u is
+            // 0.01 over 500 records, so a surname held by exactly five rows moves
+            // the weight by exactly zero bits, and the fixture holds one on some
+            // platforms (the sampler's draws differ by standard library).
+            const bool adjusted = names[c] != "first_name" && level[c]->Value(i) == 1;
+            EXPECT_EQ(frequency[c]->Value(i) != 0, adjusted) << names[c] << " row " << i;
+            if (tf[c]->Value(i) != 0.0) {
+                EXPECT_NE(frequency[c]->Value(i), 0u) << names[c] << " row " << i;
+            }
         }
         EXPECT_NEAR(running, weight->Value(i), 1e-9);
         EXPECT_EQ(threshold->Value(i), 2.0);

@@ -6,6 +6,7 @@ Timings are the minimum over repeats, which is the usual choice for a wall-clock
 benchmark on a shared machine: the fastest run is the one least contaminated by
 whatever else the operating system was doing.
 """
+
 import argparse
 import glob
 import json
@@ -93,21 +94,29 @@ def main():
     if args.out:
         json.dump(result, open(args.out, "w"), indent=1)
 
-    print(f"{'records':>10} {'candidates':>15} {'wall':>8} {'cpu':>9} "
-          f"{'RSS MB':>7} {'cand/s':>12} {'F1':>7}")
+    print(
+        f"{'records':>10} {'candidates':>15} {'wall':>8} {'cpu':>9} "
+        f"{'RSS MB':>7} {'cand/s':>12} {'F1':>7}"
+    )
     for r in rows:
         rate = r["candidates"] / r["stages"]["predict"]["wall"]
-        print(f"{r['records']:>10,} {r['candidates']:>15,} {r['wall']:>8.1f} "
-              f"{r['cpu']:>9.1f} {r['rss'] // 1048576:>7,} {rate:>12,.0f} "
-              f"{r['f1']:>7.4f}")
+        print(
+            f"{r['records']:>10,} {r['candidates']:>15,} {r['wall']:>8.1f} "
+            f"{r['cpu']:>9.1f} {r['rss'] // 1048576:>7,} {rate:>12,.0f} "
+            f"{r['f1']:>7.4f}"
+        )
     if splink:
         print()
-        print(f"{'records':>10} {'splink wall':>12} {'RSS MB':>8} {'spill MB':>9} "
-              f"{'edges':>10}")
+        print(
+            f"{'records':>10} {'splink wall':>12} {'RSS MB':>8} {'spill MB':>9} "
+            f"{'edges':>10}"
+        )
         for s in splink:
-            print(f"{s['records']:>10,} {s['wall']:>12.1f} "
-                  f"{s['peak_rss_bytes'] // 1048576:>8,} "
-                  f"{s['peak_spill_bytes'] // 1048576:>9,} {s['edges']:>10,}")
+            print(
+                f"{s['records']:>10,} {s['wall']:>12.1f} "
+                f"{s['peak_rss_bytes'] // 1048576:>8,} "
+                f"{s['peak_spill_bytes'] // 1048576:>9,} {s['edges']:>10,}"
+            )
 
 
 if __name__ == "__main__":

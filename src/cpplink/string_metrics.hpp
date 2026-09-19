@@ -45,6 +45,9 @@ int LevenshteinLowerBound(uint64_t mask_a, uint32_t len_a, uint64_t mask_b,
 // The largest Jaro-Winkler two values of these lengths can reach. Since matches
 // <= min(|a|,|b|) and transpositions >= 0, Jaro is bounded above by (2 + min/max)/3,
 // and the prefix bonus adds at most 0.4(1 - jaro). Two empty values are identical.
+// Both this and the signature bound above are computed with the metric's own
+// arithmetic rather than that closed form, so a pair the metric puts exactly on a
+// threshold is one the bound admits on every target, fused multiply-add or not.
 double JaroWinklerLengthBound(size_t len_a, size_t len_b);
 
 // Jaro-Winkler with a screen pushed into the metric: where the similarity is at
