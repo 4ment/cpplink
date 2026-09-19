@@ -13,6 +13,20 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# Sanitizers, as a comma-separated -fsanitize list ("address,undefined", "thread").
+# Applied to every target so the tests and the CLI run instrumented; the presets
+# in CMakePresets.json set it. Undefined behaviour aborts rather than being
+# printed and recovered from, so a test that trips it fails.
+set(CPPLINK_SANITIZE "" CACHE STRING
+    "Sanitizers to build with: a comma-separated -fsanitize= list, empty for none")
+if(CPPLINK_SANITIZE)
+    add_compile_options(-fsanitize=${CPPLINK_SANITIZE} -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=${CPPLINK_SANITIZE})
+    if(CPPLINK_SANITIZE MATCHES "undefined")
+        add_compile_options(-fno-sanitize-recover=undefined)
+    endif()
+endif()
+
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
 find_package(nlohmann_json REQUIRED)

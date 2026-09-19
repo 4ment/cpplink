@@ -1,0 +1,78 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build-${presetName}",
+            "cacheVariables": {
+                "BUILD_TESTING": "ON",
+                "CMAKE_PREFIX_PATH": "$env{CONDA_PREFIX}",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release, with tests",
+            "inherits": "base",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+        },
+        {
+            "name": "debug",
+            "displayName": "Debug, with tests",
+            "inherits": "base",
+            "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}
+        },
+        {
+            "name": "asan",
+            "displayName": "AddressSanitizer + UndefinedBehaviorSanitizer",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CPPLINK_SANITIZE": "address,undefined"
+            }
+        },
+        {
+            "name": "tsan",
+            "displayName": "ThreadSanitizer",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CPPLINK_SANITIZE": "thread"
+            }
+        }
+    ],
+    "buildPresets": [
+        {"name": "release", "configurePreset": "release"},
+        {"name": "debug", "configurePreset": "debug"},
+        {"name": "asan", "configurePreset": "asan"},
+        {"name": "tsan", "configurePreset": "tsan"}
+    ],
+    "testPresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "output": {"outputOnFailure": true},
+            "execution": {"noTestsAction": "error"}
+        },
+        {"name": "release", "inherits": "base", "configurePreset": "release"},
+        {"name": "debug", "inherits": "base", "configurePreset": "debug"},
+        {
+            "name": "asan",
+            "inherits": "base",
+            "configurePreset": "asan",
+            "environment": {
+                "ASAN_OPTIONS": "abort_on_error=1:check_initialization_order=1:strict_init_order=1",
+                "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+            }
+        },
+        {
+            "name": "tsan",
+            "inherits": "base",
+            "configurePreset": "tsan",
+            "environment": {"TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"}
+        }
+    ]
+}

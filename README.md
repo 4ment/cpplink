@@ -343,6 +343,15 @@ cmake --build build
 ctest --test-dir build
 ```
 
+The same configurations are presets, and two of them run the suite under a sanitizer:
+
+```sh
+cmake --preset asan && cmake --build --preset asan && ctest --preset asan   # ASan + UBSan
+cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan   # ThreadSanitizer
+```
+
+CI runs `release`, `asan` and `tsan` on Linux and macOS, the Python suite, and the format and lint checks.
+
 ### From Python
 
 The same binary loads into the interpreter as the `cpplink` package, built with pybind11 inside the same environment:
