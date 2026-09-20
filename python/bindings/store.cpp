@@ -1,6 +1,7 @@
 // Copyright 2026 Mathieu Fourment
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -10,6 +11,8 @@
 #include <pybind11/stl.h>
 
 #include "bindings/common.hpp"
+#include "cpplink/arrow_c.hpp"
+#include "cpplink/batch_loader.hpp"
 #include "cpplink/id_index.hpp"
 #include "cpplink/inspect.hpp"
 #include "cpplink/pipeline.hpp"
@@ -31,6 +34,101 @@ Session::Session(const PySchema& schema, std::vector<std::string> paths, PairMod
     {
         py::gil_scoped_release release;
         ok = LoadParquetFiles(paths_, schema_, store_.get(), &stats_, &error);
+    }
+    Check(ok, error);
+}
+
+namespace {
+
+// The stream behind an object's `__arrow_c_stream__`: a PyCapsule named
+// "arrow_array_stream" holding a pointer to the struct. The capsule keeps the
+// struct's memory alive, so it is held for as long as the stream is read; the
+// loader releases the stream, after which the capsule's own destructor finds
+// nothing to release.
+struct CapturedStream {
+    py::object capsule;
+    ArrowArrayStream* stream = nullptr;
+};
+
+CapturedStream StreamOf(const py::object& input, const std::string& name) {
+    if (!py::hasattr(input, "__arrow_c_stream__")) {
+        throw Error("input " + (name.empty() ? std::string() : "\"" + name + "\" ") +
+                    "is not a data frame, a pyarrow table or anything else with "
+                    "__arrow_c_stream__");
+    }
+    CapturedStream captured;
+    captured.capsule = input.attr("__arrow_c_stream__")();
+    if (!PyCapsule_CheckExact(captured.capsule.ptr())) {
+        throw Error("__arrow_c_stream__ did not return a capsule");
+    }
+    void* pointer = PyCapsule_GetPointer(captured.capsule.ptr(), "arrow_array_stream");
+    if (pointer == nullptr) {
+        PyErr_Clear();
+        throw Error(
+            "__arrow_c_stream__ returned a capsule that is not an arrow_array_stream");
+    }
+    captured.stream = static_cast<ArrowArrayStream*>(pointer);
+    return captured;
+}
+
+// What `DatasetNamesFor` does for a file's stem, a dict key must do for itself:
+// no comma, since the name sits in a csv field, and no colon, since it sits
+// before the one in a qualified id.
+void CheckDatasetName(const std::string& name) {
+    if (name.empty()) throw Error("a dataset name is empty");
+    if (name.find(',') != std::string::npos || name.find(':') != std::string::npos) {
+        throw Error("dataset name \"" + name + "\" holds a comma or a colon");
+    }
+}
+
+}  // namespace
+
+Session::Session(const PySchema& schema,
+                 std::vector<std::pair<std::string, py::object>> inputs, PairMode mode,
+                 bool all_pairs)
+    : schema_(schema.schema), mode_(mode), all_pairs_(all_pairs) {
+    Check(!inputs.empty(), "a Linker needs at least one input");
+    std::vector<CapturedStream> streams;
+    std::vector<InputStream> named;
+    std::vector<std::string> names;
+    for (const auto& [name, input] : inputs) {
+        if (inputs.size() > 1) {
+            CheckDatasetName(name);
+            if (std::find(names.begin(), names.end(), name) != names.end()) {
+                throw Error("dataset name \"" + name + "\" is given twice");
+            }
+        }
+        names.push_back(name);
+        streams.push_back(StreamOf(input, name));
+    }
+    // The types the schema left to the input come from the first one, as they
+    // come from the first file. Asking a stream for its schema reads no row.
+    ArrowSchema first;
+    first.release = nullptr;
+    if (streams.front().stream->get_schema(streams.front().stream, &first) != 0) {
+        throw Error("cannot read the schema of the first input");
+    }
+    std::string error;
+    const bool typed = ResolveColumnTypesFrom(
+        first, inputs.size() > 1 ? names.front() : "the input", &schema_, &error);
+    first.release(&first);
+    if (!typed) {
+        for (const CapturedStream& s : streams) {
+            if (s.stream->release != nullptr) s.stream->release(s.stream);
+        }
+        throw Error(error);
+    }
+    for (size_t i = 0; i < streams.size(); ++i) {
+        named.push_back(
+            {inputs.size() > 1 ? names[i] : std::string(), streams[i].stream});
+    }
+    store_ = std::make_unique<RecordStore>(schema_);
+    bool ok = false;
+    {
+        // Pulling a batch from a pyarrow stream is native code; a stream backed
+        // by a Python generator takes the GIL back itself for each pull.
+        py::gil_scoped_release release;
+        ok = LoadStreams(named, schema_, store_.get(), &stats_, &error);
     }
     Check(ok, error);
 }
@@ -144,6 +242,19 @@ SessionClass BindSession(py::module_& m) {
              }),
              py::arg("schema"), py::arg("files"), py::arg("mode") = py::none(),
              py::arg("all_pairs") = false)
+        .def_static(
+            "from_streams",
+            [](const PySchema& schema,
+               std::vector<std::pair<std::string, py::object>> inputs,
+               const py::object& mode, bool all_pairs) {
+                const size_t count = inputs.size();
+                return std::make_unique<Session>(schema, std::move(inputs),
+                                                 ModeFrom(mode, count), all_pairs);
+            },
+            py::arg("schema"), py::arg("inputs"), py::arg("mode") = py::none(),
+            py::arg("all_pairs") = false,
+            "The store from `(name, object)` pairs, each object speaking the Arrow C\n"
+            "stream protocol. Use `cpplink.Linker`.")
         .def_property_readonly("records",
                                [](const Session& s) { return s.store().NumRecords(); })
         .def_property_readonly("datasets",

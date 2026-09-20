@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "cpplink/arrow_c.hpp"
 #include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
 
@@ -51,11 +52,18 @@ struct ClusterAssignment {
     bool SameCluster(uint32_t a, uint32_t b) const { return root[a] == root[b]; }
 };
 
+struct EdgeTable;
+
 struct ClusterOptions {
     // Either the directory of `shard-*.bin` a run wrote, or the single `.csv` or
     // `.parquet` file it was merged into. A merged file names records by
     // `unique_id` rather than by row, so clustering one costs an id index.
     std::string edge_path;
+    // Or the run's predictions still in memory, naming rows; no index needed.
+    const EdgeTable* edges = nullptr;
+    // Or a prediction table arriving as a C Data stream -- a data frame -- which
+    // names records by `unique_id` and is read as a merged file is. Released.
+    ArrowArrayStream* stream = nullptr;
     // Empty writes no file; the extension picks csv or parquet, as `predict
     // --out` does.
     std::string out_path;

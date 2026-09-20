@@ -17,14 +17,11 @@
 #include <utility>
 #include <vector>
 
-#include <arrow/api.h>
-#include <arrow/io/api.h>
-#include <parquet/arrow/reader.h>
-#include <parquet/arrow/writer.h>
-
+#include "cpplink/arrow_export.hpp"
 #include "cpplink/format.hpp"
 #include "cpplink/id_index.hpp"
 #include "cpplink/merge_edges.hpp"
+#include "cpplink/parquet_io.hpp"
 #include "cpplink/predict.hpp"
 
 namespace cpplink {
@@ -214,119 +211,38 @@ bool ReadCsvEdges(const std::string& path, const RecordStore& store, const IdInd
     return true;
 }
 
-// One row group at a time, and only the columns clustering reads -- the ids, the
-// weight, and the datasets where the file has them: the pattern and the
-// posterior are in the file for whoever else opens it.
+// Every row of the merged parquet, through the same reader a data frame of
+// predictions goes through. A row with a null id or dataset resolves to nothing
+// and is counted as unresolved, as a csv row naming an unknown record is.
+EdgeVisitor ResolvingVisitor(const RecordStore& store, const IdIndex& index,
+                             EdgeTally* tally) {
+    return [&store, &index, tally](const EdgeRow& edge, std::string*) {
+        uint32_t a = 0;
+        uint32_t b = 0;
+        if (!Resolve(index, store, edge.dataset_a, edge.id_a, &a, tally) ||
+            !Resolve(index, store, edge.dataset_b, edge.id_b, &b, tally)) {
+            ++tally->read;
+            ++tally->unresolved;
+            return true;
+        }
+        tally->Use(a, b, edge.weight);
+        return true;
+    };
+}
+
 bool ReadParquetEdges(const std::string& path, const RecordStore& store,
                       const IdIndex& index, EdgeTally* tally, std::string* error) {
-    auto input = arrow::io::ReadableFile::Open(path);
-    if (!input.ok()) {
-        *error = "cluster: cannot open " + path + ": " + input.status().message();
-        return false;
-    }
-    parquet::arrow::FileReaderBuilder builder;
-    arrow::Status status = builder.Open(*input);
-    if (!status.ok()) {
-        *error =
-            "cluster: cannot read parquet metadata for " + path + ": " + status.message();
-        return false;
-    }
-    auto reader_result = builder.Build();
-    if (!reader_result.ok()) {
-        *error = "cluster: cannot open parquet reader for " + path + ": " +
-                 reader_result.status().message();
-        return false;
-    }
-    std::unique_ptr<parquet::arrow::FileReader> reader = std::move(*reader_result);
+    EdgeColumns columns;
+    return ReadPredictionFile(path, "cluster", {"match_weight"}, &columns,
+                              ResolvingVisitor(store, index, tally), error);
+}
 
-    std::shared_ptr<arrow::Schema> schema;
-    status = reader->GetSchema(&schema);
-    if (!status.ok()) {
-        *error = "cluster: cannot read the schema of " + path + ": " + status.message();
-        return false;
-    }
-    std::vector<int> indices;
-    for (const char* name : {"id_a", "id_b", "match_weight"}) {
-        const int at = schema->GetFieldIndex(name);
-        if (at < 0) {
-            *error = "cluster: '" + path + "' has no column \"" + name +
-                     "\", so it is not a cpplink prediction file";
-            return false;
-        }
-        indices.push_back(at);
-    }
-    const bool datasets = schema->GetFieldIndex("dataset_a") >= 0;
-    if (datasets) {
-        for (const char* name : {"dataset_a", "dataset_b"}) {
-            const int at = schema->GetFieldIndex(name);
-            if (at < 0) {
-                *error = "cluster: '" + path + "' has dataset_a but no " + name;
-                return false;
-            }
-            indices.push_back(at);
-        }
-    }
-
-    for (int group = 0; group < reader->num_row_groups(); ++group) {
-        auto group_result = reader->ReadRowGroup(group, indices);
-        if (!group_result.ok()) {
-            *error = "cluster: cannot read row group " + std::to_string(group) + " of " +
-                     path + ": " + group_result.status().message();
-            return false;
-        }
-        const std::shared_ptr<arrow::Table> table = *group_result;
-        const auto ids_a = table->GetColumnByName("id_a");
-        const auto ids_b = table->GetColumnByName("id_b");
-        const auto weights = table->GetColumnByName("match_weight");
-        const auto sets_a = datasets ? table->GetColumnByName("dataset_a") : nullptr;
-        const auto sets_b = datasets ? table->GetColumnByName("dataset_b") : nullptr;
-        for (int chunk = 0; chunk < ids_a->num_chunks(); ++chunk) {
-            const auto a_array =
-                std::dynamic_pointer_cast<arrow::StringArray>(ids_a->chunk(chunk));
-            const auto b_array =
-                std::dynamic_pointer_cast<arrow::StringArray>(ids_b->chunk(chunk));
-            const auto weight_array =
-                std::dynamic_pointer_cast<arrow::DoubleArray>(weights->chunk(chunk));
-            std::shared_ptr<arrow::StringArray> set_a;
-            std::shared_ptr<arrow::StringArray> set_b;
-            if (datasets) {
-                set_a =
-                    std::dynamic_pointer_cast<arrow::StringArray>(sets_a->chunk(chunk));
-                set_b =
-                    std::dynamic_pointer_cast<arrow::StringArray>(sets_b->chunk(chunk));
-            }
-            if (a_array == nullptr || b_array == nullptr || weight_array == nullptr ||
-                (datasets && (set_a == nullptr || set_b == nullptr))) {
-                *error = "cluster: '" + path +
-                         "' holds id_a, id_b, dataset_a, dataset_b or match_weight in "
-                         "a type a cpplink prediction file does not use";
-                return false;
-            }
-            for (int64_t row = 0; row < a_array->length(); ++row) {
-                if (a_array->IsNull(row) || b_array->IsNull(row) ||
-                    weight_array->IsNull(row) ||
-                    (datasets && (set_a->IsNull(row) || set_b->IsNull(row)))) {
-                    ++tally->read;
-                    ++tally->unresolved;
-                    continue;
-                }
-                const std::string_view dataset_a =
-                    datasets ? set_a->GetView(row) : std::string_view();
-                const std::string_view dataset_b =
-                    datasets ? set_b->GetView(row) : std::string_view();
-                uint32_t a = 0;
-                uint32_t b = 0;
-                if (!Resolve(index, store, dataset_a, a_array->GetView(row), &a, tally) ||
-                    !Resolve(index, store, dataset_b, b_array->GetView(row), &b, tally)) {
-                    ++tally->read;
-                    ++tally->unresolved;
-                    continue;
-                }
-                tally->Use(a, b, weight_array->Value(row));
-            }
-        }
-    }
-    return true;
+// A prediction table from wherever it came, read as the merged file is.
+bool ReadStreamEdges(ArrowArrayStream* stream, const RecordStore& store,
+                     const IdIndex& index, EdgeTally* tally, std::string* error) {
+    EdgeColumns columns;
+    return ReadPredictionStream(stream, "cluster", "predictions", {"match_weight"},
+                                &columns, ResolvingVisitor(store, index, tally), error);
 }
 
 }  // namespace
@@ -368,7 +284,25 @@ bool Cluster(const RecordStore& store, const ClusterOptions& options,
     std::string edge_file;
     double index_seconds = 0.0;
     std::error_code ec;
-    if (std::filesystem::is_directory(options.edge_path, ec)) {
+    if (options.edges != nullptr) {
+        // The run's own rows: nothing to resolve.
+        for (uint64_t i = 0; i < options.edges->Size(); ++i) {
+            tally.Use(options.edges->a[i], options.edges->b[i], options.edges->weight[i]);
+        }
+    } else if (options.stream != nullptr) {
+        const auto index_started = std::chrono::steady_clock::now();
+        const IdIndex index(store);
+        index_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                      index_started)
+                            .count();
+        if (!index.Unique(error)) {
+            *error = "cluster: " + *error;
+            if (options.stream->release != nullptr)
+                options.stream->release(options.stream);
+            return false;
+        }
+        if (!ReadStreamEdges(options.stream, store, index, &tally, error)) return false;
+    } else if (std::filesystem::is_directory(options.edge_path, ec)) {
         if (!CollectShards(options.edge_path, &shards, error)) return false;
         for (const std::string& path : shards) {
             if (!ReadBinaryShard(path, &tally, error)) return false;
@@ -529,84 +463,51 @@ bool WriteClustersCsv(const ClusterAssignment& assignment, const RecordStore& st
 }
 
 // The same columns as the csv, typed: the names as strings and the size as a
-// uint64.
+// uint64, built as C Data batches of a million rows and handed to the writer.
 bool WriteClustersParquet(const ClusterAssignment& assignment, const RecordStore& store,
                           const ClusterOptions& options, uint64_t* written,
                           std::string* error) {
     constexpr int64_t kRowGroup = 1 << 20;
     const bool datasets = store.NumDatasets() > 1;
-    std::vector<std::shared_ptr<arrow::Field>> fields;
-    if (datasets) fields.push_back(arrow::field("dataset", arrow::utf8()));
-    fields.push_back(arrow::field("unique_id", arrow::utf8()));
-    fields.push_back(arrow::field("cluster_id", arrow::utf8()));
-    fields.push_back(arrow::field("cluster_size", arrow::uint64()));
-    const auto schema = arrow::schema(fields);
-    auto sink = arrow::io::FileOutputStream::Open(options.out_path);
-    if (!sink.ok()) {
-        *error = "cluster: cannot create '" + options.out_path +
-                 "': " + sink.status().message();
-        return false;
-    }
-    auto props = parquet::WriterProperties::Builder()
-                     .compression(parquet::Compression::SNAPPY)
-                     ->build();
-    auto opened = parquet::arrow::FileWriter::Open(*schema, arrow::default_memory_pool(),
-                                                   *sink, props);
-    if (!opened.ok()) {
-        *error = "cluster: cannot open a parquet writer for '" + options.out_path +
-                 "': " + opened.status().message();
-        return false;
-    }
-    std::unique_ptr<parquet::arrow::FileWriter> writer = std::move(*opened);
+    BatchBuilder builder;
+    const int dataset = datasets ? builder.AddColumn("dataset", ExportType::kString) : -1;
+    const int unique_id = builder.AddColumn("unique_id", ExportType::kString);
+    const int cluster_id = builder.AddColumn("cluster_id", ExportType::kString);
+    const int cluster_size = builder.AddColumn("cluster_size", ExportType::kUInt64);
 
-    arrow::StringBuilder dataset, unique_id, cluster_id;
-    arrow::UInt64Builder cluster_size;
-    int64_t pending = 0;
+    ParquetWriter writer;
+    ArrowSchema schema;
+    builder.ExportSchema(&schema);
+    const bool opened = writer.Open(options.out_path, schema, error);
+    schema.release(&schema);
+    if (!opened) {
+        *error = "cluster: " + *error;
+        return false;
+    }
     auto flush = [&]() -> bool {
-        if (pending == 0) return true;
-        std::vector<std::shared_ptr<arrow::Array>> arrays;
-        arrow::Status status;
-        auto take = [&](arrow::ArrayBuilder* builder) {
-            std::shared_ptr<arrow::Array> array;
-            status &= builder->Finish(&array);
-            arrays.push_back(std::move(array));
-        };
-        if (datasets) take(&dataset);
-        take(&unique_id);
-        take(&cluster_id);
-        take(&cluster_size);
-        if (status.ok()) {
-            status =
-                writer->WriteTable(*arrow::Table::Make(schema, arrays, pending), pending);
-        }
-        if (!status.ok()) {
-            *error = "cluster: writing a row group to '" + options.out_path +
-                     "': " + status.message();
+        if (builder.Rows() == 0) return true;
+        ArrowArray batch;
+        if (!builder.ExportBatch(&batch, error) || !writer.Write(&batch, error)) {
+            *error = "cluster: " + *error;
             return false;
         }
-        pending = 0;
         return true;
     };
     for (uint64_t row = 0; row < assignment.root.size(); ++row) {
         const uint32_t root = assignment.root[static_cast<size_t>(row)];
         const uint64_t size = assignment.size[root];
         if (size < options.min_size) continue;
-        arrow::Status status;
-        if (datasets) status &= dataset.Append(store.DatasetName(store.DatasetOf(row)));
-        status &= unique_id.Append(store.ids().Get(row));
-        status &= cluster_id.Append(QualifiedId(store, root));
-        status &= cluster_size.Append(size);
-        if (!status.ok()) {
-            *error = "cluster: building a row: " + status.message();
-            return false;
-        }
+        if (datasets)
+            builder.AppendString(dataset, store.DatasetName(store.DatasetOf(row)));
+        builder.AppendString(unique_id, store.ids().Get(row));
+        builder.AppendString(cluster_id, QualifiedId(store, root));
+        builder.AppendUInt64(cluster_size, size);
         ++*written;
-        if (++pending >= kRowGroup && !flush()) return false;
+        if (builder.Rows() >= kRowGroup && !flush()) return false;
     }
     if (!flush()) return false;
-    const arrow::Status closed = writer->Close();
-    if (!closed.ok()) {
-        *error = "cluster: closing '" + options.out_path + "': " + closed.message();
+    if (!writer.Close(error)) {
+        *error = "cluster: " + *error;
         return false;
     }
     return true;

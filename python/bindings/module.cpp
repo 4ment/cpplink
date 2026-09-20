@@ -10,6 +10,7 @@
 
 #include "bindings/common.hpp"
 #include "cpplink/app.hpp"
+#include "cpplink/parquet_io.hpp"
 #include "cpplink/pipeline.hpp"
 #include "cpplink/sample_data.hpp"
 #include "cpplink/score.hpp"
@@ -63,6 +64,33 @@ std::string GenSample(const std::string& out, uint64_t rows, uint64_t seed,
     return out;
 }
 
+// The same rows with no file written: one table per output `gen-sample` would
+// have made, the truth file still written where asked.
+std::vector<std::shared_ptr<SampleTable>> GenSampleTables(uint64_t rows, uint64_t seed,
+                                                          double duplicate_rate,
+                                                          const std::string& truth,
+                                                          size_t link_files) {
+    SampleOptions options;
+    options.rows = rows;
+    options.seed = seed;
+    options.duplicate_rate = duplicate_rate;
+    options.truth_path = truth;
+    options.link_paths.assign(link_files, "");
+    std::vector<BatchBuilder> builders;
+    std::string error;
+    bool ok = false;
+    {
+        py::gil_scoped_release release;
+        ok = GenerateSampleTables(options, &builders, &error);
+    }
+    Check(ok, error);
+    std::vector<std::shared_ptr<SampleTable>> tables;
+    for (BatchBuilder& builder : builders) {
+        tables.push_back(std::make_shared<SampleTable>(std::move(builder)));
+    }
+    return tables;
+}
+
 }  // namespace
 
 PairMode ModeFrom(const py::object& mode, size_t inputs) {
@@ -89,6 +117,12 @@ double ThresholdFrom(const py::object& threshold, const py::object& probability,
 
 void BindModule(py::module_& m) {
     m.attr("__version__") = std::string(CPPLINK_VERSION_STRING);
+    m.def("parquet_supported", &ParquetSupported,
+          "Whether this build reads and writes parquet itself. A build without\n"
+          "Arrow takes its input as data frames and reads a file through pyarrow.");
+    m.def("dataset_names_for", &DatasetNamesFor, py::arg("paths"),
+          "The dataset name each file gets: its stem, made safe for a csv field and\n"
+          "a qualified id, and disambiguated. One file gets none.");
     // `kVersion` in the command line and the CMake project version are the same
     // number; the module carries both so a test can say so.
     m.attr("cli_version") = std::string(kVersion);
@@ -114,6 +148,12 @@ void BindModule(py::module_& m) {
           "Write a sample parquet file with planted duplicates, as `cpplink gen-sample`\n"
           "does. `out_b` names the later files of a link fixture.");
 
+    m.def("gen_sample_tables", &GenSampleTables, py::arg("rows") = 1000000,
+          py::arg("seed") = 1, py::arg("duplicate_rate") = 0.08, py::arg("truth") = "",
+          py::arg("link_files") = 0,
+          "The sample as tables rather than files: one per output, the first the\n"
+          "originals and each later one a link fixture's duplicates.");
+
     m.def("weight_for_probability", &WeightForProbability, py::arg("probability"),
           "The match weight, in bits, a match probability corresponds to.");
     m.def("probability_for_weight", &ProbabilityForWeight, py::arg("weight"),
@@ -128,6 +168,7 @@ PYBIND11_MODULE(_cpplink, m) {
     cpplink::python::BindModule(m);
     cpplink::python::BindSchema(m);
     cpplink::python::BindModel(m);
+    cpplink::python::BindTables(m);
     cpplink::python::SessionClass session = cpplink::python::BindSession(m);
     cpplink::python::BindStages(m, &session);
     cpplink::python::BindDiagnostics(m, &session);

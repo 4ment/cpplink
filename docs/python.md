@@ -3,7 +3,7 @@
 The `cpplink` Python package is the same binary, loaded into the interpreter.
 It does two things.
 `cpplink.run(args)` forwards an argument list to the command line dispatcher, so every example in these pages runs unchanged as `python -m cpplink ...`.
-And `cpplink.Linker` loads the parquet input once and runs each stage against the same store, returning the reports as objects rather than text.
+And `cpplink.Linker` loads the input once, a pandas frame or a parquet file, and runs each stage against the same store, returning predictions and clusters as frames and the reports as objects rather than text.
 
 One rule scopes the package: no number is computed in Python.
 The binding calls the functions the command line calls, through the same pipeline glue, so a model estimated from Python with a seed is byte for byte the model `cpplink estimate --seed` writes.
@@ -13,8 +13,7 @@ A worked example over a real dataset, with plots and tables at every stage, is t
 
 ## Install
 
-The extension links the Arrow C++ the environment holds, which is also the Arrow that `pyarrow` loads in the same process, so the two must be the same build.
-Inside the project's conda environment they are, and that is where the package is meant to be built and used:
+Inside the project's conda environment:
 
 ```sh
 conda env update -f environment.yml
@@ -26,9 +25,11 @@ python -c "import cpplink; print(cpplink.__version__)"
 The build goes through [scikit-build-core](https://scikit-build-core.readthedocs.io/) and lands in `build/python/`, beside the command line's `build/`.
 The editable install redirects the Python sources to `python/cpplink/`, so a change there needs no rebuild; a change to the bindings or the core does, with the same `pip install` line.
 
-!!! note "No wheels"
-    A distributable wheel would have to bundle an Arrow matching the ABI of whatever `pyarrow` the user has, which is not a problem this package solves.
-    It builds for the environment it is built in.
+!!! note "What the module links"
+    Nothing but the C++ standard library.
+    Every frame, table and file crosses between Python and the core through the [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html), three C structs with a frozen ABI that the core vendors, so no Arrow C++ object and no `pyarrow` version is part of the contract.
+    `pyarrow` is what pandas uses to export a frame and what reads a parquet file into the module, and any version of it will do.
+    The conda build above links Arrow C++ as well, so that `predict(out="x.parquet")` and the command line write parquet themselves; a wheel built with `-DCPPLINK_WITH_ARROW=OFF` leaves that to pandas.
 
 ## The command line, in process
 
@@ -50,20 +51,32 @@ Every method mirrors one command, with the command's flags as keyword arguments,
 ### 1. Make some data
 
 ```python
-cpplink.gen_sample("sample.parquet", rows=200000, truth="sample.truth.csv")
+frame = cpplink.gen_sample(rows=200000, truth="sample.truth.csv")   # a pandas frame
+cpplink.gen_sample("sample.parquet", rows=200000)                   # or the file
 ```
 
 ### 2. Draft a schema and load
 
 ```python
-schema, draft = cpplink.init("sample.parquet", out="schema.json")
+schema, draft = cpplink.init(frame, out="schema.json")
 print(draft)                         # what was guessed, column by column
 
-linker = cpplink.Linker(schema, "sample.parquet")
+linker = cpplink.Linker(schema, frame)
 print(linker.inspect())              # cardinality and memory per column
 ```
 
-`Linker` takes a `Schema` or the path of one, and one parquet file or several.
+`Linker` takes a `Schema` or the path of one, and the data: a pandas frame, a pyarrow table or reader, a polars frame or anything else with `__arrow_c_stream__`, or a parquet path.
+Several inputs are a `{name: input}` dict, each becoming a dataset named by its key, or a list of paths named by their stems; two inputs and no `mode` means linking them.
+
+```python
+linker = cpplink.Linker(schema, {"left": customers, "right": orders})
+```
+
+A frame is read where it sits.
+Its Arrow-backed and numeric columns cross into the core with no copy; a column of Python objects (plain strings, or a list column) is converted `batch_rows` rows at a time, so the transient is one slice and not a second frame.
+A `category` column is the store's own shape and costs one intern per distinct value.
+The store is a re-encoding, not a view: the frame and the store are both resident while the `Linker` lives, so drop the frame when it is not needed again.
+The frame's index is not read; the record id must be a column, and an integer id is read as its digits.
 Several files are several datasets and default to linking; `mode="dedup"` or `"link-and-dedup"` scores the within-file pairs too, exactly as `--mode` does.
 `all_pairs=True` is `--all-pairs`.
 
@@ -107,30 +120,41 @@ An `EstimateOptions` can be built and passed as `options=` instead.
 ### 6. Score the candidates
 
 ```python
-predict = linker.predict(model, "predictions.parquet", threshold=20)
-predict.predictions, predict.enumerated, predict.skipped
+predictions = linker.predict(model, threshold=20)       # a pandas frame
+report = linker.last_predict
+report.predictions, report.enumerated, report.skipped
 ```
 
-`out` is a shard directory, or a single `.csv` or `.parquet` file the shards are merged into, and the extension decides.
+The frame has the merged file's columns, `id_a, id_b, gamma, match_weight, match_probability`, with `dataset_a` and `dataset_b` beside the ids over several inputs.
+`out=` also writes the run as a shard directory or a single `.csv` or `.parquet` file, which `rescore` and the command line read; the extension decides.
 Give `threshold` in bits or `probability` as a posterior.
 The `--no-*` switches are the positive keywords `bounds`, `ceiling`, `signatures`, `ladders` and `interactions`; `fuzzy_tf`, `spill`, `spill_sample`, `threads`, `limit` and `tf_damping` are what they are on the command line.
 `verbose=True` prints the plan and writes the progress line to the process's standard error, which a terminal shows and a notebook does not capture.
 
-The predictions are read back through pyarrow, since that file is the pipeline's door out:
+`report.table` is the same rows as the core holds them, readable by anything that speaks the Arrow PyCapsule protocol and copied by none of it:
 
 ```python
-import pyarrow.parquet as pq
-table = pq.read_table("predictions.parquet")
+import pyarrow as pa
+table = pa.table(report.table)     # zero copy; the ids are a dictionary over the store's ids
 ```
+
+The frame decodes that dictionary into plain string columns, since a pandas `Categorical` over every record of the store is neither cheap nor what a frame of predictions wants; the decode copies only the ids the rows name.
 
 ### 7. Join the predictions into clusters
 
 ```python
-result = linker.cluster("predictions.parquet", truth="sample.truth.csv", out="clusters.csv")
+clusters = linker.cluster(truth="sample.truth.csv")    # a pandas frame
+result = linker.last_cluster
 result.quality.f1                     # None without a truth file
 result.assignment.root                # numpy uint32, the representative row per row
 result.assignment.size                # by representative row; 0 for a non-root
 ```
+
+The frame has the cluster file's columns, `unique_id, cluster_id, cluster_size`, one row per record in a cluster of `min_size` or more, with `dataset` first over several inputs.
+With nothing given, `cluster` reads the rows the last `predict` left in memory, which name rows and need no id lookup.
+It also takes the frame `predict` returned, or any table with `id_a`, `id_b` and `match_weight` columns, or the shard directory or merged file a run wrote; those name records by id and cost the index the command pays.
+`out=` writes the frame as `.csv` or `.parquet` too.
+Which member names a cluster depends on the order the edges arrived, so two runs agree on the partition and not always on the `cluster_id`.
 
 The numpy arrays view the C++ vectors and keep the assignment alive for as long as they do.
 A `Linker` holds every column, so its `cluster` costs no second load but more memory than the command, which loads the id column alone; `cpplink.cluster_file(schema_path, files, predictions)` is that lighter path.
@@ -170,6 +194,5 @@ Errors the core reports as `false` and a message become `cpplink.Error`, a `Runt
 
 ## Not in this version
 
-- **In-memory input.** The `Linker` reads parquet files, as the command does. A pyarrow, polars or pandas table through `__arrow_c_stream__` is the next step, and needs the loader split so a table can be appended without a file.
-- **In-memory predictions.** `predict` writes a file and the caller reads it back; a per-thread sink handing a `pyarrow.Table` straight out is the same step.
 - **A progress callback.** `verbose=True` writes lines to the C-level standard error.
+- **Streaming output.** `predict` holds every prediction in memory, twenty bytes each, before the frame is made; a run whose predictions do not fit writes shards with `out=` instead.

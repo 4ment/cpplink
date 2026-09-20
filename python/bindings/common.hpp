@@ -12,9 +12,12 @@
 
 #include <pybind11/pybind11.h>
 
+#include "cpplink/arrow_export.hpp"
 #include "cpplink/blocking.hpp"
+#include "cpplink/cluster.hpp"
 #include "cpplink/comparison.hpp"
 #include "cpplink/parquet_loader.hpp"
+#include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 
@@ -63,6 +66,14 @@ class Session {
    public:
     Session(const PySchema& schema, std::vector<std::string> paths, PairMode mode,
             bool all_pairs);
+    // The same store from objects that speak the Arrow C stream protocol -- a
+    // pyarrow table or reader, a pandas or polars frame -- each named for the
+    // dataset it becomes. One input gets no name, as one file gets none. The
+    // frames are read through the same decoder a parquet file is, and nothing
+    // here links Arrow: the capsule hands over three C structs and a pointer.
+    Session(const PySchema& schema,
+            std::vector<std::pair<std::string, py::object>> inputs, PairMode mode,
+            bool all_pairs);
 
     const Schema& schema() const { return schema_; }
     const RecordStore& store() const { return *store_; }
@@ -82,7 +93,15 @@ class Session {
     // --no-signatures` and `--no-ladders`.
     std::unique_ptr<ComparisonSet> BindComparisons(bool use_signatures, bool use_ladders);
 
+    // The predictions of the last `predict`, which `cluster` with no table
+    // given reads: the run's own rows, nothing to resolve.
+    const std::shared_ptr<EdgeTable>& last_edges() const { return last_edges_; }
+    void set_last_edges(std::shared_ptr<EdgeTable> edges) {
+        last_edges_ = std::move(edges);
+    }
+
    private:
+    std::shared_ptr<EdgeTable> last_edges_;
     Schema schema_;
     std::vector<std::string> paths_;
     PairMode mode_;
@@ -106,11 +125,82 @@ PairMode ModeFrom(const py::object& mode, size_t inputs);
 double ThresholdFrom(const py::object& threshold, const py::object& probability,
                      const char* command);
 
+// A table handed to Python through the Arrow PyCapsule protocol: whatever
+// `pa.table(x)`, `pl.DataFrame(x)` or `pd.DataFrame(pa.table(x).to_pandas())`
+// wants, from one builder of borrowed columns that is exported on every call and
+// copies nothing. The record ids leave as a dictionary over the store's id
+// arena with the rows as indices, so a table of fifty million predictions
+// carries no id text of its own. `payload` is what the columns point into, and
+// every live export holds it, and through it the session, until released.
+class ArrowTable : public std::enable_shared_from_this<ArrowTable> {
+   public:
+    virtual ~ArrowTable() = default;
+    int64_t Rows() const { return builder_.Rows(); }
+    const std::vector<std::string>& Columns() const { return names_; }
+    // The C structs, for a stream to hand out. Every column is borrowed, so the
+    // batch can be exported any number of times.
+    void ExportSchema(ArrowSchema* out) const { builder_.ExportSchema(out); }
+    bool ExportBatch(ArrowArray* out, std::string* error) {
+        return builder_.ExportBatch(out, error);
+    }
+    // `__arrow_c_schema__`, `__arrow_c_array__` and `__arrow_c_stream__`.
+    py::object SchemaCapsule() const;
+    py::tuple ArrayCapsules();
+    py::object StreamCapsule();
+
+   protected:
+    int Add(const std::string& name, BorrowedColumn column) {
+        names_.push_back(name);
+        return builder_.AddBorrowed(name, column);
+    }
+
+    BatchBuilder builder_;
+    std::vector<std::string> names_;
+};
+
+// The predictions of one run: `dataset_a, id_a, dataset_b, id_b` (the datasets
+// only over several inputs), `gamma`, `match_weight`, `match_probability`, the
+// merged file's own columns.
+class PredictionTable : public ArrowTable {
+   public:
+    PredictionTable(py::object session, std::shared_ptr<EdgeTable> edges);
+    const std::shared_ptr<EdgeTable>& edges() const;
+
+   private:
+    struct Payload;
+    std::shared_ptr<Payload> payload_;
+};
+
+// The clusters of one partition, the records in clusters of `min_size` or more:
+// `dataset` (over several inputs), `unique_id`, `cluster_id`, `cluster_size`,
+// the cluster file's own columns.
+class ClusterTable : public ArrowTable {
+   public:
+    ClusterTable(py::object session, const ClusterAssignment& assignment,
+                 uint64_t min_size);
+
+   private:
+    struct Payload;
+    std::shared_ptr<Payload> payload_;
+};
+
+// The sample `gen_sample` makes when no file is wanted. Its columns are owned
+// rather than borrowed, so the rows move out on the first read and a second
+// read finds none.
+class SampleTable : public ArrowTable {
+   public:
+    explicit SampleTable(BatchBuilder builder) {
+        names_ = builder.ColumnNames();
+        builder_ = std::move(builder);
+    }
+};
+
 // The stages hang off the session class, so the class is made once and handed
 // to the files that add methods to it.
 using SessionClass = py::class_<Session>;
 
 void BindModule(py::module_& m);
+void BindTables(py::module_& m);
 void BindSchema(py::module_& m);
 void BindModel(py::module_& m);
 SessionClass BindSession(py::module_& m);
