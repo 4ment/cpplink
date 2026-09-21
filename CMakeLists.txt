@@ -61,6 +61,9 @@ if(BUILD_TESTING)
     file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
     add_executable(run_tests ${TEST_SOURCES})
     target_link_libraries(run_tests PRIVATE cpplink_core GTest::gtest_main)
+    # Test-only headers are included as "tests/x.hpp", rooted at the project
+    # directory, the way the library's are rooted at src/.
+    target_include_directories(run_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     # A test reading a checked-in fixture names it from the source tree, so the
     # suite passes from ctest's working directory as well as from the root.
     target_compile_definitions(run_tests PRIVATE
