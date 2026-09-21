@@ -13,6 +13,7 @@ predictions/
 predictions.csv
 *.shards/
 clusters.csv
+*.duckdb
 
 # Local working notes, not part of the repo
 CLAUDE.md

@@ -108,6 +108,7 @@ clusters = linker.cluster(truth="sample.truth.csv")          # another
 print(linker.last_cluster.quality)
 ```
 
+`cpplink-viewer` (`pip install "cpplink[viewer]"`) then serves the clusters as a page: each cluster's members side by side with every disagreeing cell highlighted, and every prediction behind it as the ledger the scorer produced.
 Between `init` and `estimate` sit the diagnostics that cost seconds and decide the quality of the result: `profile` says what each column can be worth before any model exists, `levels` places the fuzzy thresholds from the data, `explain-blocking` prices every source without enumerating a pair, and `recall` measures what blocking reaches.
 See [Getting started](https://4ment.github.io/cpplink/getting-started/) for the whole pipeline with its output explained, [Commands](https://4ment.github.io/cpplink/commands/) for every command at a glance, the [schema reference](https://4ment.github.io/cpplink/reference/schema/) for every field, and [From Python](https://4ment.github.io/cpplink/python/) for the package.
 

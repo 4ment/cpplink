@@ -252,6 +252,12 @@ None of them calls back into Python, so another thread can run while they do.
 
 Errors the core reports as `false` and a message become `cpplink.Error`, a `RuntimeError` carrying the core's own text.
 
+## The cluster viewer
+
+`cpplink-viewer`, the `cpplink_viewer` package in the same wheel, serves the clusters a run produced as a page; `pip install "cpplink[viewer]"` adds DuckDB, its one dependency beyond the binding's.
+It reads the files the pipeline wrote and never the compiled module, so it also runs from a checkout with nothing built.
+See [The cluster viewer](viewer.md).
+
 ## Not in this version
 
 - **A progress callback.** `verbose=True` writes lines to the C-level standard error.

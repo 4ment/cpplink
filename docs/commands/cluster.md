@@ -223,6 +223,10 @@ The `cluster_id` is the representative record's own `unique_id`, so the output s
 record the others collapse onto. Only records in a cluster of at least `--min-size` are
 written; singletons are excluded by default.
 
+## Reading the clusters
+
+[The cluster viewer](../viewer.md) serves this file beside the predictions and their waterfalls: the members of each cluster side by side with every disagreeing cell highlighted, and every prediction touching it, including the ones clustering at a higher threshold overruled.
+
 ## Cost
 
 The union–find is `uint32` parent plus `uint8` rank — **5 bytes a record**, 100 MB at 20M rows —
