@@ -6,17 +6,11 @@
 #include <string>
 #include <vector>
 
+#include "cpplink/batch_loader.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 
 namespace cpplink {
-
-struct LoadStats {
-    uint64_t rows = 0;
-    int row_groups = 0;
-    double seconds = 0.0;
-    std::vector<uint64_t> dataset_rows;  // rows contributed by each input, in order
-};
 
 // One column of a parquet file as its footer describes it: the name, the Arrow
 // type spelled out, and the column type it reads as, where one does.
@@ -42,7 +36,9 @@ bool ResolveColumnTypes(const std::vector<std::string>& paths, Schema* schema,
 
 // Reads a parquet file into the record store one row group at a time, so the
 // Arrow buffers for a group are released before the next is read and the two
-// representations are never both resident for the whole file.
+// representations are never both resident for the whole file. The file arrives
+// as a C Data stream from `parquet_io` and is decoded by `batch_loader`, so a
+// file and a frame are read by the same code and nothing here links Arrow.
 bool LoadParquet(const std::string& path, const Schema& schema, RecordStore* store,
                  LoadStats* stats, std::string* error);
 

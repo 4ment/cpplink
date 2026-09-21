@@ -101,11 +101,11 @@ The same pipeline from Python:
 ```python
 import cpplink
 
-linker = cpplink.Linker("schema.json", "sample.parquet")
+linker = cpplink.Linker("schema.json", "sample.parquet")     # or a pandas frame
 model, report = linker.estimate(out="model.json")
-linker.predict(model, "predictions.parquet", threshold=20)
-result = linker.cluster("predictions.parquet", truth="sample.truth.csv")
-print(result.quality)
+predictions = linker.predict(model, threshold=20)            # a pandas frame
+clusters = linker.cluster(truth="sample.truth.csv")          # another
+print(linker.last_cluster.quality)
 ```
 
 Between `init` and `estimate` sit the diagnostics that cost seconds and decide the quality of the result: `profile` says what each column can be worth before any model exists, `levels` places the fuzzy thresholds from the data, `explain-blocking` prices every source without enumerating a pair, and `recall` measures what blocking reaches.
@@ -129,6 +129,8 @@ The Python package builds into the same environment, against the Arrow it holds:
 ```sh
 pip install -e . --no-build-isolation -Ccmake.define.CMAKE_PREFIX_PATH=$CONDA_PREFIX
 ```
+
+Outside conda it builds with no Arrow at all, `pip install . -Ccmake.define.CPPLINK_WITH_ARROW=OFF`, and reads and writes parquet through pandas instead; [From Python](https://4ment.github.io/cpplink/python/) says what that build leaves out.
 
 Building with the tests, the sanitizer presets, the lint tools and the documentation are in [CONTRIBUTING.md](CONTRIBUTING.md).
 

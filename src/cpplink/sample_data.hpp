@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "cpplink/arrow_export.hpp"
+
 namespace cpplink {
 
 struct SampleOptions {
@@ -33,5 +35,12 @@ struct SampleOptions {
 // reproduce its original exactly without either being held in memory.
 bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
                         std::string* error);
+
+// The sample as batches in memory rather than files: one `BatchBuilder` per
+// output the options name, holding every row that output would have been
+// written, and the truth file still written where `truth_path` says. What a
+// front end returns as frames when no file is wanted.
+bool GenerateSampleTables(const SampleOptions& options, std::vector<BatchBuilder>* tables,
+                          std::string* error);
 
 }  // namespace cpplink

@@ -13,9 +13,12 @@ import json
 from pathlib import Path
 
 import pyarrow.parquet as pq
-from conftest import SEED
+from conftest import SEED, needs_core_parquet
 
 import cpplink
+
+# The command line reads the parquet file itself.
+pytestmark = needs_core_parquet
 
 
 def _run(*args: str) -> cpplink.CliResult:
