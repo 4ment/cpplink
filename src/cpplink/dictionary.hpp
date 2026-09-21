@@ -23,6 +23,12 @@ inline constexpr uint32_t kNullId = 0xFFFFFFFFu;
 // by the index stay valid as the arena grows.
 class Dictionary {
    public:
+    Dictionary() = default;
+    Dictionary(const Dictionary&) = delete;
+    Dictionary& operator=(const Dictionary&) = delete;
+    Dictionary(Dictionary&&) = default;
+    Dictionary& operator=(Dictionary&&) = default;
+
     uint32_t Intern(std::string_view value);
     std::string_view Value(uint32_t id) const { return entries_[id]; }
     uint32_t Size() const { return static_cast<uint32_t>(entries_.size()); }
