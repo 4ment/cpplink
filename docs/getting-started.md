@@ -42,7 +42,8 @@ ctest --preset asan
 ```
 
 `release` and `debug` are the plain builds with tests on, and `ctest --preset <name>` runs the suite with output on failure.
-The GitHub Actions workflow runs `release`, `asan` and `tsan` on Linux and macOS, then the Python suite and the format and lint checks.
+On Windows the `windows` preset builds with Visual Studio 2022 against the conda-forge Arrow, which lives under `%CONDA_PREFIX%\Library`, and the build and test presets of the same name select the `Release` configuration, since the Visual Studio generator holds every configuration in one tree.
+The GitHub Actions workflow runs `release`, `asan` and `tsan` on Linux and macOS and `windows` on Windows, then the Python suite and the format and lint checks.
 
 ## The whole pipeline in seven commands
 

@@ -15,22 +15,6 @@
 
 #include <nlohmann/json.hpp>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX  // windows.h's min/max macros would break std::min below.
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <cstdio>
-
-#include <io.h>
-#include <windows.h>
-#else
-#include <sys/ioctl.h>
-#include <unistd.h>
-#endif
-
 #include "cpplink/blocking.hpp"
 #include "cpplink/cluster.hpp"
 #include "cpplink/comparison.hpp"
@@ -57,6 +41,25 @@
 #include "cpplink/score.hpp"
 #include "cpplink/simplify.hpp"
 #include "cpplink/waterfall.hpp"
+
+// The terminal query below is the one platform-specific call. windows.h comes after
+// every project header so that its macros -- and it defines several hundred, from
+// ERROR to far -- rewrite nothing the project declares.
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX  // windows.h's min/max macros would break std::min below.
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <cstdio>
+
+#include <io.h>
+#include <windows.h>
+#else
+#include <sys/ioctl.h>
+#include <unistd.h>
+#endif
 
 namespace cpplink {
 
@@ -1648,7 +1651,8 @@ int RunMergeEdges(const std::vector<std::string>& args, std::ostream& out,
     // The extension is what a user means by the format; --format is for a name
     // that does not carry one.
     if (!format_given) {
-        const std::string suffix = std::filesystem::path(options.out_path).extension();
+        const std::string suffix =
+            std::filesystem::path(options.out_path).extension().string();
         if (suffix == ".parquet" || suffix == ".pq") {
             options.format = MergeFormat::kParquet;
         }

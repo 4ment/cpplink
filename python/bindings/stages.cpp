@@ -277,7 +277,7 @@ MergeOutcome MergePredictions(const std::string& shards, const std::string& out,
     options.out_path = out;
     options.batch_rows = batch_rows;
     if (format.is_none()) {
-        const std::string suffix = std::filesystem::path(out).extension();
+        const std::string suffix = std::filesystem::path(out).extension().string();
         if (suffix == ".parquet" || suffix == ".pq")
             options.format = MergeFormat::kParquet;
     } else {

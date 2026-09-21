@@ -60,7 +60,10 @@ double ApplyWinkler(std::string_view a, std::string_view b, double jaro,
 
 // The one instruction, asked for by name. `std::bitset<64>::count()` does not
 // lower to it here -- it leaves a call to the generic bit-iterator count in the
-// binary, which a profile of the scoring loop finds among the hot leaves.
+// binary, which a profile of the scoring loop finds among the hot leaves. MSVC's
+// `__popcnt64` emits the instruction with no fallback, so an x64 build assumes
+// POPCNT, which every processor Windows 11 runs on has; gcc and clang substitute
+// a bit-trick sequence where the target lacks it.
 int PopCount(uint64_t value) {
 #if defined(_MSC_VER) && defined(_M_ARM64)
     return static_cast<int>(_CountOneBits64(value));

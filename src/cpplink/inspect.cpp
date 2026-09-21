@@ -4,6 +4,7 @@
 #include "cpplink/inspect.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <iomanip>
 #include <ostream>
 #include <string>

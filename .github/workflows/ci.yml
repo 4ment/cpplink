@@ -44,6 +44,43 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }} -j "$(nproc 2>/dev/null || sysctl -n hw.ncpu)"
 
+  # MSVC, against the conda-forge Arrow for win-64. The Visual Studio generator is
+  # multi-config, so the preset names the configuration at build and test time
+  # rather than through CMAKE_BUILD_TYPE; conda puts every library under
+  # Library/, which is what the preset's prefix path points at. cmd rather than
+  # bash so that CONDA_PREFIX reaches CMake as a Windows path.
+  windows:
+    name: msvc on windows-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd /C call {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          init-shell: cmd.exe
+          cache-environment: true
+
+      - name: Configure
+        run: cmake --preset windows
+
+      - name: Build
+        run: cmake --build --preset windows -j %NUMBER_OF_PROCESSORS%
+
+      - name: Test
+        run: ctest --preset windows -j %NUMBER_OF_PROCESSORS%
+
+      - name: Install the package
+        run: >-
+          pip install -e . --no-build-isolation
+          -Ccmake.define.CMAKE_PREFIX_PATH=%CONDA_PREFIX%/Library
+
+      - name: Test the package
+        run: python -m pytest python/tests
+
   python:
     name: python on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -81,7 +118,7 @@ jobs:
       - name: clang-format
         run: >-
           clang-format --dry-run --Werror
-          src/main.cpp src/cpplink/* tests/*.cpp python/bindings/*
+          src/main.cpp src/cpplink/* tests/*.cpp tests/*.hpp python/bindings/*
 
       - name: cpplint
         run: cpplint --recursive src tests python/bindings

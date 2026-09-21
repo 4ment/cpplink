@@ -42,13 +42,22 @@
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CPPLINK_SANITIZE": "thread"
             }
+        },
+        {
+            "name": "windows",
+            "displayName": "MSVC x64, with tests",
+            "inherits": "base",
+            "generator": "Visual Studio 17 2022",
+            "architecture": {"value": "x64", "strategy": "set"},
+            "cacheVariables": {"CMAKE_PREFIX_PATH": "$env{CONDA_PREFIX}/Library"}
         }
     ],
     "buildPresets": [
         {"name": "release", "configurePreset": "release"},
         {"name": "debug", "configurePreset": "debug"},
         {"name": "asan", "configurePreset": "asan"},
-        {"name": "tsan", "configurePreset": "tsan"}
+        {"name": "tsan", "configurePreset": "tsan"},
+        {"name": "windows", "configurePreset": "windows", "configuration": "Release"}
     ],
     "testPresets": [
         {
@@ -73,6 +82,12 @@
             "inherits": "base",
             "configurePreset": "tsan",
             "environment": {"TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"}
+        },
+        {
+            "name": "windows",
+            "inherits": "base",
+            "configurePreset": "windows",
+            "configuration": "Release"
         }
     ]
 }
