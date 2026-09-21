@@ -8,6 +8,7 @@
 
 #include "cpplink/arrow_export.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <memory>

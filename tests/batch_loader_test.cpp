@@ -11,6 +11,7 @@
 
 #include "cpplink/batch_loader.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
