@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://4ment.github.io/cpplink/em/">
+        <link rel="canonical" href="https://4ment.github.io/cpplink/dependence/">
       
       
-        <link rel="prev" href="../comparisons/">
+        <link rel="prev" href="../em/">
       
       
-        <link rel="next" href="../dependence/">
+        <link rel="next" href="../blocking/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Estimation and EM - cpplink</title>
+        <title>Dependence between comparisons - cpplink</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#estimation-and-em" class="md-skip">
+        <a href="#dependence-between-comparisons" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Estimation and EM
+              Dependence between comparisons
             
           </span>
         </div>
@@ -448,6 +448,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../em/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation and EM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -467,7 +495,7 @@
   <span class="md-ellipsis">
     
   
-    Estimation and EM
+    Dependence between comparisons
   
 
     
@@ -485,7 +513,7 @@
   <span class="md-ellipsis">
     
   
-    Estimation and EM
+    Dependence between comparisons
   
 
     
@@ -511,10 +539,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-pattern-histogram-is-the-interface" class="md-nav__link">
+  <a href="#the-measures" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The pattern histogram is the interface
+        The measures
       
     </span>
   </a>
@@ -522,10 +550,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#u-in-closed-form" class="md-nav__link">
+  <a href="#u-side-overlap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        u in closed form
+        U-side overlap
       
     </span>
   </a>
@@ -533,99 +561,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#em-over-the-histogram" class="md-nav__link">
+  <a href="#determination-and-containment" class="md-nav__link">
     <span class="md-ellipsis">
       
-        EM over the histogram
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="EM over the histogram">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#numerics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Numerics
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#convergence" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Convergence
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#sessions-why-there-is-more-than-one-em-run" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sessions: why there is more than one EM run
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Sessions: why there is more than one EM run">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#em-safety" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        EM safety
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#a-session-needs-at-least-three-free-comparisons" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        A session needs at least three free comparisons
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-label-swap-check" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The label-swap check
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#is-a-lower-bound" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        λ is a lower bound
+        Determination and containment
       
     </span>
   </a>
@@ -633,10 +572,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-three-floors-which-are-three-different-things" class="md-nav__link">
+  <a href="#m-side-overlap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The three floors, which are three different things
+        M-side overlap
       
     </span>
   </a>
@@ -644,10 +583,76 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#measured-cost" class="md-nav__link">
+  <a href="#the-tie-hold-out" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Measured cost
+        The tie hold-out
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-two-way-correction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The two-way correction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-fit-residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The fit residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-capture-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The capture table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-number-answers-which-question" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which number answers which question
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-do-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to do about it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -658,34 +663,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../dependence/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Dependence between comparisons
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -1403,10 +1380,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-pattern-histogram-is-the-interface" class="md-nav__link">
+  <a href="#the-measures" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The pattern histogram is the interface
+        The measures
       
     </span>
   </a>
@@ -1414,10 +1391,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#u-in-closed-form" class="md-nav__link">
+  <a href="#u-side-overlap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        u in closed form
+        U-side overlap
       
     </span>
   </a>
@@ -1425,99 +1402,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#em-over-the-histogram" class="md-nav__link">
+  <a href="#determination-and-containment" class="md-nav__link">
     <span class="md-ellipsis">
       
-        EM over the histogram
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="EM over the histogram">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#numerics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Numerics
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#convergence" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Convergence
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#sessions-why-there-is-more-than-one-em-run" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sessions: why there is more than one EM run
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Sessions: why there is more than one EM run">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#em-safety" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        EM safety
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#a-session-needs-at-least-three-free-comparisons" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        A session needs at least three free comparisons
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-label-swap-check" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The label-swap check
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#is-a-lower-bound" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        λ is a lower bound
+        Determination and containment
       
     </span>
   </a>
@@ -1525,10 +1413,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-three-floors-which-are-three-different-things" class="md-nav__link">
+  <a href="#m-side-overlap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The three floors, which are three different things
+        M-side overlap
       
     </span>
   </a>
@@ -1536,10 +1424,76 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#measured-cost" class="md-nav__link">
+  <a href="#the-tie-hold-out" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Measured cost
+        The tie hold-out
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-two-way-correction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The two-way correction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-fit-residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The fit residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-capture-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The capture table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-number-answers-which-question" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which number answers which question
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-do-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to do about it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -1566,353 +1520,248 @@
   
 
 
-<h1 id="estimation-and-em">Estimation and EM<a class="headerlink" href="#estimation-and-em" title="Permanent link">&para;</a></h1>
-<p>The parameters <span class="arithmatex">\(m\)</span>, <span class="arithmatex">\(u\)</span> and <span class="arithmatex">\(\lambda\)</span> defined in <a href="../model/">the model</a> have to come
-from the data itself — nobody labels 20 million records. This page is what
-<a href="../commands/estimate/"><code>cpplink estimate</code></a> does, and why each of the three parameters comes
-from a different place.</p>
+<h1 id="dependence-between-comparisons">Dependence between comparisons<a class="headerlink" href="#dependence-between-comparisons" title="Permanent link">&para;</a></h1>
+<p>Fellegi-Sunter adds one weight per comparison, and that sum is only the log-odds of a match if the comparisons are <strong>conditionally independent given the class</strong>.
+Real columns are not: a surname and a full name agree together, a record with a missing postcode is likelier to be missing its gender, and a duplicate that kept one field clean tends to have kept the others.
+Every place the tool measures that assumption, every number it prints about it, and every remedy it offers is on this page, so that a column header in a report can be traced to the formula behind it.</p>
+<p>The assumption, written out, is</p>
+<div class="arithmatex">\[
+P(\gamma \mid M) = \prod_c m_c(\gamma_c) \qquad P(\gamma \mid U) = \prod_c u_c(\gamma_c)
+\]</div>
+<p>and the weight <a href="../model/">the model</a> scores a pair with is the sum that follows from it.
+Where the assumption fails the true joint is not the product, and the difference is a correction in bits that the sum leaves out.
+Everything below is a way of reading that correction, from the rows, from manufactured matches, from the known pairs, or from the fitted model.</p>
+<h2 id="the-measures">The measures<a class="headerlink" href="#the-measures" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Parameter</th>
-<th>Depends on the candidate set?</th>
-<th>Where it comes from</th>
+<th>Measure</th>
+<th>Printed as</th>
+<th>Command</th>
+<th>Needs</th>
+<th>Formula</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><span class="arithmatex">\(u\)</span></td>
-<td><strong>No</strong></td>
-<td>exact and null levels in closed form from term frequencies; the rest sampled from uniformly random pairs</td>
+<td>U-side overlap</td>
+<td><code>Redund</code>, <code>U redu</code></td>
+<td><a href="../commands/profile/"><code>profile</code></a></td>
+<td>rows only</td>
+<td><a href="#u-side-overlap">below</a></td>
 </tr>
 <tr>
-<td><span class="arithmatex">\(\lambda\)</span></td>
-<td>biased upward by any blocking</td>
-<td>full-data pair counts, never a blocked session's match rate</td>
+<td>determination share</td>
+<td><code>L-&gt;R</code>, <code>R-&gt;L</code></td>
+<td><code>profile</code></td>
+<td>rows only</td>
+<td><a href="#determination-and-containment">below</a></td>
 </tr>
 <tr>
-<td><span class="arithmatex">\(m\)</span></td>
-<td><strong>Yes</strong></td>
-<td>EM over the pattern histogram, restricted to EM-safe sources</td>
+<td>containment</td>
+<td><code>Substr</code></td>
+<td><code>profile</code></td>
+<td>rows only</td>
+<td><a href="#determination-and-containment">below</a></td>
+</tr>
+<tr>
+<td>M-side overlap</td>
+<td><code>M redu</code>, <code>Net</code></td>
+<td><code>profile</code></td>
+<td>anchor pairs</td>
+<td><a href="#m-side-overlap">below</a></td>
+</tr>
+<tr>
+<td>M-side overlap, known pairs</td>
+<td><code>True redu</code></td>
+<td><code>profile --truth</code></td>
+<td>a truth file</td>
+<td><a href="#m-side-overlap">below</a></td>
+</tr>
+<tr>
+<td>tie hold-out</td>
+<td><code>also tied</code></td>
+<td><a href="../commands/estimate/"><code>estimate</code></a></td>
+<td>the profile's pass</td>
+<td><a href="#the-tie-hold-out">below</a></td>
+</tr>
+<tr>
+<td>two-way correction</td>
+<td><code>per match</code>, <code>effect</code></td>
+<td><code>estimate --interactions</code></td>
+<td>the session histograms</td>
+<td><a href="#the-two-way-correction">below</a></td>
+</tr>
+<tr>
+<td>fit residual</td>
+<td><code>fit</code>, <code>worst pair</code>, <code>residuals</code></td>
+<td><code>estimate</code>, <code>--report</code> for every pair</td>
+<td>the session histograms</td>
+<td><a href="#the-fit-residual">below</a></td>
+</tr>
+<tr>
+<td>capture dependence</td>
+<td><code>Dependence</code></td>
+<td><a href="../commands/completeness/"><code>completeness</code></a></td>
+<td>a model</td>
+<td><a href="#the-capture-table">below</a></td>
 </tr>
 </tbody>
 </table>
-<h2 id="the-pattern-histogram-is-the-interface">The pattern histogram is the interface<a class="headerlink" href="#the-pattern-histogram-is-the-interface" title="Permanent link">&para;</a></h2>
-<p>EM never sees a pair. The blocking iterator produces candidate pairs, each is reduced to a
-packed γ, and γ is folded into a counter:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>count[γ]        the only thing EM reads
-</code></pre></div>
-<p>Because γ is a sufficient statistic for the Fellegi–Sunter likelihood, this loses nothing.
-The histogram is bounded by the number of <em>distinct patterns</em>, which is tiny: the design
-allowed for ~10⁵ and the measurement is <strong>a few hundred</strong> per session — 223 to 534 at the 20M
-target, 242 to 553 on the 1.8M sample the example below comes from. Eight comparisons with
-three to five levels can only reach ~10⁵ in principle, and real data occupies a vanishing
-corner of that space.</p>
-<p>Implementation, in <code>histogram.*</code>:</p>
-<ul>
-<li><strong>Below 22 bits of γ, a flat array</strong> (4M slots × 8 B = 34 MB per thread, no hashing at
-  all); above that, open addressing <code>uint32 → uint64</code>.</li>
-<li><strong>Per-thread, merged at join.</strong> Nothing is contended during the fold.</li>
-<li><strong>Work is handed out from an atomic counter over groups</strong>, and an oversized group is cut
-  into row ranges of its own triangle — otherwise one thread is left holding "Smith" alone.</li>
-<li><strong>A <code>pair_cap</code> turns the fold into a Bernoulli sample of the stream</strong>, which needs no
-  reweighting: <span class="arithmatex">\(m\)</span>, <span class="arithmatex">\(u\)</span> and <span class="arithmatex">\(\lambda\)</span> are all <em>ratios</em> of pattern counts. Sampling
-  buys the thing that costs (the comparison) rather than the thing that does not
-  (enumeration).</li>
-</ul>
-<p>Once the histogram exists, re-fitting the model is instantaneous — which makes parameter work
-interactive in a way it cannot be when every iteration re-reads a 121 GB table.</p>
-<h2 id="u-in-closed-form"><code>u</code> in closed form<a class="headerlink" href="#u-in-closed-form" title="Permanent link">&para;</a></h2>
-<p>Splink estimates <span class="arithmatex">\(u\)</span> by sampling random pairs. For <strong>exact-match levels that is
-unnecessary</strong>: <span class="arithmatex">\(u\)</span> is precisely the probability that two randomly drawn records carry the
-same value, which the term-frequency table gives exactly.</p>
+<p>Two things they have in common.
+Every overlap, correction and residual is in <strong>bits</strong>, because a bit is the unit the weight is in, and a dependence of half a bit is a weight wrong by half a bit; the two structural checks, determination and containment, are shares of rows, because they ask a yes-or-no question about the columns rather than pricing one.
+And none of them is an entropy or a correlation coefficient: mutual information is <a href="../commands/profile/#mutual-information-is-not-estimable-at-this-cardinality">not estimable</a> at the cardinalities record data has, and a correlation coefficient is not a quantity the weight can be corrected by.</p>
+<h2 id="u-side-overlap">U-side overlap<a class="headerlink" href="#u-side-overlap" title="Permanent link">&para;</a></h2>
+<p>The <code>u</code> of an exact level is the collision rate of the column, and two columns have a joint collision rate the same way.
+Over the joint value table of two interned columns, with <span class="arithmatex">\(c_{vw}\)</span> the number of rows holding value <span class="arithmatex">\(v\)</span> in the first and <span class="arithmatex">\(w\)</span> in the second,</p>
 <div class="arithmatex">\[
-u_{c,\text{exact}} \;=\; \frac{\sum_v c_v (c_v - 1)}{N (N - 1)}
-\qquad \text{exact, } O(\text{distinct values}), \text{ zero sampling error}
-\]</div>
-<p>where <span class="arithmatex">\(c_v\)</span> is the number of records holding value <span class="arithmatex">\(v\)</span> and <span class="arithmatex">\(N\)</span> the number of records.</p>
-<div class="admonition warning">
-<p class="admonition-title">It is <span class="arithmatex">\(c_v(c_v-1)\)</span>, not <span class="arithmatex">\(c_v^2\)</span>, and the difference is not cosmetic</p>
-<p>A pair is <strong>two distinct records</strong>, so a record agreeing with itself is not one. The
-plug-in form <span class="arithmatex">\(\sum_v p_v^2\)</span> counts all <span class="arithmatex">\(N\)</span> of those self-agreements, which inflates
-<span class="arithmatex">\(u\)</span> by <span class="arithmatex">\(1/N\)</span>. That is negligible while <span class="arithmatex">\(u\)</span> is large and <em>dominant</em> once <span class="arithmatex">\(u\)</span>
-approaches <span class="arithmatex">\(1/N\)</span> — which is exactly where the strongest columns live. On the 1M sample
-the 919k-value <code>email</code> column read <strong>3.5 bits low</strong> under the plug-in form, and at 20M
-records it reads <strong>3.3 bits low</strong>: a near-unique column's <span class="arithmatex">\(u\)</span> falls with <span class="arithmatex">\(N\)</span> as fast
-as the self-pair term does, so the error does not shrink with scale. The random-pair
-sampler had always skipped <code>a == b</code>, so the two halves of one estimator disagreed about
-what a pair is until this was corrected.</p>
-</div>
-<p>A <strong>null level placed first</strong> fires exactly when either side is missing, which is also a count
-over the data, so it is exact for <em>any</em> comparison — including multi-column ones.</p>
-<p>This matters enormously at high cardinality. At the 20M target, <code>email exact</code> comes out at
-<span class="arithmatex">\(u = 5.84\times10^{-9}\)</span>, exactly. A million random pairs would have expected <strong>0.006 hits</strong>
-for that level, which is not an estimate.</p>
-<p>What is left — geo radii, list-set equality, Jaccard, fuzzy string levels — is sampled from
-uniformly random pairs. The two sources are then reconciled: <strong>the sampled levels take what
-the exact ones leave</strong>, rescaled so the level probabilities sum to one and the two sources of
-truth cannot disagree about the total. A level the sample never hit gets <strong>half a count</strong>,
-which is a floor with a meaning rather than a guess, and the report says how many pairs it
-actually saw:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>last_name         jaro_winkler &gt;= 0.92          0.279753      6.00e-06     15.51  u from only 6 random pairs
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>location          within 1.00 km                0.933802      5.00e-07     20.83  u below the sampling floor
-</code></pre></div>
-<p>Those are the weights to distrust, and they are named on the line rather than hidden.</p>
-<div class="admonition note">
-<p class="admonition-title"><code>u</code> never sees a candidate pair</p>
-<p>This is the payoff of the closed form, and it is why blocking choices cannot bias <span class="arithmatex">\(u\)</span>.
-Splink, which estimates <span class="arithmatex">\(u\)</span> by sampling within blocking, does not get this.</p>
-</div>
-<h2 id="em-over-the-histogram">EM over the histogram<a class="headerlink" href="#em-over-the-histogram" title="Permanent link">&para;</a></h2>
-<p>With <span class="arithmatex">\(u\)</span> fixed, EM alternates two steps. The E step assigns each <em>pattern</em> a responsibility
-— the posterior probability that a pair with that pattern is a match:</p>
-<div class="arithmatex">\[
-r[\gamma] \;=\; \frac{1}{1 + 2^{-W(\gamma)}}
-\]</div>
-<p>The M step re-estimates <span class="arithmatex">\(m\)</span> and the session's match rate as count-weighted averages:</p>
-<div class="arithmatex">\[
-m_{c\ell} \;=\; \frac{\sum_{\gamma:\,\ell_c(\gamma)=\ell} \text{count}[\gamma]\, r[\gamma]}
-                     {\sum_\gamma \text{count}[\gamma]\, r[\gamma]}
+u_{cd} = \frac{\sum_{v,w} c_{vw}(c_{vw}-1)}{n(n-1)}
 \qquad
-\lambda \;=\; \frac{\sum_\gamma \text{count}[\gamma]\, r[\gamma]}{\sum_\gamma \text{count}[\gamma]}
+\phi_{cd} = \frac{u_{cd}}{u_c\,u_d}
+\qquad
+\text{Redund} = \log_2 \phi_{cd}
 \]</div>
-<p>The cost is <code>patterns × comparisons × iterations</code> and has <strong>nothing to do with how many pairs
-were folded</strong> to build the histogram. That is the whole reason the histogram is the interface.</p>
-<h3 id="numerics">Numerics<a class="headerlink" href="#numerics" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Never form the Bayes-factor product.</strong> With <span class="arithmatex">\(u\)</span> near <span class="arithmatex">\(10^{-7}\)</span> across ten comparisons
-  it reaches <span class="arithmatex">\(2^{\pm200}\)</span>. Everything stays in log2 and the posterior is recovered only
-  through the logistic form, which cannot overflow.</li>
-<li>Pattern counts reach <span class="arithmatex">\(10^{10}\)</span>, comfortably below <span class="arithmatex">\(2^{53}\)</span>, so <code>count × r</code> is exact in
-  double. The <em>accumulation</em> is not — responsibilities span many orders of magnitude — so it
-  uses <strong>Neumaier compensated summation</strong>.</li>
-<li>The level each pattern assigns each comparison is unpacked once before the loop, since the
-  inner loop runs <code>iterations × patterns × comparisons</code> times and should not re-shift.</li>
-</ul>
-<h3 id="convergence">Convergence<a class="headerlink" href="#convergence" title="Permanent link">&para;</a></h3>
-<p>Iteration count tracks <strong>how well separated the mixture is, not how much data there is</strong>. On
-the real sample every session reached <code>max|Δ| &lt; 1e-6</code> in <strong>2 to 10 iterations</strong>; on a toy
-fixture with four comparisons and eight distinct patterns the same tolerance took 148 and 334.
-Weak evidence, not volume, is what makes EM crawl. The iteration cap is 500 and is never
-approached in practice.</p>
-<h2 id="sessions-why-there-is-more-than-one-em-run">Sessions: why there is more than one EM run<a class="headerlink" href="#sessions-why-there-is-more-than-one-em-run" title="Permanent link">&para;</a></h2>
-<p>EM cannot be run over the blocked pairs naively, because blocking is not a random sample of
-pairs — it is a sample selected on agreement.</p>
-<p>Blocked EM is valid because of conditional independence: if the selection event is exactly
-<code>{level_j = exact}</code>, then for every other comparison</p>
+<p><code>Redund</code> is the number of bits the weight over-counts when both columns agree, if the dependence is the same under both classes.
+The collision form <span class="arithmatex">\(c(c-1)\)</span> rather than <span class="arithmatex">\(c^2\)</span> is not cosmetic: a joint table of singletons reads <span class="arithmatex">\(1/n\)</span> under the plug-in form and exactly zero under this one, and on <code>historical_50k</code> the plug-in put 9.4 spurious bits on an independent pair.</p>
+<p><strong>The refusal.</strong> On a file holding duplicates the joint of two columns measures the duplicates: a random pair is a match with probability <span class="arithmatex">\(\lambda\)</span>, so what is observed is <span class="arithmatex">\((1-\lambda)u_{cd} + \lambda m_{cd}\)</span>, and for two high-cardinality columns the second term is the whole of it.
+<code>Redund</code> is reported only where <span class="arithmatex">\(u_c u_d\)</span>, the rate independence predicts, stands clear of <span class="arithmatex">\(\lambda\)</span>, and shown as <code>-</code> otherwise.
+On <code>historical_50k</code> that refuses 22 of 28 pairs.</p>
+<h2 id="determination-and-containment">Determination and containment<a class="headerlink" href="#determination-and-containment" title="Permanent link">&para;</a></h2>
+<p>Both are per-row measures, so neither inherits the file's duplicates.</p>
+<p><strong>Determination</strong> is the complement of the <span class="arithmatex">\(g_3\)</span> error the functional-dependence literature measures an approximate dependency by: map every value of the left column to its commonest partner in the right, and count the rows that mapping keeps.</p>
 <div class="arithmatex">\[
-P(\ell_c \mid M, \ell_j = \text{exact}) = P(\ell_c \mid M) \qquad \text{for all } c \neq j
+\text{L-&gt;R} = \frac{1}{n}\sum_v \max_w c_{vw}
 \]</div>
-<p>so <span class="arithmatex">\(m_j\)</span> is degenerate and held fixed while every other <span class="arithmatex">\(m_c\)</span> is estimated without bias.</p>
-<p>cpplink therefore runs <strong>one EM session per column that an EM-safe source conditions on</strong>, and
-in each session <strong>holds out every comparison that reads that column</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Session               Enumerated      Compared  Patterns  Iters Match rate  Seconds
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>-----------------------------------------------------------------------------------
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>email                     90,600        90,600       242      3   0.999934      0.0
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>phone                    121,195       121,195       274      2   0.870795      0.1
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>dob                   77,931,552    10,002,206       270      4   0.001535      3.5
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>last_name             39,059,914     7,413,527       553     10   0.003205      3.2
-</code></pre></div>
-<p>The final <span class="arithmatex">\(m_{c\ell}\)</span> is the <strong>average over the sessions that could learn it</strong> — a
-comparison held out of every session gets a starting value, not an estimate, and the report
-says so out loud.</p>
-<h3 id="em-safety">EM safety<a class="headerlink" href="#em-safety" title="Permanent link">&para;</a></h3>
-<p>A source may only feed EM if its <strong>selection event factors as a condition on an excludable
-column subset</strong>:</p>
-<table>
-<thead>
-<tr>
-<th>Source</th>
-<th>Selection event</th>
-<th>Safe for <code>m</code>?</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Exact value on column <em>j</em></td>
-<td><code>level_j = exact</code></td>
-<td>✅ exclude <em>j</em></td>
-</tr>
-<tr>
-<td>Rare value on column <em>j</em></td>
-<td><code>level_j = exact ∧ n_v ≤ cap</code></td>
-<td>✅ exclude <em>j</em>, with a caveat</td>
-</tr>
-<tr>
-<td>MinHash LSH <strong>per column</strong> <em>j</em></td>
-<td>function of column <em>j</em> only</td>
-<td>✅ exclude <em>j</em></td>
-</tr>
-<tr>
-<td>Sorted neighbourhood on a key from <em>j</em></td>
-<td>mostly <em>j</em>; window membership also depends on other records</td>
-<td>⚠️ approximate</td>
-</tr>
-<tr>
-<td>MinHash on the concatenated record</td>
-<td>function of all columns</td>
-<td>❌</td>
-</tr>
-<tr>
-<td>ANN over a record embedding</td>
-<td>function of all columns</td>
-<td>❌</td>
-</tr>
-</tbody>
-</table>
-<p>A source whose selection depends on all columns jointly does not factor, conditional
-independence buys nothing, and <strong>every</strong> <span class="arithmatex">\(m_c\)</span> comes out biased with no column to exclude to
-repair it. So estimation and prediction deliberately run over <strong>different unions of sources</strong>:
-estimation over the EM-safe subset (perhaps <span class="arithmatex">\(10^7\)</span> pairs), prediction over everything.</p>
-<div class="admonition warning">
-<p class="admonition-title">The rare-value caveat</p>
-<p>A rare-value source conditions on the specific <em>value</em>, not only the level, so validity
-needs <span class="arithmatex">\(\ell_c \perp (v_j, \ell_j) \mid M\)</span> — slightly stronger than plain conditional
-independence. It is the same assumption TF adjustment already relies on, so it adds no new
-exposure, but it is an assumption rather than a consequence.</p>
-</div>
-<h3 id="a-session-needs-at-least-three-free-comparisons">A session needs at least three free comparisons<a class="headerlink" href="#a-session-needs-at-least-three-free-comparisons" title="Permanent link">&para;</a></h3>
-<p>With two free comparisons the histogram is a 2×2 table with three degrees of freedom while
-the mixture has three free parameters, so the fit is <strong>saturated</strong>: it has two exact solutions
-and the likelihood cannot prefer either. EM returns whichever root it walked to, silently.</p>
-<p>A session with fewer than three free comparisons after the held-out column is <strong>refused with a
-warning, not merged</strong>. This is why holding out a column is not free — it has to leave enough
-behind.</p>
-<h3 id="the-label-swap-check">The label-swap check<a class="headerlink" href="#the-label-swap-check" title="Permanent link">&para;</a></h3>
-<p>The likelihood is symmetric under swapping the match and non-match classes, so a session can
-converge to the inverted labelling with every parameter backwards, and the likelihood cannot
-tell. It is caught from the <em>meaning</em> instead: matches must not disagree more often than
-random pairs do. A session that fails this is disqualified and its <span class="arithmatex">\(m\)</span> is not merged.</p>
-<h2 id="is-a-lower-bound">λ is a lower bound<a class="headerlink" href="#is-a-lower-bound" title="Permanent link">&para;</a></h2>
-<p>Each session implies <code>λ_s × pairs_s</code> matching pairs; cpplink takes the <strong>tightest</strong> (largest)
-of those and puts it back over the full-data pair count, because a blocked session's match
-rate is biased upward by exactly the thing blocking is for:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>lambda       7.73e-08  (lower bound: session last_name implies 125,201 matches over 1,619,999,100,000 pairs)
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>prior weight -23.625 bits
-</code></pre></div>
-<p>It is a bound twice over — blocking recall is below one, and EM's posterior mass is itself
-conservative (a match agreeing only on a 10-bit signal against a 23-bit prior is not called a
-match). Pass <code>--lambda</code> to set it from a count you trust.</p>
-<div class="admonition warning">
-<p class="admonition-title">λ being a bound is harmless for the weights and is <em>not</em> harmless for the interactions</p>
-<p>The prior shifts every pair by the same amount, so a λ that is low by a factor of two moves
-the threshold and nothing else. The two-way corrections are different: λ is the rate at
-which the file's own duplicates contaminate the <code>u</code> side of a joint, and it is subtracted
-there. On a 1,000-record fixture whose λ reads 2.3× low, the two largest fitted terms come
-out with the <strong>wrong sign</strong>. See
-<a href="../commands/estimate/#two-traps-one-of-them-the-standing-limit"><code>estimate --interactions</code></a>.
-<code>cpplink completeness</code> estimates the pair completeness this bound is missing, without a
-truth file.</p>
-</div>
-<div class="admonition tip">
-<p class="admonition-title">An unblocked session is not a bound at all</p>
-<p>λ is a lower bound because a session counts only the matches its blocking reached. A
-session over <a href="../blocking/#no-blocking-at-all">every pair</a> reaches all of them, so the
-report drops the "lower bound" wording and the warning with it: on <code>fake_1000</code> it reads
-3.38x10⁻³ against a truth of 4.07x10⁻³, where the blocked sessions read 1.77x10⁻³. That is
-only safe where no two comparisons are tied, because an unblocked session holds nothing
-out; read the warning in <a href="../blocking/#no-blocking-at-all">no blocking at all</a> first.</p>
-</div>
-<h2 id="the-three-floors-which-are-three-different-things">The three floors, which are three different things<a class="headerlink" href="#the-three-floors-which-are-three-different-things" title="Permanent link">&para;</a></h2>
-<p>They look alike in the output and they are not the same:</p>
-<table>
-<thead>
-<tr>
-<th>Case</th>
-<th>Floor</th>
-<th>Why</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>A level whose closed-form <span class="arithmatex">\(u\)</span> is exactly zero</td>
-<td>weight exactly <strong>0</strong></td>
-<td>It is <em>unreachable</em> — the null level of a column with no missing value. Flooring it at 1e-12 while <code>m</code> floored higher once made "both values present" the strongest signal in the model, which is how this was found.</td>
-</tr>
-<tr>
-<td>A level no matching pair reached</td>
-<td><span class="arithmatex">\(m = 0.5 / \text{matching mass}\)</span></td>
-<td>Half a pair is the resolution of the evidence. A fixed 1e-12 floor put −40 bits on one comparison, enough for a single disagreement to veto every score.</td>
-</tr>
-<tr>
-<td>A level no random pair reached</td>
-<td><span class="arithmatex">\(u = \)</span> half a sampled pair</td>
-<td>And the report says how many pairs it did see, because a weight resting on one observation is worth knowing about.</td>
-</tr>
-</tbody>
-</table>
-<p>Every floored parameter is <strong>reported rather than hidden</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>email             else                          3.46e-06      0.944784    -18.06  m at the floor: no matching pair reached this level
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>last_name         null                          1.00e-12      1.00e-12      0.00  unreachable: no pair can land here
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>address           exact                         0.554006      5.00e-07     20.08  u below the sampling floor
-</code></pre></div>
-<p>A level with no support is a modelling bug, not a number to clamp.</p>
-<h2 id="measured-cost">Measured cost<a class="headerlink" href="#measured-cost" title="Permanent link">&para;</a></h2>
-<p>At 20M rows, four sessions, eight comparisons, the default 10⁶ random pairs for <code>u</code>, on one
-thread:</p>
-<table>
-<thead>
-<tr>
-<th>Stage</th>
-<th style="text-align: right;">Enumerated</th>
-<th style="text-align: right;">Compared</th>
-<th style="text-align: right;">Patterns</th>
-<th style="text-align: right;">EM iterations</th>
-<th style="text-align: right;">Seconds</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>u</code> sampling</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">1,000,000</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">2.1</td>
-</tr>
-<tr>
-<td>session <code>email</code></td>
-<td style="text-align: right;">1,168,723</td>
-<td style="text-align: right;">1,168,723</td>
-<td style="text-align: right;">453</td>
-<td style="text-align: right;">2</td>
-<td style="text-align: right;">0.9</td>
-</tr>
-<tr>
-<td>session <code>phone</code></td>
-<td style="text-align: right;">3,293,234</td>
-<td style="text-align: right;">3,293,234</td>
-<td style="text-align: right;">498</td>
-<td style="text-align: right;">2</td>
-<td style="text-align: right;">3.5</td>
-</tr>
-<tr>
-<td>session <code>dob</code></td>
-<td style="text-align: right;"><strong>9,607,671,432</strong></td>
-<td style="text-align: right;">10,009,380</td>
-<td style="text-align: right;">223</td>
-<td style="text-align: right;">4</td>
-<td style="text-align: right;"><strong>75.3</strong></td>
-</tr>
-<tr>
-<td>session <code>last_name</code></td>
-<td style="text-align: right;">481,577,878</td>
-<td style="text-align: right;">8,995,124</td>
-<td style="text-align: right;">534</td>
-<td style="text-align: right;">3</td>
-<td style="text-align: right;">16.5</td>
-</tr>
-</tbody>
-</table>
-<p><strong>144 s wall, 4.49 GB peak RSS</strong>, load included. Two things worth keeping:</p>
+<p>It is 1 exactly when the left column determines the right.
+Two shapes read 1 for saying nothing and are refused, shown as <code>-</code>: a near-unique determinant, which determines everything, and a target with one dominant value, which is determined by everything.
+The second is why a determination only counts when it beats the target's own commonest value, its <code>baseline</code> in the JSON.</p>
+<p><strong>Containment</strong> (<code>Substr</code>) is the share of rows on which one value occurs literally inside the other, and the direction is reported.
+It is the detector for a column built out of another, which is <code>first_and_surname</code> against either name on <code>historical_50k</code>: <code>Substr</code> 1.000, <code>R-&gt;L</code> 1.000.</p>
+<h2 id="m-side-overlap">M-side overlap<a class="headerlink" href="#m-side-overlap" title="Permanent link">&para;</a></h2>
+<p>The same <span class="arithmatex">\(\phi\)</span> among matches is the larger of the two correlations and the one the rows cannot show.
+Over a set of matching pairs, with <span class="arithmatex">\(a_c\)</span> the share agreeing on column <span class="arithmatex">\(c\)</span> and <span class="arithmatex">\(a_{cd}\)</span> the share agreeing on both,</p>
+<div class="arithmatex">\[
+\text{M redu} = \log_2 \frac{a_{cd}}{a_c\,a_d}
+\]</div>
+<p><code>M joint</code> in the table is <span class="arithmatex">\(a_{cd}\)</span>.
+<code>profile</code> reads it off <a href="../commands/profile/#the-m-side-from-anchor-pairs">anchor pairs</a>, pairs agreeing exactly on a column set strong enough that agreement alone makes them a match, over the sessions whose anchor contains neither column.
+With <code>--truth</code> the same rate is read a second time off the known pairs, printed as <code>True redu</code>, and <code>Err</code> is the anchor reading less the true one.
+On <code>historical_50k</code> the anchor reading is within <strong>0.02 bits</strong> of the truth on average, and 0.20 bits low on <code>surname</code> against <code>first_and_surname</code>, its worst pair.</p>
+<p><strong>What the weight actually gets wrong</strong> is the difference of the two sides, because the score adds <span class="arithmatex">\(\log_2(m/u)\)</span> for each column and only the part of the M-side association that the U side does not share is counted twice:</p>
+<div class="arithmatex">\[
+\text{Net} = \text{M redu} - \text{U redu}
+\]</div>
+<p>printed only where both sides resolved.
+The ledger's <code>Double counted</code> line is <span class="arithmatex">\(-\sum a_{cd} \max(\text{Net}, 0)\)</span> over the pairs, the bits an average match is over-scored by; an anti-correlation is not credited back.</p>
+<h2 id="the-tie-hold-out">The tie hold-out<a class="headerlink" href="#the-tie-hold-out" title="Permanent link">&para;</a></h2>
+<p>Blocking on a column conditions on <strong>everything that column decides</strong>.
+A session blocking on <code>first_name</code> sees, among its non-matching pairs, an agreement rate on <code>first_and_surname</code> that is nothing like the file-wide <code>u</code>, and EM reads the gap as evidence of matching: that session's match rate read 0.9996 against a truth of 0.0080 before the hold-out was widened.
+So <a href="../commands/estimate/#the-per-session-detail"><code>estimate</code></a> holds out of a session every comparison reading a column <em>tied</em> to the blocked one, where tied is containment on 90% of rows or <code>Redund</code> at or above <code>--tied-bits</code> (0.25), read from the same pairwise pass <code>profile</code> runs.
+A declared derivation (<code>derive</code>, <code>derived_from</code>) is a tie both hold-outs are told about without the pass having to find it.
+Determination is deliberately <strong>not</strong> the tie test: a column with a dominant value is determined by everything, and the version that used it scored worse.</p>
+<h2 id="the-two-way-correction">The two-way correction<a class="headerlink" href="#the-two-way-correction" title="Permanent link">&para;</a></h2>
+<p>Where a dependence is real and neither column can go, <a href="../commands/estimate/#relaxing-conditional-independence"><code>estimate --interactions</code></a> fits it into the weight.
+For a pair of comparisons <span class="arithmatex">\((c,d)\)</span> the weight gains</p>
+<div class="arithmatex">\[
+\delta_{cd}(i,j) = \log_2 \frac{M_{cd}(i,j)}{m_c(i)\,m_d(j)} - \log_2 \frac{U_{cd}(i,j)}{u_c(i)\,u_d(j)}
+\]</div>
+<p>which is <code>Net</code> above, level by level instead of once for exact agreement.
+<span class="arithmatex">\(M_{cd}\)</span> is the session histograms weighted by the responsibility EM converged on; <span class="arithmatex">\(U_{cd}\)</span> is the uniformly random pairs <code>u</code> is drawn from, with <span class="arithmatex">\(\lambda m\)</span> subtracted back out because the random pairs hold the file's own duplicates.
+Both are fitted to the model's own margins by iterative proportional fitting, which moves the margins and leaves every odds ratio alone, so the term carries the association and nothing else.
+<code>per match</code> is what the term moves an average matching pair by, and it is the number to read.</p>
+<h2 id="the-fit-residual">The fit residual<a class="headerlink" href="#the-fit-residual" title="Permanent link">&para;</a></h2>
+<p>Every measure above asks about one pair of columns.
+The fit residual asks whether the fitted mixture, with whatever terms it carries, explains the histogram it was fitted to, and it is the one reading that needs no notion of which columns are related.</p>
+<p>A session's histogram is <span class="arithmatex">\(O[\gamma]\)</span>, the count of every pattern over the comparisons the session left free, and the fitted model predicts</p>
+<div class="arithmatex">\[
+E[\gamma] = N\Big(\lambda \prod_c m_c(\gamma_c) + (1-\lambda)\prod_c u_c(\gamma_c)\Big)
+\]</div>
+<p>with the session's own <span class="arithmatex">\(\lambda\)</span> and <span class="arithmatex">\(m\)</span>.
+The deviance</p>
+<div class="arithmatex">\[
+G^2 = 2\sum_\gamma O[\gamma]\,\ln\frac{O[\gamma]}{E[\gamma]}
+\]</div>
+<p>is the likelihood-ratio statistic of the saturated model against the fitted one, and divided by <span class="arithmatex">\(2N\ln 2\)</span> it is the Kullback-Leibler divergence of the observed table from the fitted one <strong>in bits per pair</strong>: the average number of bits the model is wrong by on one of the session's pairs.
+The same deviance over one pair of comparisons, with <span class="arithmatex">\(O\)</span> and <span class="arithmatex">\(E\)</span> summed to their two-way table, is the bivariate residual of the latent class literature, and it names the pair the independence fails on.</p>
+<p>Three things about reading it.</p>
 <ul>
-<li><strong>Enumeration costs about 8 ns a pair.</strong> The <code>dob</code> session walked 9.61 billion candidate
-  pairs in 75.3 s on a single thread, the sampling decision and 10M comparisons included, so
-  generating candidates is not what estimation spends its time on.</li>
-<li><strong>Bernoulli sampling is what makes a broad session affordable.</strong> <code>dob</code> compared 10M of its
-  9.61 billion pairs — 0.10% — and still produced 223 distinct patterns and a converged fit in
-  4 iterations. The remaining 9.6 billion comparisons would have bought nothing and cost
-  about four hours.</li>
+<li><strong>Bits, not <code>p</code>.</strong> <span class="arithmatex">\(G^2\)</span> grows with <span class="arithmatex">\(N\)</span> at a fixed misfit, so every pair on a run of millions of pairs reads <span class="arithmatex">\(p = 0\)</span> and none on a run of thousands does; the same lesson <a href="../commands/levels/"><code>levels</code></a>, <a href="../commands/simplify/"><code>simplify</code></a> and the interaction fit each learnt.
+  The p-value is printed as the diagnostic it is.</li>
+<li><strong>The sampling floor.</strong> A model that was exactly right would still show a deviance, because <span class="arithmatex">\(N\)</span> pairs over <span class="arithmatex">\(K\)</span> patterns are a sample: about <span class="arithmatex">\((K-1)/(2N\ln 2)\)</span> bits, the chi-square expectation on the same scale.
+  On <code>febrl3</code>'s 5,601-pair session that floor is 0.125 bits of the 0.533 read; on <code>historical_50k</code>'s 1.5M-pair session it is 0.0015 of 0.402.
+  Misfit is what sits above it.</li>
+<li><strong>A residual is not a correction.</strong> It measures the marginal fit over both classes, and a dependence that is the same among matches and non-matches shows here and costs the weight nothing.
+  The interaction table's <code>per match</code> is what it costs; the residual is where to look.</li>
+</ul>
+<p><code>with terms</code> and <code>after</code> repeat the numbers with the admitted interactions in the model.
+A term is applied to a session by refitting its joint to that session's own margins by IPF, so it asserts its odds ratios and nothing else.
+A pair the terms do not touch keeps its residual exactly; a pair sharing one comparison with a term moves only through the normalisation two terms on one comparison need, which is small.
+So the pair a term names is fitted by construction, and what the whole-table deviance keeps is what the terms did not reach.</p>
+<h2 id="the-capture-table">The capture table<a class="headerlink" href="#the-capture-table" title="Permanent link">&para;</a></h2>
+<p><a href="../commands/completeness/"><code>completeness</code></a> meets the same assumption from the other side: it needs <span class="arithmatex">\(m(\gamma)\)</span> for the patterns no blocking source produced, and the product of the learned parameters reads 95.3% pair completeness on <code>historical_50k</code> where the truth is 85.0%.
+Its <code>Dependence</code> table is <span class="arithmatex">\(G^2\)</span> between pairs of blocked comparisons among matches over the cells the capture table observed, and BIC chooses between the independence fit and the one with all two-way interactions.
+It is the M-side overlap one level up, over levels rather than exact agreement, and confined to the comparisons blocking reaches.</p>
+<h2 id="which-number-answers-which-question">Which number answers which question<a class="headerlink" href="#which-number-answers-which-question" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Read</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Before any model: are two columns the same evidence twice?</td>
+<td><code>profile</code>: <code>Substr</code>, <code>L-&gt;R</code>, then <code>Redund</code> and <code>Net</code></td>
+</tr>
+<tr>
+<td>Which session is safe to read a comparison from?</td>
+<td><code>estimate</code>: <code>held out</code>, <code>also tied</code></td>
+</tr>
+<tr>
+<td>Does the independent mixture describe the pairs at all?</td>
+<td><code>estimate</code>: <code>fit</code>, above its sampling floor</td>
+</tr>
+<tr>
+<td>On which pair does it fail?</td>
+<td><code>estimate</code>: <code>worst pair</code>, and <code>--report &lt;file&gt;</code> for every pair, worst first</td>
+</tr>
+<tr>
+<td>What does that failure cost a match?</td>
+<td><code>estimate --interactions</code>: <code>per match</code></td>
+</tr>
+<tr>
+<td>Were the terms enough?</td>
+<td><code>estimate --interactions</code>: <code>with terms</code> against <code>fit</code></td>
+</tr>
+<tr>
+<td>Was the anchor reading of the overlap right?</td>
+<td><code>profile --truth</code>: <code>True redu</code>, <code>Err</code></td>
+</tr>
+<tr>
+<td>Are the blocked comparisons dependent among the matches blocking missed?</td>
+<td><code>completeness</code>: <code>Dependence</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-to-do-about-it">What to do about it<a class="headerlink" href="#what-to-do-about-it" title="Permanent link">&para;</a></h2>
+<p>Cheapest first, and the suspects table in <code>profile</code> prints the one that applies under each finding.</p>
+<ol>
+<li><strong>Drop a column that another determines.</strong> It carries nothing the other does not, and the double count goes with it.</li>
+<li><strong>Make a column and the column it contains one comparison.</strong> Levels are ordered and the first hit wins, so one comparison over both counts the evidence once; <code>first_and_surname</code> with <code>first_name</code> is the shape.
+   Declaring the derivation (<code>derive</code>, <code>derived_from</code>) tells both hold-outs the same thing.</li>
+<li><strong>Fit the correction.</strong> <code>estimate --interactions</code> for an association that is statistical rather than structural, priced level by level and guarded as <a href="../commands/estimate/#two-traps-one-of-them-the-standing-limit">described there</a>.</li>
+</ol>
+<p>What is measured and not yet repaired: correlated <strong>missingness</strong>.
+The largest residuals on <code>historical_50k</code> are not the name columns but the null levels of <code>postcode_fake</code>, <code>occupation</code> and <code>gender</code>, because a record missing one is 1.3 to 1.6 times as likely to be missing another and the mixture multiplies two independent null rates.
+A two-way term can carry it, but the interaction fit ranks on what a term moves a <em>match</em> by and those pairs move a match by under a tenth of a bit, so they are not admitted.
+That is the residual doing its job: it names a misfit the correction has no reason to price.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../model/">The model</a>: the weight the assumption is made for</li>
+<li><a href="../commands/profile/"><code>profile</code></a>: the row-level measures and the anchor pairs</li>
+<li><a href="../commands/estimate/"><code>estimate</code></a>: the hold-outs, the corrections and the fit</li>
+<li><a href="../commands/completeness/"><code>completeness</code></a>: the same assumption on the blocking side</li>
 </ul>
 
 

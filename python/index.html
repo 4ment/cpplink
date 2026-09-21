@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://4ment.github.io/cpplink/getting-started/">
+        <link rel="canonical" href="https://4ment.github.io/cpplink/python/">
       
       
-        <link rel="prev" href="..">
+        <link rel="prev" href="../getting-started/">
       
       
-        <link rel="next" href="../python/">
+        <link rel="next" href="../model/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Getting started - cpplink</title>
+        <title>From Python - cpplink</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#getting-started" class="md-skip">
+        <a href="#from-python" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Getting started
+              From Python
             
           </span>
         </div>
@@ -284,6 +284,33 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -303,7 +330,7 @@
   <span class="md-ellipsis">
     
   
-    Getting started
+    From Python
   
 
     
@@ -321,7 +348,7 @@
   <span class="md-ellipsis">
     
   
-    Getting started
+    From Python
   
 
     
@@ -347,10 +374,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
+        Install
       
     </span>
   </a>
@@ -358,10 +385,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#build" class="md-nav__link">
+  <a href="#the-command-line-in-process" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Build
+        The command line, in process
       
     </span>
   </a>
@@ -369,15 +396,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-whole-pipeline-in-seven-commands" class="md-nav__link">
+  <a href="#the-pipeline-as-a-linker" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The whole pipeline in seven commands
+        The pipeline as a Linker
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The whole pipeline in seven commands">
+    <nav class="md-nav" aria-label="The pipeline as a Linker">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -392,10 +419,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-look-at-what-loaded" class="md-nav__link">
+  <a href="#2-draft-a-schema-and-load" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Look at what loaded
+        2. Draft a schema and load
       
     </span>
   </a>
@@ -403,10 +430,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-price-the-blocking-before-you-pay-for-it" class="md-nav__link">
+  <a href="#3-price-the-blocking" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Price the blocking before you pay for it
+        3. Price the blocking
       
     </span>
   </a>
@@ -414,10 +441,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-measure-what-blocking-misses" class="md-nav__link">
+  <a href="#4-measure-blocking-recall" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Measure what blocking misses
+        4. Measure blocking recall
       
     </span>
   </a>
@@ -457,16 +484,27 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#and-then" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        And then
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#where-the-time-goes" class="md-nav__link">
+  <a href="#reports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Where the time goes
+        Reports
       
     </span>
   </a>
@@ -474,10 +512,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#next" class="md-nav__link">
+  <a href="#what-it-costs-and-what-it-does-not" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Next
+        What it costs, and what it does not
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-in-this-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not in this version
       
     </span>
   </a>
@@ -488,33 +537,6 @@
   
 </nav>
       
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../python/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    From Python
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -1395,10 +1417,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
+        Install
       
     </span>
   </a>
@@ -1406,10 +1428,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#build" class="md-nav__link">
+  <a href="#the-command-line-in-process" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Build
+        The command line, in process
       
     </span>
   </a>
@@ -1417,15 +1439,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-whole-pipeline-in-seven-commands" class="md-nav__link">
+  <a href="#the-pipeline-as-a-linker" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The whole pipeline in seven commands
+        The pipeline as a Linker
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The whole pipeline in seven commands">
+    <nav class="md-nav" aria-label="The pipeline as a Linker">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1440,10 +1462,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-look-at-what-loaded" class="md-nav__link">
+  <a href="#2-draft-a-schema-and-load" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Look at what loaded
+        2. Draft a schema and load
       
     </span>
   </a>
@@ -1451,10 +1473,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-price-the-blocking-before-you-pay-for-it" class="md-nav__link">
+  <a href="#3-price-the-blocking" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Price the blocking before you pay for it
+        3. Price the blocking
       
     </span>
   </a>
@@ -1462,10 +1484,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-measure-what-blocking-misses" class="md-nav__link">
+  <a href="#4-measure-blocking-recall" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Measure what blocking misses
+        4. Measure blocking recall
       
     </span>
   </a>
@@ -1505,16 +1527,27 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#and-then" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        And then
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#where-the-time-goes" class="md-nav__link">
+  <a href="#reports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Where the time goes
+        Reports
       
     </span>
   </a>
@@ -1522,10 +1555,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#next" class="md-nav__link">
+  <a href="#what-it-costs-and-what-it-does-not" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Next
+        What it costs, and what it does not
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-in-this-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not in this version
       
     </span>
   </a>
@@ -1552,164 +1596,127 @@
   
 
 
-<h1 id="getting-started">Getting started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h1>
-<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<p>cpplink needs CMake, a C++17 compiler, Arrow C++ (<code>libarrow</code> / <code>libparquet</code>),
-<code>nlohmann_json</code>, and GoogleTest for the test suite. All of them except the compiler are
-declared in <a href="https://github.com/4ment/cpplink/blob/main/environment.yml"><code>environment.yml</code></a>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>conda<span class="w"> </span>env<span class="w"> </span>create<span class="w"> </span>-f<span class="w"> </span>environment.yml
+<h1 id="from-python">From Python<a class="headerlink" href="#from-python" title="Permanent link">&para;</a></h1>
+<p>The <code>cpplink</code> Python package is the same binary, loaded into the interpreter.
+It does two things.
+<code>cpplink.run(args)</code> forwards an argument list to the command line dispatcher, so every example in these pages runs unchanged as <code>python -m cpplink ...</code>.
+And <code>cpplink.Linker</code> loads the parquet input once and runs each stage against the same store, returning the reports as objects rather than text.</p>
+<p>One rule scopes the package: no number is computed in Python.
+The binding calls the functions the command line calls, through the same pipeline glue, so a model estimated from Python with a seed is byte for byte the model <code>cpplink estimate --seed</code> writes.
+That is a test, <code>python/tests/test_parity.py</code>.</p>
+<p>A worked example over a real dataset, with plots and tables at every stage, is the notebook <code>python/examples/historical_50k.ipynb</code>.</p>
+<h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
+<p>The extension links the Arrow C++ the environment holds, which is also the Arrow that <code>pyarrow</code> loads in the same process, so the two must be the same build.
+Inside the project's conda environment they are, and that is where the package is meant to be built and used:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>conda<span class="w"> </span>env<span class="w"> </span>update<span class="w"> </span>-f<span class="w"> </span>environment.yml
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>conda<span class="w"> </span>activate<span class="w"> </span>cpplink
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w"> </span>--no-build-isolation<span class="w"> </span>-Ccmake.define.CMAKE_PREFIX_PATH<span class="o">=</span><span class="nv">$CONDA_PREFIX</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import cpplink; print(cpplink.__version__)"</span>
 </code></pre></div>
-<p>The environment deliberately ships no compiler — builds use the system <code>clang++</code>.</p>
-<h2 id="build">Build<a class="headerlink" href="#build" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>cmake<span class="w"> </span>--build<span class="w"> </span>build
+<p>The build goes through <a href="https://scikit-build-core.readthedocs.io/">scikit-build-core</a> and lands in <code>build/python/</code>, beside the command line's <code>build/</code>.
+The editable install redirects the Python sources to <code>python/cpplink/</code>, so a change there needs no rebuild; a change to the bindings or the core does, with the same <code>pip install</code> line.</p>
+<div class="admonition note">
+<p class="admonition-title">No wheels</p>
+<p>A distributable wheel would have to bundle an Arrow matching the ABI of whatever <code>pyarrow</code> the user has, which is not a problem this package solves.
+It builds for the environment it is built in.</p>
+</div>
+<h2 id="the-command-line-in-process">The command line, in process<a class="headerlink" href="#the-command-line-in-process" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cpplink</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">cpplink</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">"estimate"</span><span class="p">,</span> <span class="s2">"--schema"</span><span class="p">,</span> <span class="s2">"schema.json"</span><span class="p">,</span> <span class="s2">"--out"</span><span class="p">,</span> <span class="s2">"model.json"</span><span class="p">,</span> <span class="s2">"sample.parquet"</span><span class="p">])</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">result</span><span class="o">.</span><span class="n">code</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">stderr</span>
 </code></pre></div>
-<p>With the test suite:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_TESTING<span class="o">=</span>on<span class="w"> </span>-DCMAKE_PREFIX_PATH<span class="o">=</span><span class="nv">$CONDA_PREFIX</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>cmake<span class="w"> </span>--build<span class="w"> </span>build
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>ctest<span class="w"> </span>--test-dir<span class="w"> </span>build
-</code></pre></div>
-<p><code>-DCMAKE_PREFIX_PATH=$CONDA_PREFIX</code> is what makes <code>find_package(GTest)</code> succeed; without it
-the test configure step fails even inside the activated environment.</p>
-<p>The presets in <code>CMakePresets.json</code> hold the same configuration, plus two instrumented ones: <code>asan</code> builds with AddressSanitizer and UndefinedBehaviorSanitizer, <code>tsan</code> with ThreadSanitizer, each into its own <code>build-&lt;preset&gt;/</code>.
-The threaded stages (the histogram fold, <code>predict</code>, <code>rescore</code> and the neighbourhood self-join) share the record store <code>const</code> across threads with no lock, and the <code>tsan</code> preset is what checks that claim rather than asserting it.
-Arrow and Parquet are not instrumented, so <code>tests/sanitizer_suppressions.cpp</code> compiles a <code>called_from_lib</code> suppression for the two libraries into the test binary: their own IO threads would otherwise report a race the sanitizer cannot see the ordering of, while every access cpplink makes stays checked.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cmake<span class="w"> </span>--preset<span class="w"> </span>asan
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>cmake<span class="w"> </span>--build<span class="w"> </span>--preset<span class="w"> </span>asan
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>ctest<span class="w"> </span>--preset<span class="w"> </span>asan
-</code></pre></div>
-<p><code>release</code> and <code>debug</code> are the plain builds with tests on, and <code>ctest --preset &lt;name&gt;</code> runs the suite with output on failure.
-The GitHub Actions workflow runs <code>release</code>, <code>asan</code> and <code>tsan</code> on Linux and macOS, then the Python suite and the format and lint checks.</p>
-<h2 id="the-whole-pipeline-in-seven-commands">The whole pipeline in seven commands<a class="headerlink" href="#the-whole-pipeline-in-seven-commands" title="Permanent link">&para;</a></h2>
-<p>Everything below runs against the synthetic sample cpplink can write for itself. The numbers
-shown are from a real run on 1.8M rows with eight threads.</p>
+<p><code>run</code> takes the arguments the binary would, without the program name, and returns the exit code and both output streams.
+<code>python -m cpplink &lt;command&gt; [options]</code> forwards <code>sys.argv</code> to it and exits with the code.</p>
+<h2 id="the-pipeline-as-a-linker">The pipeline as a <code>Linker</code><a class="headerlink" href="#the-pipeline-as-a-linker" title="Permanent link">&para;</a></h2>
+<p>The seven commands of <a href="../getting-started/">Getting started</a>, from Python.
+Every method mirrors one command, with the command's flags as keyword arguments, and every report prints the table the command prints.</p>
 <h3 id="1-make-some-data">1. Make some data<a class="headerlink" href="#1-make-some-data" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>./build/cpplink<span class="w"> </span>gen-sample<span class="w"> </span>--out<span class="w"> </span>examples/sample.parquet<span class="w"> </span>--rows<span class="w"> </span><span class="m">1800000</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">                           </span>--truth<span class="w"> </span>examples/sample.truth.csv
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">cpplink</span><span class="o">.</span><span class="n">gen_sample</span><span class="p">(</span><span class="s2">"sample.parquet"</span><span class="p">,</span> <span class="n">rows</span><span class="o">=</span><span class="mi">200000</span><span class="p">,</span> <span class="n">truth</span><span class="o">=</span><span class="s2">"sample.truth.csv"</span><span class="p">)</span>
 </code></pre></div>
-<p>8% of the rows are corrupted copies of earlier rows, and <code>--truth</code> records which. That
-sidecar is the ground truth <a href="../commands/recall/"><code>recall</code></a> and <a href="../commands/cluster/"><code>cluster</code></a>
-score against.</p>
-<h3 id="2-look-at-what-loaded">2. Look at what loaded<a class="headerlink" href="#2-look-at-what-loaded" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>./build/cpplink<span class="w"> </span>inspect<span class="w"> </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span>examples/sample.parquet
+<h3 id="2-draft-a-schema-and-load">2. Draft a schema and load<a class="headerlink" href="#2-draft-a-schema-and-load" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">schema</span><span class="p">,</span> <span class="n">draft</span> <span class="o">=</span> <span class="n">cpplink</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="s2">"sample.parquet"</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="s2">"schema.json"</span><span class="p">)</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">draft</span><span class="p">)</span>                         <span class="c1"># what was guessed, column by column</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">linker</span> <span class="o">=</span> <span class="n">cpplink</span><span class="o">.</span><span class="n">Linker</span><span class="p">(</span><span class="n">schema</span><span class="p">,</span> <span class="s2">"sample.parquet"</span><span class="p">)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">linker</span><span class="o">.</span><span class="n">inspect</span><span class="p">())</span>              <span class="c1"># cardinality and memory per column</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Records      1,800,000
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>Row groups   9
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>Load time    2.6 s  (691,485 rows/s)
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>Column            Type                Distinct      Null   Top val Mean len        Rare pairs
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>---------------------------------------------------------------------------------------------
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>first_name        string                23,108     0.00%     2.27%        -            52,587
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>last_name         string               173,313     0.00%     0.20%        -        16,659,085
-<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>dob               date                  20,821     0.00%     0.01%        -        68,281,433
-<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>...
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>Resident total                        332.8 MB   193 bytes per record
+<p><code>Linker</code> takes a <code>Schema</code> or the path of one, and one parquet file or several.
+Several files are several datasets and default to linking; <code>mode="dedup"</code> or <code>"link-and-dedup"</code> scores the within-file pairs too, exactly as <code>--mode</code> does.
+<code>all_pairs=True</code> is <code>--all-pairs</code>.</p>
+<p>A <code>Schema</code> is edited by dict round trip, which is what <code>init</code> itself does:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">d</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">d</span><span class="p">[</span><span class="s2">"blocking"</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"exact_value"</span><span class="p">,</span> <span class="s2">"column"</span><span class="p">:</span> <span class="s2">"postcode"</span><span class="p">})</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">schema</span> <span class="o">=</span> <span class="n">cpplink</span><span class="o">.</span><span class="n">Schema</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
 </code></pre></div>
-<p>See <a href="../commands/inspect/"><code>inspect</code></a>.</p>
-<h3 id="3-price-the-blocking-before-you-pay-for-it">3. Price the blocking before you pay for it<a class="headerlink" href="#3-price-the-blocking-before-you-pay-for-it" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>./build/cpplink<span class="w"> </span>explain-blocking<span class="w"> </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span>--count<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">                                 </span>examples/sample.parquet
+<h3 id="3-price-the-blocking">3. Price the blocking<a class="headerlink" href="#3-price-the-blocking" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">report</span> <span class="o">=</span> <span class="n">linker</span><span class="o">.</span><span class="n">explain_blocking</span><span class="p">(</span><span class="n">count</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">for</span> <span class="n">source</span> <span class="ow">in</span> <span class="n">report</span><span class="o">.</span><span class="n">sources</span><span class="p">:</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">source</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">source</span><span class="o">.</span><span class="n">pairs</span><span class="p">,</span> <span class="n">source</span><span class="o">.</span><span class="n">largest_group</span><span class="p">)</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Pairs unblocked  1,619,999,100,000
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>...
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>Sum over sources                                  130,859,994
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>Union, deduplicated                               116,939,057
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>Blocking keeps 8.08e-05 of all possible pairs.
+<h3 id="4-measure-blocking-recall">4. Measure blocking recall<a class="headerlink" href="#4-measure-blocking-recall" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">recall</span> <span class="o">=</span> <span class="n">linker</span><span class="o">.</span><span class="n">recall</span><span class="p">(</span><span class="s2">"sample.truth.csv"</span><span class="p">,</span> <span class="n">why</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">recall</span><span class="o">.</span><span class="n">metrics</span><span class="o">.</span><span class="n">pair_completeness</span>      <span class="c1"># the fraction of known pairs the union reaches</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">recall</span><span class="o">.</span><span class="n">misses</span>                         <span class="c1"># the MissReport, or None without why=True</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">recall</span><span class="p">)</span>
 </code></pre></div>
-<p>The counts are exact and come from the term-frequency tables — not one pair is enumerated.
-See <a href="../commands/explain-blocking/"><code>explain-blocking</code></a>.</p>
-<h3 id="4-measure-what-blocking-misses">4. Measure what blocking misses<a class="headerlink" href="#4-measure-what-blocking-misses" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>./build/cpplink<span class="w"> </span>recall<span class="w"> </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">                       </span>--truth<span class="w"> </span>examples/sample.truth.csv<span class="w"> </span>examples/sample.parquet
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Union                          142,657  99.25%     130,859,994    0.109%
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>1071 known pairs are reachable by no source.
-</code></pre></div>
-<p>This is the ceiling on everything downstream: a pair that is never a candidate cannot be
-scored. See <a href="../commands/recall/"><code>recall</code></a>.</p>
 <h3 id="5-learn-the-model">5. Learn the model<a class="headerlink" href="#5-learn-the-model" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>./build/cpplink<span class="w"> </span>estimate<span class="w"> </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">                         </span>--out<span class="w"> </span>model.json<span class="w"> </span>examples/sample.parquet
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">model</span><span class="p">,</span> <span class="n">report</span> <span class="o">=</span> <span class="n">linker</span><span class="o">.</span><span class="n">estimate</span><span class="p">(</span><span class="n">out</span><span class="o">=</span><span class="s2">"model.json"</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">7</span><span class="p">)</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>                          <span class="c1"># m, u and the weight in bits per level</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">model</span><span class="o">.</span><span class="n">lambda_</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">prior_weight</span><span class="p">()</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="p">[(</span><span class="n">c</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="p">[(</span><span class="n">l</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">l</span><span class="o">.</span><span class="n">m</span><span class="p">,</span> <span class="n">l</span><span class="o">.</span><span class="n">u</span><span class="p">)</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">c</span><span class="o">.</span><span class="n">levels</span><span class="p">])</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">comparisons</span><span class="p">]</span>
 </code></pre></div>
-<p>Four EM sessions, 242–553 distinct patterns each, 2–10 iterations, about 7 s of work. The
-printed table is the whole model: <code>m</code>, <code>u</code> and the weight in bits for every level. See
-<a href="../commands/estimate/"><code>estimate</code></a> and <a href="../em/">Estimation and EM</a>.</p>
+<p><code>estimate</code> takes every flag of the command by name: <code>u_sample</code>, <code>session_pairs</code>, <code>threads</code>, <code>iterations</code>, <code>lambda_</code>, <code>seed</code>, <code>fuzzy_u</code>, <code>ball_budget</code>, <code>tie_holdout</code>, <code>tied_bits</code>, <code>interactions</code>, <code>max_interactions</code>, <code>interaction_bits</code>, and so on.
+An <code>EstimateOptions</code> can be built and passed as <code>options=</code> instead.</p>
 <h3 id="6-score-the-candidates">6. Score the candidates<a class="headerlink" href="#6-score-the-candidates" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>./build/cpplink<span class="w"> </span>predict<span class="w"> </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span>--model<span class="w"> </span>model.json<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">                        </span>--out<span class="w"> </span>predictions/<span class="w"> </span>--threshold<span class="w"> </span><span class="m">20</span><span class="w"> </span>examples/sample.parquet
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">predict</span> <span class="o">=</span> <span class="n">linker</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="s2">"predictions.parquet"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">predict</span><span class="o">.</span><span class="n">predictions</span><span class="p">,</span> <span class="n">predict</span><span class="o">.</span><span class="n">enumerated</span><span class="p">,</span> <span class="n">predict</span><span class="o">.</span><span class="n">skipped</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>Candidates     116,939,057
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>Predictions    169,026  (0.14% of candidates)
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>Elapsed        5.6 s  (20920301 candidates/s)
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>Zone           Candidate pairs       Share        Patterns
-<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>----------------------------------------------------------
-<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>skipped            116,762,308      99.85%               -
-<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>drop                     7,723       0.01%          90,019
-<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>check                        0       0.00%          10,701
-<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>emit                   169,026       0.14%          19,280
-<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>----------------------------------------------------------
+<p><code>out</code> is a shard directory, or a single <code>.csv</code> or <code>.parquet</code> file the shards are merged into, and the extension decides.
+Give <code>threshold</code> in bits or <code>probability</code> as a posterior.
+The <code>--no-*</code> switches are the positive keywords <code>bounds</code>, <code>ceiling</code>, <code>signatures</code>, <code>ladders</code> and <code>interactions</code>; <code>fuzzy_tf</code>, <code>spill</code>, <code>spill_sample</code>, <code>threads</code>, <code>limit</code> and <code>tf_damping</code> are what they are on the command line.
+<code>verbose=True</code> prints the plan and writes the progress line to the process's standard error, which a terminal shows and a notebook does not capture.</p>
+<p>The predictions are read back through pyarrow, since that file is the pipeline's door out:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pyarrow.parquet</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pq</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">table</span> <span class="o">=</span> <span class="n">pq</span><span class="o">.</span><span class="n">read_table</span><span class="p">(</span><span class="s2">"predictions.parquet"</span><span class="p">)</span>
 </code></pre></div>
-<p>One shard file per thread, nothing held in memory. Name a <code>.parquet</code> or <code>.csv</code> file in <code>--out</code>
-instead of a directory and the run ends with a single file, merged from those shards; <code>cluster</code>
-takes either. <strong>99.85% of candidates never had a string metric run on them</strong>: the pair-global ceiling grants every comparison the best level its cheap
-bounds still admit and drops the pair if even that sum cannot clear the threshold. See
-<a href="../commands/predict/"><code>predict</code></a>.</p>
 <h3 id="7-join-the-predictions-into-clusters">7. Join the predictions into clusters<a class="headerlink" href="#7-join-the-predictions-into-clusters" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>./build/cpplink<span class="w"> </span>cluster<span class="w"> </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span>--predictions<span class="w"> </span>predictions/<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">                        </span>--out<span class="w"> </span>clusters.csv<span class="w"> </span>--truth<span class="w"> </span>examples/sample.truth.csv<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">                        </span>examples/sample.parquet
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">linker</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="s2">"predictions.parquet"</span><span class="p">,</span> <span class="n">truth</span><span class="o">=</span><span class="s2">"sample.truth.csv"</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="s2">"clusters.csv"</span><span class="p">)</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">result</span><span class="o">.</span><span class="n">quality</span><span class="o">.</span><span class="n">f1</span>                     <span class="c1"># None without a truth file</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">result</span><span class="o">.</span><span class="n">assignment</span><span class="o">.</span><span class="n">root</span>                <span class="c1"># numpy uint32, the representative row per row</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">result</span><span class="o">.</span><span class="n">assignment</span><span class="o">.</span><span class="n">size</span>                <span class="c1"># by representative row; 0 for a non-root</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>122,171 clusters of two or more, covering 265,233 records (14.74%)
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>  precision  1.0000
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>  recall     0.9949
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>  f1          0.9974
+<p>The numpy arrays view the C++ vectors and keep the assignment alive for as long as they do.
+A <code>Linker</code> holds every column, so its <code>cluster</code> costs no second load but more memory than the command, which loads the id column alone; <code>cpplink.cluster_file(schema_path, files, predictions)</code> is that lighter path.</p>
+<h3 id="and-then">And then<a class="headerlink" href="#and-then" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">linker</span><span class="o">.</span><span class="n">explain</span><span class="p">(</span><span class="n">id_a</span><span class="p">,</span> <span class="n">id_b</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>      <span class="c1"># the levels a pair lands on, and its waterfall</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">linker</span><span class="o">.</span><span class="n">profile</span><span class="p">()</span>                             <span class="c1"># what the columns are worth, before any model</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">linker</span><span class="o">.</span><span class="n">levels</span><span class="p">()</span>                              <span class="c1"># (LevelsReport, Schema with the proposal)</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">linker</span><span class="o">.</span><span class="n">simplify</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">min_gap</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>          <span class="c1"># (SimplifyReport, Schema or None)</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">linker</span><span class="o">.</span><span class="n">completeness</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>                   <span class="c1"># blocking recall with no truth file</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="n">linker</span><span class="o">.</span><span class="n">rescore</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="s2">"spill/"</span><span class="p">,</span> <span class="s2">"again.parquet"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mi">25</span><span class="p">)</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="n">cpplink</span><span class="o">.</span><span class="n">merge_predictions</span><span class="p">(</span><span class="s2">"shards/"</span><span class="p">,</span> <span class="s2">"merged.csv"</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="s2">"schema.json"</span><span class="p">,</span> <span class="n">files</span><span class="o">=</span><span class="p">[</span><span class="s2">"sample.parquet"</span><span class="p">])</span>
 </code></pre></div>
-<p>Edges carry their weight, so re-clustering at a higher <code>--threshold</code> is a re-read and no
-re-scoring. See <a href="../commands/cluster/"><code>cluster</code></a>.</p>
-<h2 id="where-the-time-goes">Where the time goes<a class="headerlink" href="#where-the-time-goes" title="Permanent link">&para;</a></h2>
-<p>On this run, at 1.8M rows:</p>
-<table>
-<thead>
-<tr>
-<th>Stage</th>
-<th style="text-align: right;">Wall</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Load and intern (single-threaded)</td>
-<td style="text-align: right;">2.6 s</td>
-</tr>
-<tr>
-<td><code>explain-blocking</code>, exact costing</td>
-<td style="text-align: right;">&lt; 1 s</td>
-</tr>
-<tr>
-<td><code>estimate</code>, four sessions plus <code>u</code></td>
-<td style="text-align: right;">~7 s</td>
-</tr>
-<tr>
-<td><code>predict</code>, 117M candidates on 8 threads</td>
-<td style="text-align: right;">5.6 s</td>
-</tr>
-<tr>
-<td><code>cluster</code>, 169k predictions past a union–find</td>
-<td style="text-align: right;">0.02 s</td>
-</tr>
-</tbody>
-</table>
-<p>Comparison throughput in <code>predict</code> is still the binding constraint of the whole pipeline, and
-blocking is about 240× cheaper than the comparison it feeds. Making blocking faster would
-be effort wasted; see <a href="../blocking/#enumeration-is-not-the-bottleneck">Blocking</a>.</p>
-<p>The <code>predict</code> figure is what it is because the ceiling refuses 99.85% of candidates before any
-string metric runs. Its saving is a function of the threshold, so a run at 0 bits pays much
-closer to full price.</p>
-<h2 id="next">Next<a class="headerlink" href="#next" title="Permanent link">&para;</a></h2>
-<p>Read <a href="../reference/schema/">Configuration</a> to point cpplink at your own data — the schema
-file is where columns, comparison levels and blocking sources are all declared.</p>
+<p><code>explain</code> resolves ids the way the command does, including <code>dataset:id</code> where the inputs share ids; <code>by_row=True</code> takes row indices.
+Its <code>weight</code> is the scorer's own, and the parity test asserts it equals the weight in the predictions file.</p>
+<h2 id="reports">Reports<a class="headerlink" href="#reports" title="Permanent link">&para;</a></h2>
+<p>Every report is a bound C++ struct with a read-only attribute per field.
+<code>repr(report)</code> and <code>report.text</code> are the table the command prints, produced by the same printer, so the two cannot disagree.
+Where a command has <code>--json</code>, the report has <code>json()</code>.
+Where <code>estimate</code> has <code>--report &lt;file&gt;</code>, <code>EstimateReport</code> has <code>full_text</code>: <code>text</code> names each session's worst residual pair, <code>full_text</code> lists every pair of every session and is what to write to a file.
+<code>cpplink.to_dict(report)</code> walks the attributes and returns plain Python, recursing into lists and nested reports.</p>
+<p>Reports whose printer needs more than the report itself, such as <code>predict</code>'s, which prices its zones against the scorer, carry their text from the moment they were made.
+That text is the run's, not a recomputation.</p>
+<h2 id="what-it-costs-and-what-it-does-not">What it costs, and what it does not<a class="headerlink" href="#what-it-costs-and-what-it-does-not" title="Permanent link">&para;</a></h2>
+<p>The <code>Linker</code> releases the GIL for every stage that does work: the load, <code>estimate</code>, <code>predict</code>, <code>cluster</code>, <code>rescore</code>, <code>profile</code>, <code>levels</code>, <code>simplify</code>, <code>recall</code> and <code>completeness</code>.
+None of them calls back into Python, so another thread can run while they do.</p>
+<p>Errors the core reports as <code>false</code> and a message become <code>cpplink.Error</code>, a <code>RuntimeError</code> carrying the core's own text.</p>
+<h2 id="not-in-this-version">Not in this version<a class="headerlink" href="#not-in-this-version" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>In-memory input.</strong> The <code>Linker</code> reads parquet files, as the command does. A pyarrow, polars or pandas table through <code>__arrow_c_stream__</code> is the next step, and needs the loader split so a table can be appended without a file.</li>
+<li><strong>In-memory predictions.</strong> <code>predict</code> writes a file and the caller reads it back; a per-thread sink handing a <code>pyarrow.Table</code> straight out is the same step.</li>
+<li><strong>A progress callback.</strong> <code>verbose=True</code> writes lines to the C-level standard error.</li>
+</ul>
 
 
 

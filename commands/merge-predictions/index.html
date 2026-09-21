@@ -10,29 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://4ment.github.io/cpplink/">
+        <link rel="canonical" href="https://4ment.github.io/cpplink/commands/merge-predictions/">
       
       
+        <link rel="prev" href="../cluster/">
       
-        <link rel="next" href="getting-started/">
+      
+        <link rel="next" href="../gen-sample/">
       
       
         
       
       
-      <link rel="icon" href="assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
-        <title>cpplink</title>
+        <title>merge-predictions - cpplink</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,7 +53,7 @@
       
     
     
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#cpplink" class="md-skip">
+        <a href="#merge-predictions" class="md-skip">
           Skip to content
         </a>
       
@@ -92,7 +94,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="cpplink" class="md-header__button md-logo" aria-label="cpplink" data-md-component="logo">
+    <a href="../.." title="cpplink" class="md-header__button md-logo" aria-label="cpplink" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -112,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              merge-predictions
             
           </span>
         </div>
@@ -228,7 +230,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="cpplink" class="md-nav__button md-logo" aria-label="cpplink" data-md-component="logo">
+    <a href="../.." title="cpplink" class="md-nav__button md-logo" aria-label="cpplink" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -255,37 +257,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Home
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="." class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -301,70 +276,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#the-load-bearing-idea" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The load-bearing idea
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-pipeline" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The pipeline
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#where-to-go-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where to go next
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Status
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -376,7 +287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -403,7 +314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="python/" class="md-nav__link">
+      <a href="../../python/" class="md-nav__link">
         
   
   
@@ -482,7 +393,7 @@
   
   
     <li class="md-nav__item">
-      <a href="model/" class="md-nav__link">
+      <a href="../../model/" class="md-nav__link">
         
   
   
@@ -510,7 +421,7 @@
   
   
     <li class="md-nav__item">
-      <a href="comparisons/" class="md-nav__link">
+      <a href="../../comparisons/" class="md-nav__link">
         
   
   
@@ -538,7 +449,7 @@
   
   
     <li class="md-nav__item">
-      <a href="em/" class="md-nav__link">
+      <a href="../../em/" class="md-nav__link">
         
   
   
@@ -566,7 +477,7 @@
   
   
     <li class="md-nav__item">
-      <a href="dependence/" class="md-nav__link">
+      <a href="../../dependence/" class="md-nav__link">
         
   
   
@@ -594,7 +505,7 @@
   
   
     <li class="md-nav__item">
-      <a href="blocking/" class="md-nav__link">
+      <a href="../../blocking/" class="md-nav__link">
         
   
   
@@ -622,7 +533,7 @@
   
   
     <li class="md-nav__item">
-      <a href="prior-art/" class="md-nav__link">
+      <a href="../../prior-art/" class="md-nav__link">
         
   
   
@@ -650,7 +561,7 @@
   
   
     <li class="md-nav__item">
-      <a href="linking/" class="md-nav__link">
+      <a href="../../linking/" class="md-nav__link">
         
   
   
@@ -682,8 +593,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -694,11 +607,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
           <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
@@ -719,7 +632,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -737,7 +650,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -765,7 +678,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/inspect/" class="md-nav__link">
+      <a href="../inspect/" class="md-nav__link">
         
   
   
@@ -793,7 +706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/profile/" class="md-nav__link">
+      <a href="../profile/" class="md-nav__link">
         
   
   
@@ -821,7 +734,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/levels/" class="md-nav__link">
+      <a href="../levels/" class="md-nav__link">
         
   
   
@@ -849,7 +762,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/simplify/" class="md-nav__link">
+      <a href="../simplify/" class="md-nav__link">
         
   
   
@@ -877,7 +790,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/explain/" class="md-nav__link">
+      <a href="../explain/" class="md-nav__link">
         
   
   
@@ -905,7 +818,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/explain-blocking/" class="md-nav__link">
+      <a href="../explain-blocking/" class="md-nav__link">
         
   
   
@@ -933,7 +846,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/recall/" class="md-nav__link">
+      <a href="../recall/" class="md-nav__link">
         
   
   
@@ -961,7 +874,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/completeness/" class="md-nav__link">
+      <a href="../completeness/" class="md-nav__link">
         
   
   
@@ -989,7 +902,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/estimate/" class="md-nav__link">
+      <a href="../estimate/" class="md-nav__link">
         
   
   
@@ -1017,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/predict/" class="md-nav__link">
+      <a href="../predict/" class="md-nav__link">
         
   
   
@@ -1045,7 +958,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/rescore/" class="md-nav__link">
+      <a href="../rescore/" class="md-nav__link">
         
   
   
@@ -1073,7 +986,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/cluster/" class="md-nav__link">
+      <a href="../cluster/" class="md-nav__link">
         
   
   
@@ -1098,10 +1011,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="commands/merge-predictions/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    merge-predictions
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1117,6 +1057,103 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synopsis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-shards-get-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which shards get read
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ids-and-why-schema-is-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ids, and why --schema is optional
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#filtering-while-merging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filtering while merging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#csv-or-parquet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        csv or parquet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1129,7 +1166,7 @@
   
   
     <li class="md-nav__item">
-      <a href="commands/gen-sample/" class="md-nav__link">
+      <a href="../gen-sample/" class="md-nav__link">
         
   
   
@@ -1216,7 +1253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="reference/schema/" class="md-nav__link">
+      <a href="../../reference/schema/" class="md-nav__link">
         
   
   
@@ -1244,7 +1281,7 @@
   
   
     <li class="md-nav__item">
-      <a href="reference/output-formats/" class="md-nav__link">
+      <a href="../../reference/output-formats/" class="md-nav__link">
         
   
   
@@ -1299,10 +1336,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-load-bearing-idea" class="md-nav__link">
+  <a href="#synopsis" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The load-bearing idea
+        Synopsis
       
     </span>
   </a>
@@ -1310,10 +1347,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-pipeline" class="md-nav__link">
+  <a href="#example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The pipeline
+        Example
       
     </span>
   </a>
@@ -1321,10 +1358,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#where-to-go-next" class="md-nav__link">
+  <a href="#which-shards-get-read" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Where to go next
+        Which shards get read
       
     </span>
   </a>
@@ -1332,10 +1369,43 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#status" class="md-nav__link">
+  <a href="#ids-and-why-schema-is-optional" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Status
+        Ids, and why --schema is optional
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#filtering-while-merging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filtering while merging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#csv-or-parquet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        csv or parquet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost
       
     </span>
   </a>
@@ -1362,137 +1432,169 @@
   
 
 
-<h1 id="cpplink">cpplink<a class="headerlink" href="#cpplink" title="Permanent link">&para;</a></h1>
-<p><strong>cpplink</strong> is a C++17 command line tool for probabilistic record linkage. It implements the
-Fellegi–Sunter model — EM parameter estimation, term-frequency adjustment and prediction —
-as a <em>streaming</em> pipeline that never materializes a table of candidate pairs.</p>
-<p>It is heavily inspired by <a href="https://moj-analytical-services.github.io/splink/">splink</a> and
-reuses many of the ideas and design choices that make splink such a useful record linkage
-tool. The motivation was practical: to run probabilistic record linkage on data that does not
-fit comfortably in memory on a laptop. Splink relies on a SQL engine to build and process
-intermediate candidate-pair tables, and those grow with the data. Rather than materializing
-the pairs, cpplink generates candidates as a stream and reduces each one to its
-Fellegi–Sunter agreement pattern immediately, storing <em>records</em> and <em>counts</em> and nothing in
-between.</p>
-<h2 id="the-load-bearing-idea">The load-bearing idea<a class="headerlink" href="#the-load-bearing-idea" title="Permanent link">&para;</a></h2>
-<p>A pair enters the Fellegi–Sunter likelihood only through its <strong>agreement pattern</strong> γ — the
-vector of comparison-level indices. Two pairs with the same γ are indistinguishable to the
-model, so estimation does not need pairs; it needs <code>count[γ]</code>, a histogram over <em>distinct
-patterns</em>.</p>
-<p>On the 20M-record deduplication this project is built for:</p>
+<h1 id="merge-predictions"><code>merge-predictions</code><a class="headerlink" href="#merge-predictions" title="Permanent link">&para;</a></h1>
+<p><strong>Goal:</strong> turn the directory of per-thread prediction shards into one file another tool can
+open, as csv or as parquet.</p>
+<p><a href="../predict/"><code>predict</code></a> writes one shard per thread because nothing else keeps the threads
+from contending on a writer, and <a href="../cluster/"><code>cluster</code></a> reads that directory back without
+minding how many files are in it.
+Everything else does mind.
+A run told to <code>--out predictions.parquet</code> merges its own shards when it finishes, so this
+command is for the shard directories that already exist: an older run, a <code>--format csv</code> one, a
+directory you want as both formats.
+<code>merge-predictions</code> streams the shards past a single writer and keeps nothing: a prediction is
+read, filtered, written and forgotten, so the merge costs what the output costs and not what
+the run did.</p>
+<h2 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cpplink<span class="w"> </span>merge-predictions<span class="w"> </span>--shards<span class="w"> </span>&lt;dir&gt;<span class="w"> </span>--out<span class="w"> </span>&lt;file.csv<span class="p">|</span>file.parquet&gt;
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                          </span><span class="o">[</span>--format<span class="w"> </span>csv<span class="p">|</span>parquet<span class="o">]</span><span class="w"> </span><span class="o">[</span>--from<span class="w"> </span>bin<span class="p">|</span>csv<span class="o">]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                          </span><span class="o">[</span>--threshold<span class="w"> </span>BITS<span class="w"> </span><span class="p">|</span><span class="w"> </span>--probability<span class="w"> </span>P<span class="o">]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                          </span><span class="o">[</span>--schema<span class="w"> </span>&lt;schema.json&gt;<span class="o">]</span><span class="w"> </span><span class="o">[</span>&lt;file.parquet&gt;...<span class="o">]</span>
+</code></pre></div>
 <table>
 <thead>
 <tr>
-<th></th>
-<th style="text-align: right;">pair table</th>
-<th style="text-align: right;">pattern histogram</th>
+<th>Option</th>
+<th>Default</th>
+<th>Meaning</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Candidate pairs</td>
-<td style="text-align: right;">1.01×10¹⁰</td>
-<td style="text-align: right;">1.01×10¹⁰</td>
+<td><code>--shards &lt;dir&gt;</code></td>
+<td>—</td>
+<td>required; the directory of <code>shard-*</code> files from <a href="../predict/"><code>predict</code></a> or <a href="../rescore/"><code>rescore</code></a></td>
 </tr>
 <tr>
-<td>Stored rows</td>
-<td style="text-align: right;">1.01×10¹⁰</td>
-<td style="text-align: right;">~10⁵</td>
+<td><code>--out &lt;file&gt;</code></td>
+<td>—</td>
+<td>required; the single file to write</td>
 </tr>
 <tr>
-<td>Resident memory</td>
-<td style="text-align: right;">121 GB <em>(at 12 B a pair)</em></td>
-<td style="text-align: right;">4.49 GB <em>(measured)</em></td>
+<td><code>--format csv\|parquet</code></td>
+<td>from the extension</td>
+<td><code>.parquet</code> or <code>.pq</code> means parquet, anything else csv</td>
 </tr>
 <tr>
-<td>Cost of one EM re-fit</td>
-<td style="text-align: right;">re-read everything</td>
-<td style="text-align: right;">&lt; 0.1 s</td>
+<td><code>--from bin\|csv</code></td>
+<td>binary if there is any</td>
+<td>which shard format to read when the directory holds both</td>
+</tr>
+<tr>
+<td><code>--threshold BITS</code></td>
+<td>−∞</td>
+<td>keep only predictions at or above this weight</td>
+</tr>
+<tr>
+<td><code>--probability P</code></td>
+<td>—</td>
+<td>the same threshold as a posterior in (0, 1)</td>
+</tr>
+<tr>
+<td><code>--schema &lt;file&gt;</code></td>
+<td>none</td>
+<td>needed only to turn the row indices in binary shards into <code>unique_id</code>s. Only <code>unique_id</code> is used</td>
+</tr>
+<tr>
+<td><em>(positional)</em></td>
+<td>none</td>
+<td>the parquet file the shards were scored from, required with <code>--schema</code></td>
 </tr>
 </tbody>
 </table>
-<p>Pairs are produced by a lazy blocking iterator, folded into a per-thread histogram, and
-discarded. EM reads the histogram, so <strong>its cost is independent of the data size</strong>.</p>
-<p>On one thread that run takes <strong>38.1 minutes</strong>, and the two figures it belongs to (wall time
-against candidate pairs, peak memory against records) are in the
-<a href="https://github.com/4ment/cpplink#scaling">README</a>.</p>
-<p>Run against splink on the same data, the same schema and the same machine,
-<a href="https://github.com/4ment/cpplink/tree/main/bench/scale"><code>bench/scale</code></a> deduplicates 4M
-records over 1.44bn candidate pairs in <strong>89.2 s at 1.16 GB resident, with no scratch file</strong>.
-At 1M records, where both tools finish, cpplink is 4.4× faster end to end than splink's best
-configuration here and uses 8.9× less memory, for the same quality: F1 0.9974 against
-0.9961. Splink did not finish at 2M on that
-machine, and what it ran out of was scratch space rather than memory.</p>
-<h2 id="the-pipeline">The pipeline<a class="headerlink" href="#the-pipeline" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>0 Profile  what the columns can be worth, what a     cpplink profile
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>           match will score, and what is the same
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>           evidence twice; where the fuzzy           cpplink levels
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>           thresholds should sit; and which levels   cpplink simplify
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>           a run cannot tell apart
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>1 Load     parquet → interned columnar store         cpplink inspect
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>2 Block    lazy pair iterator, no table              cpplink explain-blocking / recall
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                                                     cpplink completeness
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>3 Compare  pair → packed γ                           cpplink explain
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>4 Estimate u in closed form, m and λ by EM           cpplink estimate
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>5 Score    TF-adjusted, bound-pruned                 cpplink predict
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>                                                     cpplink rescore
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>6 Cluster  union–find over the predictions            cpplink cluster
+<h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cpplink<span class="w"> </span>merge-predictions<span class="w"> </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span>--shards<span class="w"> </span>predictions/<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">                          </span>--out<span class="w"> </span>predictions.parquet<span class="w"> </span>examples/sample.parquet
 </code></pre></div>
-<p>Every data command takes one or more parquet files. One file deduplicates, two link, and
-<code>--mode</code> says which when it is not obvious. See <a href="linking/">Linking two files</a>.</p>
-<p>Four invariants hold the design together:</p>
-<ul>
-<li><strong>Nothing in the pipeline holds a row per pair.</strong> Anything that does defeats the point.</li>
-<li><strong>The record store is immutable after load</strong> and shared <code>const</code> across threads. Per-thread
-  histograms and output buffers merge at join; there is no locking in the hot path.</li>
-<li><strong>Values are interned to dense <code>uint32</code> ids per column</strong>, which turns an exact-match
-  comparison level into an integer equality rather than a string compare.</li>
-<li><strong>A pair source may only feed EM if its selection event factors as a condition on an
-  excludable column subset.</strong> Per-column sources qualify; whole-record ones (embeddings,
-  concatenated-record signatures) do not. See <a href="em/#em-safety">Estimation and EM</a>.</li>
-</ul>
-<h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="getting-started/">Getting started</a> — build it and run the whole pipeline on a sample file.</li>
-<li><a href="model/">The model</a> — γ, match weights, term-frequency adjustment, the admissible bracket.</li>
-<li><a href="comparisons/">Comparisons</a>: the level ladder, what each level reads, and what it costs.</li>
-<li><a href="em/">Estimation and EM</a> — closed-form <code>u</code>, EM over the histogram, per-column sessions.</li>
-<li><a href="blocking/">Blocking</a> — the four pair sources, exact costing, and measured recall.</li>
-<li><a href="linking/">Linking two files</a>: what changes when the pair space is a cross-product.</li>
-<li><a href="commands/">Commands</a> — what each subcommand is for and how to read its output.</li>
-<li><a href="reference/schema/">The schema file</a>: every field of the JSON that configures a run.</li>
-</ul>
-<h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
-<p><strong>The pipeline runs end to end, in both deduplication and link mode.</strong> The record store,
-parquet loader, schema, comparison levels, γ packing, blocking sources, the recall harness,
-parameter estimation, scoring, clustering, the signature filter, spill and re-scoring, the
-score waterfall and the miss diagnostic are all in and measured.</p>
-<p>So is everything built on top of them: the pair-global ceiling,
-<a href="commands/completeness/"><code>completeness</code></a>, term frequency for the fuzzy levels,
-<a href="commands/profile/"><code>profile</code></a>, <a href="commands/levels/"><code>levels</code></a>, derived columns,
-<a href="commands/simplify/"><code>simplify</code></a>, and
-<a href="commands/estimate/#relaxing-conditional-independence"><code>estimate --interactions</code></a>, which
-relaxes conditional independence inside the scoring model.</p>
-<p>Two things are worth stating plainly.</p>
-<p>The <strong>approximate-nearest-neighbour source was retired by measurement rather than built</strong>.
-<a href="commands/recall/"><code>recall --why</code></a> classifies every missed pair, and on this data no missed
-pair lacks a column-wise signal, so an ANN source would have nothing left to find.</p>
-<p>The <strong>20M-record target has been run end to end</strong>, and that is the size this design exists
-for: <a href="commands/estimate/"><code>estimate</code></a> → <a href="commands/predict/"><code>predict</code></a> →
-<a href="commands/cluster/"><code>cluster</code></a> over 20,000,000 records and 1.01×10¹⁰ candidate pairs, in
-<strong>38.1 minutes on one thread at 4.49 GB resident</strong>, with no scratch file and F1 0.9946
-against the planted duplicates.
-What that run does <em>not</em> establish is the two things it was never going to: the data is
-generated rather than real, and the
-<a href="https://github.com/4ment/cpplink/tree/main/bench/scale">splink comparison</a> is still at 1M
-records, where both tools finish.</p>
-<p>Every measurement quoted in these pages was produced by the commands documented here.
-Unless stated otherwise, they come from one of four sources: the synthetic samples written by
-<a href="commands/gen-sample/"><code>gen-sample</code></a>, the three public deduplication datasets in
-<a href="https://github.com/4ment/cpplink/tree/main/bench"><code>bench/</code></a> (<code>fake_1000</code>, <code>febrl3</code> and
-<code>historical_50k</code>, the last being the one with real messy variation), the scale runs above, or
-a 20M-row store where the page says so. Each says how many threads it ran on; the scale sweep
-is single-threaded and the splink comparison gives both tools all eight cores.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Read 142,541 predictions from 8 bin shards in 0.123 s
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>Wrote 142,541 predictions to predictions.parquet (parquet)
+</code></pre></div>
+<p>The merged file holds the same five columns a csv shard does, whichever format it is written
+in:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>id_a,id_b,gamma,match_weight,match_probability
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>r0,r20,174729,106.288416,1.000000000
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>r1,r119514,174665,108.510385,1.000000000
+</code></pre></div>
+<h2 id="which-shards-get-read">Which shards get read<a class="headerlink" href="#which-shards-get-read" title="Permanent link">&para;</a></h2>
+<p>A directory that has been written twice, once as <code>--format bin</code> for <code>cluster</code> and once as
+<code>--format csv</code> to look at, holds <strong>one run in two forms, not two runs</strong>.
+Reading both would double everything, so <code>merge-predictions</code> takes one format and says which:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Read 142,541 predictions from 8 bin shards in 0.123 s
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>Ignored 8 csv shards holding the same run; --from picks the other side
+</code></pre></div>
+<p>Binary is preferred because it is what <code>cluster</code> reads and what <code>predict</code> writes by default.
+<code>--from csv</code> takes the other side.</p>
+<h2 id="ids-and-why-schema-is-optional">Ids, and why <code>--schema</code> is optional<a class="headerlink" href="#ids-and-why-schema-is-optional" title="Permanent link">&para;</a></h2>
+<p>Binary shards carry <strong>row indices</strong>, not <code>unique_id</code>s, for the same reason <code>cluster</code> takes the
+data file as well as the shard directory: a row index is only meaningful against the same
+parquet file loaded through the same schema.
+Given <code>--schema</code> and that file, <code>merge-predictions</code> loads the id column alone, with no dictionary
+and no comparison column, and writes ids.
+Without it, the merge still runs and the output names rows by index:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Rows are named by index: binary shards carry no ids, so pass --schema and
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>the parquet input to write the record ids instead
+</code></pre></div>
+<p>Csv shards already carry their ids, so <code>--from csv</code> needs neither the schema nor the data.</p>
+<h2 id="filtering-while-merging">Filtering while merging<a class="headerlink" href="#filtering-while-merging" title="Permanent link">&para;</a></h2>
+<p>Edges carry their weight, so the merge can drop what a higher threshold would not have
+written, exactly as <a href="../cluster/#sweeping-the-threshold"><code>cluster --threshold</code></a> does:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cpplink<span class="w"> </span>merge-predictions<span class="w"> </span>--shards<span class="w"> </span>predictions/<span class="w"> </span>--out<span class="w"> </span>predictions.csv<span class="w"> </span>--threshold<span class="w"> </span><span class="m">60</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">                          </span>--schema<span class="w"> </span>examples/sample_schema.json<span class="w"> </span>examples/sample.parquet
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Read 142,541 predictions from 8 bin shards in 0.099 s
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>Kept 140,796 above the threshold
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>Wrote 140,796 predictions to predictions.csv (csv)
+</code></pre></div>
+<p>Lowering the threshold is not available here for the reason it is not available in <code>cluster</code>:
+a shard holds what one <code>predict</code> run kept, and what it dropped was never written down.
+That is what <a href="../predict/"><code>predict --spill</code></a> and <a href="../rescore/"><code>rescore</code></a> are for.</p>
+<h2 id="csv-or-parquet">csv or parquet<a class="headerlink" href="#csv-or-parquet" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>csv</th>
+<th>parquet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Weight</td>
+<td>rounded to six decimals, as the shards are</td>
+<td>the full <code>f64</code> the scorer produced</td>
+</tr>
+<tr>
+<td><code>gamma</code></td>
+<td>decimal text</td>
+<td><code>uint32</code></td>
+</tr>
+<tr>
+<td>Size, 142,541 predictions</td>
+<td>6.2 MB</td>
+<td>3.6 MB, Snappy</td>
+</tr>
+<tr>
+<td>Opens in</td>
+<td>anything</td>
+<td>anything that reads parquet</td>
+</tr>
+</tbody>
+</table>
+<p>Parquet is the one to pick when the predictions are going into a database or a dataframe: it
+is
+typed, it is smaller, and it keeps the weight exactly.
+Csv is the one to pick when the next thing to look at the file is a person.</p>
+<div class="admonition note">
+<p class="admonition-title">The merged file is not an input to anything</p>
+<p>Nothing in cpplink reads it back: <code>cluster</code> reads the shard directory, and <code>rescore</code>
+reads a spill.
+<code>merge-predictions</code> is the door out of the pipeline.</p>
+</div>
+<h2 id="cost">Cost<a class="headerlink" href="#cost" title="Permanent link">&para;</a></h2>
+<p>One pass over the shards and one writer, with nothing retained: 142,541 predictions merge in
+0.1 s
+against the 11.7 s that produced them.
+The store, when <code>--schema</code> is given, is the id column and nothing else.</p>
 
 
 
@@ -1552,12 +1654,12 @@ is single-threaded and the splink comparison gives both tools all eight cores.</
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "content.code.copy", "toc.follow"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
-        <script src="javascripts/mathjax.js"></script>
+        <script src="../../javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
       
