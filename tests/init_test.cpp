@@ -345,8 +345,10 @@ TEST(RunInitTest, NeedsOneFile) {
 // Writing a schema and reading it back must give the same schema, or a draft
 // is describing something other than what it wrote.
 TEST(SchemaToJsonTest, RoundTripsTheSampleSchema) {
-    std::ifstream file("examples/sample_schema.json");
-    ASSERT_TRUE(file.is_open()) << "run from the repository root";
+    const std::string path =
+        std::string(CPPLINK_SOURCE_DIR) + "/examples/sample_schema.json";
+    std::ifstream file(path);
+    ASSERT_TRUE(file.is_open()) << "cannot open " << path;
     std::stringstream text;
     text << file.rdbuf();
     cpplink::Schema first;

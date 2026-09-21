@@ -71,19 +71,31 @@ KEY_SOURCES = {
 }
 
 KEYS = [
-    ("k_month_memo3",
-     "strftime(transaction_date, '%Y%m') || '|' || substr(memo, 1, 3)",
-     "strftime(transaction_date, '%Y%m') || '|' || substr(memo, 1, 3)"),
-    ("k_month15_memo3",
-     "strftime(transaction_date + 15, '%Y%m') || '|' || substr(memo, 1, 3)",
-     "strftime(transaction_date, '%Y%m') || '|' || substr(memo, 1, 3)"),
+    (
+        "k_month_memo3",
+        "strftime(transaction_date, '%Y%m') || '|' || substr(memo, 1, 3)",
+        "strftime(transaction_date, '%Y%m') || '|' || substr(memo, 1, 3)",
+    ),
+    (
+        "k_month15_memo3",
+        "strftime(transaction_date + 15, '%Y%m') || '|' || substr(memo, 1, 3)",
+        "strftime(transaction_date, '%Y%m') || '|' || substr(memo, 1, 3)",
+    ),
     ("k_memo9", "substr(memo, 1, 9)", "substr(memo, 1, 9)"),
-    ("k_amt2_week",
-     "CAST(round(amount / 2, 0) * 2 AS VARCHAR) || '|' || CAST(yearweek(transaction_date) AS VARCHAR)",
-     "CAST(round(amount / 2, 0) * 2 AS VARCHAR) || '|' || CAST(yearweek(transaction_date) AS VARCHAR)"),
-    ("k_amt2_week4",
-     "CAST(round(amount / 2, 0) * 2 AS VARCHAR) || '|' || CAST(yearweek(transaction_date + 4) AS VARCHAR)",
-     "CAST(round((amount + 1) / 2, 0) * 2 AS VARCHAR) || '|' || CAST(yearweek(transaction_date) AS VARCHAR)"),
+    (
+        "k_amt2_week",
+        "CAST(round(amount / 2, 0) * 2 AS VARCHAR) || '|' || "
+        "CAST(yearweek(transaction_date) AS VARCHAR)",
+        "CAST(round(amount / 2, 0) * 2 AS VARCHAR) || '|' || "
+        "CAST(yearweek(transaction_date) AS VARCHAR)",
+    ),
+    (
+        "k_amt2_week4",
+        "CAST(round(amount / 2, 0) * 2 AS VARCHAR) || '|' || "
+        "CAST(yearweek(transaction_date + 4) AS VARCHAR)",
+        "CAST(round((amount + 1) / 2, 0) * 2 AS VARCHAR) || '|' || "
+        "CAST(yearweek(transaction_date) AS VARCHAR)",
+    ),
     # The demo's `block_on("unique_id")`, which reaches every true pair because
     # the ids are the ground truth. Kept as a column so cpplink can block on it
     # in the demo track; the matched track leaves it out.
@@ -131,9 +143,10 @@ DATE_DAYS = [1, 4, 10, 30]
 # neither of which is a prediction rule, and its prediction rules train
 # nothing. cpplink's equivalent is two sources declared `"use": "estimate"`,
 # which condition a session each and produce no candidate, beside the keys
-# declared `"use": "predict"`, which do the reverse. The amount is blocked on through `amount_key`, the amount written
-# as a zero-padded string, declared derived from it so the session holds the
-# amount comparison out exactly as splink's does.
+# declared `"use": "predict"`, which do the reverse. The amount is blocked on
+# through `amount_key`, the amount written as a zero-padded string, declared
+# derived from it so the session holds the amount comparison out exactly as
+# splink's does.
 ESTIMATE_SOURCES = [
     {"type": "exact_value", "column": "memo", "use": "estimate"},
     {"type": "exact_value", "column": "amount_key", "use": "estimate"},
@@ -162,8 +175,9 @@ THRESHOLDS = "0.001,0.01,0.1,0.5,0.9,0.99,0.999"
 
 def cpplink_schema(track):
     levels_amount = [{"type": "null"}, {"type": "exact"}]
-    levels_amount += [{"type": "percentage_within", "threshold": p}
-                      for p in AMOUNT_PERCENTAGES]
+    levels_amount += [
+        {"type": "percentage_within", "threshold": p} for p in AMOUNT_PERCENTAGES
+    ]
     levels_amount.append({"type": "else"})
     levels_memo = [{"type": "null"}, {"type": "exact"}]
     levels_memo += [{"type": "levenshtein", "threshold": d} for d in MEMO_EDITS]
@@ -200,12 +214,24 @@ def cpplink_schema(track):
         "unique_id": "unique_id",
         "columns": columns,
         "comparisons": [
-            {"name": "amount", "columns": ["amount"], "term_frequency": False,
-             "levels": levels_amount},
-            {"name": "memo", "columns": ["memo"], "term_frequency": False,
-             "levels": levels_memo},
-            {"name": "transaction_date", "columns": ["transaction_date"],
-             "term_frequency": False, "levels": levels_date},
+            {
+                "name": "amount",
+                "columns": ["amount"],
+                "term_frequency": False,
+                "levels": levels_amount,
+            },
+            {
+                "name": "memo",
+                "columns": ["memo"],
+                "term_frequency": False,
+                "levels": levels_memo,
+            },
+            {
+                "name": "transaction_date",
+                "columns": ["transaction_date"],
+                "term_frequency": False,
+                "levels": levels_date,
+            },
         ],
         "blocking": blocking,
     }

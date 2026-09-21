@@ -76,10 +76,19 @@ def parse_completeness(text):
     the report says `trusted` false rather than guessing, and that is kept.
     """
     report = json.loads(text)
-    return {key: report[key] for key in (
-        "pc_estimate", "pc_bound", "pc_basis", "trusted", "dark_cells",
-        "dark_mass", "observed_pairs",
-    ) if key in report}
+    return {
+        key: report[key]
+        for key in (
+            "pc_estimate",
+            "pc_bound",
+            "pc_basis",
+            "trusted",
+            "dark_cells",
+            "dark_mass",
+            "observed_pairs",
+        )
+        if key in report
+    }
 
 
 def parse_profile(text):
@@ -93,14 +102,28 @@ def parse_profile(text):
     report = json.loads(text)
     if not report.get("anchored"):
         return {"anchored": False, "refusal": report.get("anchor_refusal", "")}
-    profile = {key: report[key] for key in (
-        "anchored", "anchor_pairs", "margin_bits", "estimated_margin_bits",
-        "truthed", "truth_pairs", "truth_margin_bits", "truth_mean_error",
-    ) if key in report}
+    profile = {
+        key: report[key]
+        for key in (
+            "anchored",
+            "anchor_pairs",
+            "margin_bits",
+            "estimated_margin_bits",
+            "truthed",
+            "truth_pairs",
+            "truth_margin_bits",
+            "truth_mean_error",
+        )
+        if key in report
+    }
     profile["columns"] = [
-        {key: match[key] for key in ("name", "m", "truth_m", "sessions", "pairs")
-         if key in match}
-        for match in report["matches"] if match.get("estimated")
+        {
+            key: match[key]
+            for key in ("name", "m", "truth_m", "sessions", "pairs")
+            if key in match
+        }
+        for match in report["matches"]
+        if match.get("estimated")
     ]
     return profile
 
@@ -113,22 +136,45 @@ def parse_levels(text):
     that says whether a cut point is a property of the column or of the anchor.
     """
     report = json.loads(text)
-    levels = {"truthed": report.get("truthed", False),
-              "truth_pairs": report.get("truth_pairs", 0),
-              "refusal": report.get("anchor_refusal", ""), "comparisons": []}
+    levels = {
+        "truthed": report.get("truthed", False),
+        "truth_pairs": report.get("truth_pairs", 0),
+        "refusal": report.get("anchor_refusal", ""),
+        "comparisons": [],
+    }
     for item in report.get("comparisons", []):
         if not item.get("proposed"):
             levels["comparisons"].append(
-                {"name": item["name"], "proposed": False,
-                 "refusal": item.get("refusal", "")})
+                {
+                    "name": item["name"],
+                    "proposed": False,
+                    "refusal": item.get("refusal", ""),
+                }
+            )
             continue
-        levels["comparisons"].append({key: item[key] for key in (
-            "name", "proposed", "best_count", "current_bits", "best_bits",
-            "truthed", "truth_pairs", "current_truth_bits", "best_truth_bits",
-        ) if key in item})
-    for key, total in (("bits", "current_bits"), ("proposed_bits", "best_bits"),
-                       ("truth_bits", "current_truth_bits"),
-                       ("proposed_truth_bits", "best_truth_bits")):
+        levels["comparisons"].append(
+            {
+                key: item[key]
+                for key in (
+                    "name",
+                    "proposed",
+                    "best_count",
+                    "current_bits",
+                    "best_bits",
+                    "truthed",
+                    "truth_pairs",
+                    "current_truth_bits",
+                    "best_truth_bits",
+                )
+                if key in item
+            }
+        )
+    for key, total in (
+        ("bits", "current_bits"),
+        ("proposed_bits", "best_bits"),
+        ("truth_bits", "current_truth_bits"),
+        ("proposed_truth_bits", "best_truth_bits"),
+    ):
         levels[key] = sum(c.get(total, 0.0) for c in levels["comparisons"])
     return levels
 
@@ -164,13 +210,19 @@ def main():
     parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--u-sample", type=int, default=1000000)
     parser.add_argument("--seed", type=int, default=20260904)
-    parser.add_argument("--analysis", action="store_true",
-                        help="also price blocking, measure its recall, and "
-                             "estimate that recall again with no truth at all")
-    parser.add_argument("--fuzzy", action="store_true",
-                        help="term frequency for the fuzzy levels: an exact u "
-                             "from the dictionary self-join, and a scoring "
-                             "adjustment from the neighbourhood mass")
+    parser.add_argument(
+        "--analysis",
+        action="store_true",
+        help="also price blocking, measure its recall, and "
+        "estimate that recall again with no truth at all",
+    )
+    parser.add_argument(
+        "--fuzzy",
+        action="store_true",
+        help="term frequency for the fuzzy levels: an exact u "
+        "from the dictionary self-join, and a scoring "
+        "adjustment from the neighbourhood mass",
+    )
     args = parser.parse_args()
 
     dataset = DATASETS[args.dataset]
@@ -189,10 +241,25 @@ def main():
         run = Runner(log)
         analysis = {}
         if args.analysis:
-            blocking = run("explain_blocking", "explain-blocking", "--schema", schema,
-                           "--count", parquet)
-            reached = run("recall", "recall", "--schema", schema, "--truth", truth,
-                          "--count", "--json", parquet)
+            blocking = run(
+                "explain_blocking",
+                "explain-blocking",
+                "--schema",
+                schema,
+                "--count",
+                parquet,
+            )
+            reached = run(
+                "recall",
+                "recall",
+                "--schema",
+                schema,
+                "--truth",
+                truth,
+                "--count",
+                "--json",
+                parquet,
+            )
             analysis = parse_analysis(blocking, reached)
 
             # Both of these run before the model exists and are scored against the
@@ -200,16 +267,50 @@ def main():
             # `levels` places the fuzzy thresholds from two curves. Their whole
             # claim is how near the truth reading they land, so the two readings
             # belong in the same report as everything else measured per run.
-            analysis["profile"] = parse_profile(run(
-                "profile", "profile", "--schema", schema, "--truth", truth,
-                "--threads", args.threads, "--json", parquet))
-            analysis["levels"] = parse_levels(run(
-                "levels", "levels", "--schema", schema, "--truth", truth,
-                "--threads", args.threads, "--json", parquet))
+            analysis["profile"] = parse_profile(
+                run(
+                    "profile",
+                    "profile",
+                    "--schema",
+                    schema,
+                    "--truth",
+                    truth,
+                    "--threads",
+                    args.threads,
+                    "--json",
+                    parquet,
+                )
+            )
+            analysis["levels"] = parse_levels(
+                run(
+                    "levels",
+                    "levels",
+                    "--schema",
+                    schema,
+                    "--truth",
+                    truth,
+                    "--threads",
+                    args.threads,
+                    "--json",
+                    parquet,
+                )
+            )
 
-        estimate = ["estimate", "--schema", schema, "--out", model,
-                    "--threads", args.threads, "--u-sample", args.u_sample,
-                    "--lambda", repr(dataset.lam), "--seed", args.seed]
+        estimate = [
+            "estimate",
+            "--schema",
+            schema,
+            "--out",
+            model,
+            "--threads",
+            args.threads,
+            "--u-sample",
+            args.u_sample,
+            "--lambda",
+            repr(dataset.lam),
+            "--seed",
+            args.seed,
+        ]
         if args.fuzzy:
             estimate.append("--fuzzy-u")
         run("estimate", *estimate, parquet)
@@ -217,14 +318,33 @@ def main():
         if args.analysis:
             # After estimate, because it reads the model: the estimator is the
             # model plus the term frequencies and nothing else.
-            text = run("completeness", "completeness", "--schema", schema,
-                       "--model", model, "--threads", args.threads, "--json",
-                       parquet)
+            text = run(
+                "completeness",
+                "completeness",
+                "--schema",
+                schema,
+                "--model",
+                model,
+                "--threads",
+                args.threads,
+                "--json",
+                parquet,
+            )
             analysis["completeness"] = parse_completeness(text)
 
-        predict = ["predict", "--schema", schema, "--model", model,
-                   "--out", edges, "--probability", repr(min(thresholds)),
-                   "--threads", args.threads]
+        predict = [
+            "predict",
+            "--schema",
+            schema,
+            "--model",
+            model,
+            "--out",
+            edges,
+            "--probability",
+            repr(min(thresholds)),
+            "--threads",
+            args.threads,
+        ]
         if args.fuzzy:
             predict.append("--fuzzy-tf")
         run("predict", *predict, parquet)
@@ -232,9 +352,21 @@ def main():
         clusters = {}
         for threshold in thresholds:
             path = os.path.join(out, f"clusters_p{threshold}.csv")
-            run(f"cluster@{threshold}", "cluster", "--schema", schema,
-                "--predictions", edges, "--out", path, "--probability", repr(threshold),
-                "--min-size", 2, parquet)
+            run(
+                f"cluster@{threshold}",
+                "cluster",
+                "--schema",
+                schema,
+                "--predictions",
+                edges,
+                "--out",
+                path,
+                "--probability",
+                repr(threshold),
+                "--min-size",
+                2,
+                parquet,
+            )
             clusters[str(threshold)] = path
 
     with open(model) as handle:

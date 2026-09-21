@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The conda environment ships no compiler, so every job builds with the runner's
+# system toolchain against the conda Arrow, as a local build does.
+defaults:
+  run:
+    shell: bash -el {0}
+
+jobs:
+  build:
+    name: ${{ matrix.preset }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        preset: [release, asan, tsan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      # ThreadSanitizer refuses to start under the 32-bit mmap randomisation
+      # recent Ubuntu kernels default to ("unexpected memory mapping").
+      - name: Lower ASLR entropy for ThreadSanitizer
+        if: matrix.preset == 'tsan' && runner.os == 'Linux'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} -j "$(nproc 2>/dev/null || sysctl -n hw.ncpu)"
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} -j "$(nproc 2>/dev/null || sysctl -n hw.ncpu)"
+
+  python:
+    name: python on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      - name: Install the package
+        run: >-
+          pip install -e . --no-build-isolation
+          -Ccmake.define.CMAKE_PREFIX_PATH="$CONDA_PREFIX"
+
+      - name: Test
+        run: python -m pytest python/tests
+
+  lint:
+    name: format and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      - name: clang-format
+        run: >-
+          clang-format --dry-run --Werror
+          src/main.cpp src/cpplink/* tests/*.cpp python/bindings/*
+
+      - name: cpplint
+        run: cpplint --recursive src tests python/bindings
+
+      - name: ruff
+        run: |
+          ruff check .
+          ruff format --check .

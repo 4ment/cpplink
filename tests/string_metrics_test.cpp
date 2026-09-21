@@ -248,12 +248,21 @@ TEST(SignatureTest, JaroBoundNeverFallsBelowTheTrueSimilarity) {
         std::string a;
         std::string b;
         for (size_t i = length(rng); i > 0; --i) a.push_back(alphabet[pick(rng)]);
-        for (size_t i = length(rng); i > 0; --i) b.push_back(alphabet[pick(rng)]);
+        if (trial % 2 == 0) {
+            for (size_t i = length(rng); i > 0; --i) b.push_back(alphabet[pick(rng)]);
+        } else {
+            // A prefix of `b`, fully matched and in order: the bound is tight there,
+            // which is where a rounding of it the metric does not share would show.
+            b = a;
+            for (size_t i = length(rng) / 2; i > 0; --i) b.push_back(alphabet[pick(rng)]);
+        }
         const double bound = cpplink::JaroWinklerUpperBound(
             cpplink::CharacterMask(a), static_cast<uint32_t>(a.size()),
             cpplink::CharacterMask(b), static_cast<uint32_t>(b.size()));
-        ASSERT_GE(bound, cpplink::JaroWinkler(a, b) - 1e-12)
-            << "'" << a << "' vs '" << b << "'";
+        // No slack: the pair path compares the bound to a threshold strictly, so
+        // one ulp under the metric on a pair sitting exactly on the threshold is
+        // a rejected level, and that is one rounding of the Winkler step away.
+        ASSERT_GE(bound, cpplink::JaroWinkler(a, b)) << "'" << a << "' vs '" << b << "'";
     }
 }
 

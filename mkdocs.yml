@@ -35,11 +35,14 @@ theme:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - From Python: python.md
   - Concepts:
       - The model: model.md
       - Comparisons: comparisons.md
       - Estimation and EM: em.md
+      - Dependence between comparisons: dependence.md
       - Blocking: blocking.md
+      - Prior art: prior-art.md
       - Linking two files: linking.md
   - Commands:
       - Overview: commands/index.md

@@ -29,6 +29,6 @@ run blocking "$CP" explain-blocking --schema "$S" "$P"
 run estimate "$CP" estimate --schema "$S" "${T[@]}" --out "$W/$TAG.model.json" "$P"
 run predict "$CP" predict --schema "$S" --model "$W/$TAG.model.json" "${T[@]}" \
     --out "$W/$TAG.edges" --probability "$PROB" "$P"
-run cluster "$CP" cluster --schema "$S" --edges "$W/$TAG.edges" \
+run cluster "$CP" cluster --schema "$S" --predictions "$W/$TAG.edges" \
     --out "$W/$TAG.clusters.csv" --truth "$W/$TAG.truth.csv" \
     --probability "$PROB" "$P"

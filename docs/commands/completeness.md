@@ -135,3 +135,4 @@ enough of it the estimate inherits the independence bias.
 
 - [`recall`](recall.md) — the same number, measured, when known pairs exist
 - [`estimate`](estimate.md) — where `m` comes from, and why it can be missing
+- [Dependence between comparisons](../dependence.md): the `Dependence` table beside the other readings of the same assumption

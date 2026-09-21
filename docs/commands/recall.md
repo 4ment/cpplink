@@ -82,7 +82,8 @@ them: they are never generated as candidates.
 | `Marg PQ` | `First to / Candidates`: what the source alone reaches, per pair it costs |
 
 `PC`, `PQ` and the reduction ratio under the union line are the three numbers the
-blocking literature has scored indexing schemes with since Christen's 2012 survey, so a
+blocking literature has scored indexing schemes with since Christen's 2012 survey (see
+[Prior art](../prior-art.md)), so a
 plan here can be compared against a published one. They are reported together because
 none of them means anything alone: **every source can buy pair completeness with
 candidates**, so a source quoted at its recall and not its cost has not been evaluated.

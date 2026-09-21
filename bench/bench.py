@@ -56,7 +56,9 @@ def verify_blocking(dataset):
     binary = os.path.join(os.path.dirname(HERE), "build", "cpplink")
     text = subprocess.run(
         [binary, "explain-blocking", "--schema", schema, "--count", parquet],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
 
     ours = {}
@@ -72,20 +74,38 @@ def verify_blocking(dataset):
     agree = True
     for column in dataset.block_columns:
         theirs = count_comparisons_from_blocking_rule(
-            table_or_tables="bench_input", blocking_rule=block_on(column),
-            link_type="dedupe_only", db_api=db_api,
+            table_or_tables="bench_input",
+            blocking_rule=block_on(column),
+            link_type="dedupe_only",
+            db_api=db_api,
         )["number_of_comparisons_to_be_scored_post_filter_conditions"]
         same = ours.get(column) == theirs
         agree &= same
-        print(f"  {column:<20} cpplink {ours.get(column):>12,}   "
-              f"splink {theirs:>12,}   {'ok' if same else 'DIFFER'}")
+        print(
+            f"  {column:<20} cpplink {ours.get(column):>12,}   "
+            f"splink {theirs:>12,}   {'ok' if same else 'DIFFER'}"
+        )
     return agree
 
 
 def run_one(tool, dataset, track, out, args):
-    command = [PYTHON, RUNNERS[tool], dataset.name, "--track", track, "--out", out,
-               "--thresholds", args.thresholds, "--threads", str(args.threads),
-               "--u-sample", str(args.u_sample), "--seed", str(args.seed)]
+    command = [
+        PYTHON,
+        RUNNERS[tool],
+        dataset.name,
+        "--track",
+        track,
+        "--out",
+        out,
+        "--thresholds",
+        args.thresholds,
+        "--threads",
+        str(args.threads),
+        "--u-sample",
+        str(args.u_sample),
+        "--seed",
+        str(args.seed),
+    ]
     if tool == "cpplink":
         command.append("--analysis")
         if track in CPPLINK_ONLY_TRACKS:
@@ -112,8 +132,9 @@ def main():
     parser.add_argument("--u-sample", type=int, default=1000000)
     parser.add_argument("--seed", type=int, default=20260904)
     parser.add_argument("--repeat", type=int, default=3)
-    parser.add_argument("--verify", action="store_true",
-                        help="check candidate-set parity and exit")
+    parser.add_argument(
+        "--verify", action="store_true", help="check candidate-set parity and exit"
+    )
     args = parser.parse_args()
 
     if args.verify:
@@ -121,8 +142,11 @@ def main():
         for name in args.datasets:
             print(f"{name}:")
             ok &= verify_blocking(DATASETS[name])
-        print("\nmatched track is apples-to-apples" if ok
-              else "\nCANDIDATE SETS DIFFER -- the matched track is not comparable")
+        print(
+            "\nmatched track is apples-to-apples"
+            if ok
+            else "\nCANDIDATE SETS DIFFER -- the matched track is not comparable"
+        )
         raise SystemExit(0 if ok else 1)
 
     thresholds = [float(t) for t in args.thresholds.split(",")]
@@ -154,21 +178,29 @@ def main():
                     quality[str(threshold)] = score(entities, path)
                 best = max(quality.items(), key=lambda kv: kv[1]["f1"])
                 if best[0] in (str(thresholds[0]), str(thresholds[-1])):
-                    print(f"  ! best F1 is at the edge of the threshold grid "
-                          f"({best[0]}); widen --thresholds")
-                rows.append({
-                    "dataset": name, "track": track, "tool": tool,
-                    "pipeline_seconds": statistics.median(
-                        r["pipeline_seconds"] for r in reports),
-                    "wall_seconds": statistics.median(
-                        r["wall_seconds"] for r in reports),
-                    "peak_rss_bytes": max(r["peak_rss_bytes"] for r in reports),
-                    "stages": first["stages"],
-                    "quality": quality,
-                    "best_threshold": best[0],
-                    "best": best[1],
-                    "analysis": first.get("analysis", {}),
-                })
+                    print(
+                        f"  ! best F1 is at the edge of the threshold grid "
+                        f"({best[0]}); widen --thresholds"
+                    )
+                rows.append(
+                    {
+                        "dataset": name,
+                        "track": track,
+                        "tool": tool,
+                        "pipeline_seconds": statistics.median(
+                            r["pipeline_seconds"] for r in reports
+                        ),
+                        "wall_seconds": statistics.median(
+                            r["wall_seconds"] for r in reports
+                        ),
+                        "peak_rss_bytes": max(r["peak_rss_bytes"] for r in reports),
+                        "stages": first["stages"],
+                        "quality": quality,
+                        "best_threshold": best[0],
+                        "best": best[1],
+                        "analysis": first.get("analysis", {}),
+                    }
+                )
 
     os.makedirs(RESULTS, exist_ok=True)
     with open(os.path.join(RESULTS, "summary.json"), "w") as handle:
@@ -179,21 +211,26 @@ def main():
     print("|---|---|---|---:|---:|---:|---:|---:|")
     for row in rows:
         b = row["best"]
-        print(f"| {row['dataset']} | {row['track']} | {row['tool']} | "
-              f"{row['best_threshold']} | {b['precision']:.4f} | {b['recall']:.4f} | "
-              f"{b['f1']:.4f} | {b['clusters']:,} |")
+        print(
+            f"| {row['dataset']} | {row['track']} | {row['tool']} | "
+            f"{row['best_threshold']} | {b['precision']:.4f} | {b['recall']:.4f} | "
+            f"{b['f1']:.4f} | {b['clusters']:,} |"
+        )
 
-    print("\n## Cost (median of "
-          f"{args.repeat}, threads={args.threads or 'auto'})\n")
+    print(f"\n## Cost (median of {args.repeat}, threads={args.threads or 'auto'})\n")
     print("| dataset | track | tool | pipeline s | peak RSS |")
     print("|---|---|---|---:|---:|")
     for row in rows:
-        print(f"| {row['dataset']} | {row['track']} | {row['tool']} | "
-              f"{row['pipeline_seconds']:.2f} | {human_bytes(row['peak_rss_bytes'])} |")
+        print(
+            f"| {row['dataset']} | {row['track']} | {row['tool']} | "
+            f"{row['pipeline_seconds']:.2f} | {human_bytes(row['peak_rss_bytes'])} |"
+        )
 
     print("\n## Blocking, and the ceiling it puts on recall\n")
-    print("| dataset | track | candidate pairs | blocking recall | "
-          "completeness est. | error | trusted |")
+    print(
+        "| dataset | track | candidate pairs | blocking recall | "
+        "completeness est. | error | trusted |"
+    )
     print("|---|---|---:|---:|---:|---:|---|")
     for row in rows:
         if row["tool"] != "cpplink":
@@ -205,10 +242,12 @@ def main():
         pc = estimated.get("pc_estimate")
         measured = analysis["blocking_recall"]
         error = f"{pc - measured:+.4f}" if pc is not None else "-"
-        print(f"| {row['dataset']} | {row['track']} | "
-              f"{analysis['candidate_pairs']:,} | {measured:.4f} | "
-              f"{'-' if pc is None else f'{pc:.4f}'} | {error} | "
-              f"{estimated.get('trusted', '-')} |")
+        print(
+            f"| {row['dataset']} | {row['track']} | "
+            f"{analysis['candidate_pairs']:,} | {measured:.4f} | "
+            f"{'-' if pc is None else f'{pc:.4f}'} | {error} | "
+            f"{estimated.get('trusted', '-')} |"
+        )
 
     # Both of these read the schema and the rows and never the model, so two
     # tracks over one dataset usually produce the same numbers twice. Rows whose
@@ -222,38 +261,49 @@ def main():
                 continue
             index = (row["dataset"], json.dumps(payload, sort_keys=True))
             grouped.setdefault(index, []).append(row["track"])
-        return [(dataset, ", ".join(tracks), json.loads(payload))
-                for (dataset, payload), tracks in grouped.items()]
+        return [
+            (dataset, ", ".join(tracks), json.loads(payload))
+            for (dataset, payload), tracks in grouped.items()
+        ]
 
     print("\n## What a matching pair scores, before a model exists\n")
-    print("| dataset | track | anchor pairs | ceiling | estimate | truth | "
-          "mean m error |")
+    print(
+        "| dataset | track | anchor pairs | ceiling | estimate | truth | mean m error |"
+    )
     print("|---|---|---:|---:|---:|---:|---:|")
     for dataset, tracks, profile in collapse("profile"):
         if not profile.get("anchored"):
             print(f"| {dataset} | {tracks} | - | - | refused | - | - |")
             continue
         truth = profile.get("truth_margin_bits")
-        print(f"| {dataset} | {tracks} | {profile['anchor_pairs']:,} | "
-              f"{profile['margin_bits']:+.2f} | "
-              f"{profile['estimated_margin_bits']:+.2f} | "
-              f"{'-' if truth is None else f'{truth:+.2f}'} | "
-              f"{profile.get('truth_mean_error', 0.0):.3f} |")
-    print("\nCeiling takes m as 1, estimate reads it off anchor pairs, truth reads "
-          "the same\nrate off the known pairs the command is never given. The gap "
-          "between the last two\nis the anchor's own selection and runs one way.")
+        print(
+            f"| {dataset} | {tracks} | {profile['anchor_pairs']:,} | "
+            f"{profile['margin_bits']:+.2f} | "
+            f"{profile['estimated_margin_bits']:+.2f} | "
+            f"{'-' if truth is None else f'{truth:+.2f}'} | "
+            f"{profile.get('truth_mean_error', 0.0):.3f} |"
+        )
+    print(
+        "\nCeiling takes m as 1, estimate reads it off anchor pairs, truth reads "
+        "the same\nrate off the known pairs the command is never given. The gap "
+        "between the last two\nis the anchor's own selection and runs one way."
+    )
 
     print("\n## What the fuzzy thresholds are worth, and what they could be\n")
-    print("| dataset | track | priced | current | proposed | gain | "
-          "current (T) | proposed (T) | gain (T) |")
+    print(
+        "| dataset | track | priced | current | proposed | gain | "
+        "current (T) | proposed (T) | gain (T) |"
+    )
     print("|---|---|---:|---:|---:|---:|---:|---:|---:|")
     refusals = []
     for dataset, tracks, levels in collapse("levels"):
         priced = [c for c in levels["comparisons"] if c.get("proposed")]
         refused = [c for c in levels["comparisons"] if not c.get("proposed")]
         if not priced:
-            print(f"| {dataset} | {tracks} | 0 of {len(refused)} | refused | - | - "
-                  f"| - | - | - |")
+            print(
+                f"| {dataset} | {tracks} | 0 of {len(refused)} | refused | - | - "
+                f"| - | - | - |"
+            )
             # Every reason rather than one: a dataset that prices nothing is the
             # interesting case, and the reasons differ per comparison.
             why = [f"  {c['name']}: {c.get('refusal', '')}" for c in refused]
@@ -263,16 +313,20 @@ def main():
             continue
         gain = levels["proposed_bits"] - levels["bits"]
         truth_gain = levels["proposed_truth_bits"] - levels["truth_bits"]
-        print(f"| {dataset} | {tracks} | "
-              f"{len(priced)} of {len(priced) + len(refused)} | "
-              f"{levels['bits']:.2f} | {levels['proposed_bits']:.2f} | {gain:+.2f} | "
-              f"{levels['truth_bits']:.2f} | {levels['proposed_truth_bits']:.2f} | "
-              f"{truth_gain:+.2f} |")
-    print("\nBits a matching pair gets from the comparisons the command could price, "
-          "under the\nschema's thresholds and under its own. (T) reads both partitions "
-          "against the known\npairs, which the proposal never saw, so a gain that "
-          "survives the move is a property\nof the column rather than of the anchor "
-          "it was fitted on.")
+        print(
+            f"| {dataset} | {tracks} | "
+            f"{len(priced)} of {len(priced) + len(refused)} | "
+            f"{levels['bits']:.2f} | {levels['proposed_bits']:.2f} | {gain:+.2f} | "
+            f"{levels['truth_bits']:.2f} | {levels['proposed_truth_bits']:.2f} | "
+            f"{truth_gain:+.2f} |"
+        )
+    print(
+        "\nBits a matching pair gets from the comparisons the command could price, "
+        "under the\nschema's thresholds and under its own. (T) reads both partitions "
+        "against the known\npairs, which the proposal never saw, so a gain that "
+        "survives the move is a property\nof the column rather than of the anchor "
+        "it was fitted on."
+    )
     for line in refusals:
         print(f"\n{line}")
 
