@@ -10,7 +10,7 @@ readme = "README.md"
 license = {file = "LICENSE"}
 authors = [{name = "Mathieu Fourment"}]
 requires-python = ">=3.10"
-dependencies = ["numpy", "pyarrow"]
+dependencies = ["numpy", "pandas", "pyarrow"]
 
 [project.optional-dependencies]
 test = ["pytest"]

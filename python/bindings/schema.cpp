@@ -13,6 +13,7 @@
 #include <pybind11/stl.h>
 
 #include "bindings/common.hpp"
+#include "cpplink/batch_loader.hpp"
 #include "cpplink/init.hpp"
 
 namespace cpplink {
@@ -79,6 +80,50 @@ std::pair<PySchema, DraftReport> Init(
     return {schema, report};
 }
 
+// The draft from inputs described by an Arrow schema each -- what a frame has
+// instead of a footer. Each object speaks `__arrow_c_schema__`.
+std::pair<PySchema, DraftReport> InitFrom(
+    const std::vector<std::pair<std::string, py::object>>& inputs,
+    const std::string& unique_id,
+    const std::vector<std::pair<std::string, std::string>>& roles,
+    const std::string& out) {
+    std::vector<DescribedInput> described;
+    for (const auto& [name, object] : inputs) {
+        if (!py::hasattr(object, "__arrow_c_schema__")) {
+            throw Error("input " + name + " has no __arrow_c_schema__");
+        }
+        py::object capsule = object.attr("__arrow_c_schema__")();
+        void* pointer = PyCapsule_GetPointer(capsule.ptr(), "arrow_schema");
+        if (pointer == nullptr) {
+            PyErr_Clear();
+            throw Error("__arrow_c_schema__ did not return an arrow_schema capsule");
+        }
+        const ArrowSchema& schema = *static_cast<ArrowSchema*>(pointer);
+        DescribedInput input;
+        input.name = name;
+        for (int64_t i = 0; i < schema.n_children; ++i) {
+            const ArrowSchema& field = *schema.children[i];
+            FileColumn column;
+            column.name = field.name == nullptr ? "" : field.name;
+            column.arrow_type = ArrowTypeName(field);
+            column.readable = ColumnTypeOf(field, &column.type);
+            input.columns.push_back(std::move(column));
+        }
+        described.push_back(std::move(input));
+    }
+    DraftOptions options;
+    options.unique_id = unique_id;
+    options.roles = roles;
+    DraftReport report;
+    std::string error;
+    Check(DraftSchemaFrom(described, options, &report, &error), error);
+    PySchema schema;
+    schema.schema = report.schema;
+    schema.text = report.json;
+    if (!out.empty()) SaveSchema(schema, out);
+    return {schema, report};
+}
+
 template <typename Spec>
 std::vector<std::string> Describe(const std::vector<Spec>& specs) {
     std::vector<std::string> out;
@@ -112,6 +157,18 @@ void BindSchema(py::module_& m) {
                                    }
                                    return names;
                                })
+        .def_property_readonly(
+            "input_columns",
+            [](const PySchema& s) {
+                std::vector<std::string> names;
+                if (!s.schema.unique_id.empty()) names.push_back(s.schema.unique_id);
+                for (const ColumnSpec& column : s.schema.columns) {
+                    if (!column.IsDerived()) names.push_back(column.name);
+                }
+                return names;
+            },
+            "The columns an input must hold: the id and every column that is not\n"
+            "derived, which is what a reader is asked for.")
         .def_property_readonly(
             "comparison_names",
             [](const PySchema& s) {
@@ -170,6 +227,11 @@ void BindSchema(py::module_& m) {
             return CaptureText([&](std::ostream& out) { PrintDraftReport(r, out); });
         });
 
+    m.def("init_from", &InitFrom, py::arg("inputs"), py::arg("id") = "",
+          py::arg("roles") = std::vector<std::pair<std::string, std::string>>{},
+          py::arg("out") = "",
+          "Draft a schema from `(name, object)` pairs, each object speaking\n"
+          "`__arrow_c_schema__`: a pyarrow schema or table.");
     m.def("init", &Init, py::arg("files"), py::arg("id") = "",
           py::arg("roles") = std::vector<std::pair<std::string, std::string>>{},
           py::arg("out") = "",

@@ -58,7 +58,28 @@ class EdgeShardWriter {
 
 std::string EdgeShardName(unsigned thread);
 
+// Every prediction of a run held in memory, as parallel columns: what a front
+// end hands out as a table with no file in between. Filled one shard per thread
+// and joined at the end, so the rows are in the order the threads finished, as
+// the shard files are. Twenty bytes a prediction, the shard's own width.
+struct EdgeTable {
+    std::vector<uint32_t> a;
+    std::vector<uint32_t> b;
+    std::vector<uint32_t> gamma;
+    std::vector<double> weight;
+
+    uint64_t Size() const { return a.size(); }
+    void Push(uint32_t row_a, uint32_t row_b, uint32_t pattern, double w) {
+        a.push_back(row_a);
+        b.push_back(row_b);
+        gamma.push_back(pattern);
+        weight.push_back(w);
+    }
+    void Append(EdgeTable* other);
+};
+
 struct PredictOptions {
+    // The shard directory. Empty writes no shard at all, which needs `table`.
     std::string out_dir;
     // When set, `out_dir` is a staging directory: the per-thread shards are
     // written into it and merged into this one file at the end of the run, and
@@ -77,6 +98,8 @@ struct PredictOptions {
     // re-tune upward and not enough to see what a lower threshold would find.
     double spill_sample = 0.0;
     uint64_t spill_seed = 20260904;
+    // Where to keep every prediction in memory, beside or instead of the shards.
+    EdgeTable* table = nullptr;
     // Where to report progress while the run walks the pair stream, or null for
     // none. With `progress_columns` set the stream is a terminal that wide and
     // one line is redrawn in place; without it a line is printed every few

@@ -25,6 +25,9 @@ struct RescoreOptions {
     EdgeFormat format = EdgeFormat::kBinary;
     unsigned threads = 0;
     uint64_t max_edges = 0;
+    // Where to keep every prediction in memory, beside or instead of the shards,
+    // as `PredictOptions::table` does. An empty `out_dir` needs it.
+    EdgeTable* table = nullptr;
 };
 
 struct RescoreReport {

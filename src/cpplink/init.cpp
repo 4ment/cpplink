@@ -484,23 +484,39 @@ bool DraftSchema(const std::vector<std::string>& paths, const DraftOptions& opti
         *error = "no parquet file to draft a schema from";
         return false;
     }
-    const std::string& path = paths.front();
-    std::vector<FileColumn> file_columns;
-    if (!ReadFileColumns(path, &file_columns, error)) return false;
+    std::vector<DescribedInput> inputs;
+    for (const std::string& path : paths) {
+        DescribedInput input;
+        input.name = path;
+        if (!ReadFileColumns(path, &input.columns, error)) return false;
+        inputs.push_back(std::move(input));
+    }
+    return DraftSchemaFrom(inputs, options, report, error);
+}
+
+bool DraftSchemaFrom(const std::vector<DescribedInput>& inputs,
+                     const DraftOptions& options, DraftReport* report,
+                     std::string* error) {
+    if (inputs.empty()) {
+        *error = "no input to draft a schema from";
+        return false;
+    }
+    const std::string& path = inputs.front().name;
+    const std::vector<FileColumn>& file_columns = inputs.front().columns;
     if (file_columns.empty()) {
         *error = path + " has no columns";
         return false;
     }
 
-    // The draft is from the first file; the others have to be able to run it. A
+    // The draft is from the first input; the others have to be able to run it. A
     // column the first holds must be in each of them at a type that reads the same
-    // way, or the schema would fail at load with a message about the second file
-    // that init could have given now. Columns only a later file holds are left
+    // way, or the schema would fail at load with a message about the second input
+    // that init could have given now. Columns only a later input holds are left
     // out, and said so.
     std::vector<std::string> later_only;
-    for (size_t i = 1; i < paths.size(); ++i) {
-        std::vector<FileColumn> other;
-        if (!ReadFileColumns(paths[i], &other, error)) return false;
+    for (size_t i = 1; i < inputs.size(); ++i) {
+        const std::vector<FileColumn>& other = inputs[i].columns;
+        const std::string& other_name = inputs[i].name;
         for (const FileColumn& column : file_columns) {
             const FileColumn* match = nullptr;
             for (const FileColumn& candidate : other) {
@@ -508,15 +524,15 @@ bool DraftSchema(const std::vector<std::string>& paths, const DraftOptions& opti
             }
             if (match == nullptr) {
                 *error = "column \"" + column.name + "\" is in " + path + " but not in " +
-                         paths[i] +
+                         other_name +
                          "; a link needs the same columns "
                          "in every input";
                 return false;
             }
             if (column.readable && (!match->readable || match->type != column.type)) {
                 *error = "column \"" + column.name + "\" is " + column.arrow_type +
-                         " in " + path + " and " + match->arrow_type + " in " + paths[i] +
-                         "; cast one so both read as the same type";
+                         " in " + path + " and " + match->arrow_type + " in " +
+                         other_name + "; cast one so both read as the same type";
                 return false;
             }
         }
@@ -525,7 +541,7 @@ bool DraftSchema(const std::vector<std::string>& paths, const DraftOptions& opti
             for (const FileColumn& column : file_columns) {
                 in_first = in_first || column.name == candidate.name;
             }
-            if (!in_first) later_only.push_back(candidate.name + " (" + paths[i] + ")");
+            if (!in_first) later_only.push_back(candidate.name + " (" + other_name + ")");
         }
     }
 

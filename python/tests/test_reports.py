@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import CORE_PARQUET
 
 import cpplink
 from cpplink import to_dict
@@ -28,10 +29,10 @@ FIELDS = {
     "SessionFit": 14,
     "PairResidual": 9,
     "InteractionReport": 8,
-    "PredictReport": 20,
-    "RescoreReport": 12,
+    "PredictReport": 21,
+    "RescoreReport": 13,
     "SpillManifest": 8,
-    "ClusterResult": 3,
+    "ClusterResult": 4,
     "ClusterAssignment": 7,
     "ClusterReport": 19,
     "ClusterQuality": 9,
@@ -61,20 +62,20 @@ def reports(sample, tmp_path_factory: pytest.TempPathFactory) -> dict[str, objec
     linker = sample.linker
     model = sample.model
     spill = root / "spill"
-    predict = linker.predict(model, root / "p.parquet", threshold=10, spill=spill)
+    linker.predict(model, root / "p.parquet", threshold=10, spill=spill)
+    predict = linker.last_predict
     shards = root / "shards"
     linker.predict(model, shards, threshold=10, threads=2)
-    cluster = linker.cluster(sample.predictions, truth=sample.truth)
+    linker.cluster(sample.predictions, truth=sample.truth)
+    cluster = linker.last_cluster
     explanation = linker.explain(linker.id_of(0), linker.id_of(1), model=model)
     recall = linker.recall(sample.truth, why=True)
     levels, _ = linker.levels()
     simplify, _ = linker.simplify(model)
     inspection = linker.inspect()
-    merge = cpplink.merge_predictions(
-        shards, root / "merged.csv", schema=sample.schema_path, files=[sample.parquet]
-    )
-    rescore = linker.rescore(model, spill, root / "r.parquet", threshold=12)
-    return {
+    linker.rescore(model, spill, root / "r.parquet", threshold=12)
+    rescore = linker.last_rescore
+    reports = {
         "Inspection": inspection,
         "LoadStats": inspection.stats,
         "MemoryReport": inspection.memory,
@@ -93,7 +94,6 @@ def reports(sample, tmp_path_factory: pytest.TempPathFactory) -> dict[str, objec
         "ClusterAssignment": cluster.assignment,
         "ClusterReport": cluster.report,
         "ClusterQuality": cluster.quality,
-        "MergeReport": merge,
         "Explanation": explanation,
         "PairWaterfall": explanation.waterfall,
         "WaterfallStep": explanation.waterfall.steps[0],
@@ -111,10 +111,18 @@ def reports(sample, tmp_path_factory: pytest.TempPathFactory) -> dict[str, objec
         "CompletenessReport": linker.completeness(model),
         "DraftReport": sample.draft,
     }
+    if CORE_PARQUET:
+        # Naming binary shards' rows needs the file's ids, which the core loads.
+        reports["MergeReport"] = cpplink.merge_predictions(
+            shards, root / "merged.csv", schema=sample.schema_path, files=[sample.parquet]
+        )
+    return reports
 
 
 @pytest.mark.parametrize("name", sorted(FIELDS))
 def test_to_dict_sees_every_field(reports, name: str) -> None:
+    if name not in reports:
+        pytest.skip("this build reads and writes parquet through pandas only")
     report = reports[name]
     assert type(report).__name__ == name
     as_dict = to_dict(report)
@@ -126,6 +134,8 @@ def test_to_dict_sees_every_field(reports, name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(FIELDS))
 def test_repr_is_not_empty(reports, name: str) -> None:
+    if name not in reports:
+        pytest.skip("this build reads and writes parquet through pandas only")
     assert repr(reports[name]).strip()
 
 

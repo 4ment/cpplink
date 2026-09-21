@@ -41,10 +41,12 @@ struct EstimateOutcome {
 
 struct PredictOutcome : PredictReport {
     std::string text;  // the ball tables, the plan when verbose, then the report
+    std::shared_ptr<PredictionTable> table;  // every prediction, in memory
 };
 
 struct RescoreOutcome : RescoreReport {
     std::string text;
+    std::shared_ptr<PredictionTable> table;  // every prediction, in memory
 };
 
 struct ClusterOutcome {
@@ -53,6 +55,7 @@ struct ClusterOutcome {
     bool measured = false;
     ClusterQuality quality;
     std::string text;
+    std::shared_ptr<ClusterTable> table;  // the clusters, in memory; null from a file
 };
 
 struct MergeOutcome : MergeReport {
@@ -93,15 +96,21 @@ bool FormatFrom(const py::object& format, EdgeFormat* out, const char* command) 
     return true;
 }
 
-PredictOutcome PredictStage(Session& session, const Model& model, const std::string& out,
-                            const py::object& threshold, const py::object& probability,
-                            const py::object& format, unsigned threads, uint64_t limit,
-                            double tf_damping, bool bounds, bool ceiling, bool fuzzy_tf,
+PredictOutcome PredictStage(const py::object& self, const Model& model,
+                            const std::string& out, const py::object& threshold,
+                            const py::object& probability, const py::object& format,
+                            unsigned threads, uint64_t limit, double tf_damping,
+                            bool bounds, bool ceiling, bool fuzzy_tf,
                             const BallOptions& ball, const std::string& spill,
                             double spill_sample, bool signatures, bool ladders,
                             bool interactions, bool verbose) {
+    Session& session = py::cast<Session&>(self);
     PredictOptions options;
     options.threads = threads;
+    // Every prediction is kept in memory whether or not a file is written: the
+    // table is what the front end returns, and what `cluster` reads next.
+    auto edges = std::make_shared<EdgeTable>();
+    options.table = edges.get();
     options.max_edges = limit;
     options.spill_dir = spill;
     if (spill_sample < 0.0 || spill_sample > 1.0) {
@@ -110,9 +119,13 @@ PredictOutcome PredictStage(Session& session, const Model& model, const std::str
     options.spill_sample = spill_sample;
     const bool format_given = FormatFrom(format, &options.format, "predict");
     std::string error;
-    Check(ResolveEdgeOutput("predict", out, format_given, &options.out_dir,
-                            &options.merge_path, &error),
-          error);
+    if (!out.empty()) {
+        Check(ResolveEdgeOutput("predict", out, format_given, &options.out_dir,
+                                &options.merge_path, &error),
+              error);
+    } else if (format_given) {
+        throw Error("predict: format names the shard format, and no out was given");
+    }
     ScoreOptions score;
     score.threshold = ThresholdFrom(threshold, probability, "predict");
     score.tf_damping = tf_damping;
@@ -163,23 +176,32 @@ PredictOutcome PredictStage(Session& session, const Model& model, const std::str
     Check(ok, error);
     PrintPredictReport(result, scorer, text);
     result.text = text.str();
+    session.set_last_edges(edges);
+    result.table = std::make_shared<PredictionTable>(self, edges);
     return result;
 }
 
-RescoreOutcome RescoreStage(Session& session, const Model& model,
+RescoreOutcome RescoreStage(const py::object& self, const Model& model,
                             const std::string& spill, const std::string& out,
                             const py::object& threshold, const py::object& probability,
                             const py::object& format, unsigned threads, uint64_t limit,
                             double tf_damping, bool bounds) {
+    Session& session = py::cast<Session&>(self);
     RescoreOptions options;
     options.spill_dir = spill;
+    auto edges = std::make_shared<EdgeTable>();
+    options.table = edges.get();
     options.threads = threads;
     options.max_edges = limit;
     const bool format_given = FormatFrom(format, &options.format, "rescore");
     std::string error;
-    Check(ResolveEdgeOutput("rescore", out, format_given, &options.out_dir,
-                            &options.merge_path, &error),
-          error);
+    if (!out.empty()) {
+        Check(ResolveEdgeOutput("rescore", out, format_given, &options.out_dir,
+                                &options.merge_path, &error),
+              error);
+    } else if (format_given) {
+        throw Error("rescore: format names the shard format, and no out was given");
+    }
     ScoreOptions score;
     score.threshold = ThresholdFrom(threshold, probability, "rescore");
     score.tf_damping = tf_damping;
@@ -202,16 +224,16 @@ RescoreOutcome RescoreStage(Session& session, const Model& model,
     Check(ok, error);
     result.text = CaptureText(
         [&](std::ostream& stream) { PrintRescoreReport(result, scorer, stream); });
+    session.set_last_edges(edges);
+    result.table = std::make_shared<PredictionTable>(self, edges);
     return result;
 }
 
 // Clustering over a store: the Linker's, or one loaded for its ids alone.
-ClusterOutcome ClusterOver(const RecordStore& store, const std::string& predictions,
+ClusterOutcome ClusterOver(const RecordStore& store, ClusterOptions options,
                            const py::object& threshold, const py::object& probability,
                            const std::string& out, uint64_t min_size,
                            const std::string& truth) {
-    ClusterOptions options;
-    options.edge_path = predictions;
     options.out_path = out;
     options.min_size = min_size;
     if (!threshold.is_none() || !probability.is_none()) {
@@ -242,12 +264,43 @@ ClusterOutcome ClusterOver(const RecordStore& store, const std::string& predicti
     return result;
 }
 
-ClusterOutcome ClusterStage(Session& session, const std::string& predictions,
+// `predictions` is None for the last `predict`'s own rows, a path to a shard
+// directory or a merged file, or a table -- a data frame, a pyarrow table --
+// that speaks the Arrow C stream protocol and is read as a merged file is.
+ClusterOutcome ClusterStage(const py::object& self, const py::object& predictions,
                             const py::object& threshold, const py::object& probability,
                             const std::string& out, uint64_t min_size,
                             const std::string& truth) {
-    return ClusterOver(session.store(), predictions, threshold, probability, out,
-                       min_size, truth);
+    Session& session = py::cast<Session&>(self);
+    ClusterOptions options;
+    py::object capsule;  // keeps a stream's struct alive while it is read
+    if (predictions.is_none()) {
+        if (!session.last_edges()) {
+            throw Error(
+                "cluster: no predictions in memory; run predict first, or give "
+                "a table or a path");
+        }
+        options.edges = session.last_edges().get();
+    } else if (py::isinstance<py::str>(predictions)) {
+        options.edge_path = py::cast<std::string>(predictions);
+    } else if (py::hasattr(predictions, "__arrow_c_stream__")) {
+        capsule = predictions.attr("__arrow_c_stream__")();
+        void* pointer = PyCapsule_GetPointer(capsule.ptr(), "arrow_array_stream");
+        if (pointer == nullptr) {
+            PyErr_Clear();
+            throw Error(
+                "cluster: __arrow_c_stream__ did not return an arrow_array_stream");
+        }
+        options.stream = static_cast<ArrowArrayStream*>(pointer);
+    } else {
+        throw Error(
+            "cluster: predictions wants None, a path, or a table with "
+            "__arrow_c_stream__");
+    }
+    ClusterOutcome result = ClusterOver(session.store(), options, threshold, probability,
+                                        out, min_size, truth);
+    result.table = std::make_shared<ClusterTable>(self, result.assignment, min_size);
+    return result;
 }
 
 // `cpplink cluster` as the command runs it: only the id column is loaded.
@@ -264,7 +317,9 @@ ClusterOutcome ClusterFile(const std::string& schema_path,
         ok = LoadIdsOnly(schema_path, files, &store, &error);
     }
     Check(ok, error);
-    return ClusterOver(*store, predictions, threshold, probability, out, min_size, truth);
+    ClusterOptions options;
+    options.edge_path = predictions;
+    return ClusterOver(*store, options, threshold, probability, out, min_size, truth);
 }
 
 MergeOutcome MergePredictions(const std::string& shards, const std::string& out,
@@ -523,6 +578,8 @@ void BindStages(py::module_& m, SessionClass* session) {
         .def_readonly("merged_path", &PredictReport::merged_path)
         .def_readonly("merge_seconds", &PredictReport::merge_seconds)
         .def_readonly("text", &PredictOutcome::text)
+        .def_readonly("table", &PredictOutcome::table,
+                      "Every prediction of the run, as an `ArrowTable`.")
         .def("__repr__", [](const PredictOutcome& r) { return r.text; });
 
     py::class_<SpillManifest>(m, "SpillManifest")
@@ -549,6 +606,8 @@ void BindStages(py::module_& m, SessionClass* session) {
         .def_readonly("merged_path", &RescoreReport::merged_path)
         .def_readonly("merge_seconds", &RescoreReport::merge_seconds)
         .def_readonly("text", &RescoreOutcome::text)
+        .def_readonly("table", &RescoreOutcome::table,
+                      "Every prediction of the replay, as an `ArrowTable`.")
         .def("__repr__", [](const RescoreOutcome& r) { return r.text; });
 
     py::class_<ClusterAssignment>(
@@ -642,6 +701,9 @@ void BindStages(py::module_& m, SessionClass* session) {
             },
             "Against the truth file, or None where none was given.")
         .def_readonly("text", &ClusterOutcome::text)
+        .def_readonly("table", &ClusterOutcome::table,
+                      "The clusters of `min_size` or more, as an `ArrowTable`; None\n"
+                      "from `cluster_file`, which has no session to hold.")
         .def("__repr__", [](const ClusterOutcome& c) { return c.text; });
 
     py::class_<MergeOutcome>(m, "MergeReport", "What `merge_predictions` wrote.")
@@ -666,7 +728,7 @@ void BindStages(py::module_& m, SessionClass* session) {
         .def("__repr__", [](const MergeOutcome& r) { return r.text; });
 
     session->def("estimate", &EstimateStage, py::arg("options"), py::arg("out") = "")
-        .def("predict", &PredictStage, py::arg("model"), py::arg("out"),
+        .def("predict", &PredictStage, py::arg("model"), py::arg("out") = "",
              py::arg("threshold") = py::none(), py::arg("probability") = py::none(),
              py::arg("format") = py::none(), py::arg("threads") = 0, py::arg("limit") = 0,
              py::arg("tf_damping") = 1.0, py::arg("bounds") = true,
@@ -675,11 +737,12 @@ void BindStages(py::module_& m, SessionClass* session) {
              py::arg("spill_sample") = 0.0, py::arg("signatures") = true,
              py::arg("ladders") = true, py::arg("interactions") = true,
              py::arg("verbose") = false)
-        .def("rescore", &RescoreStage, py::arg("model"), py::arg("spill"), py::arg("out"),
-             py::arg("threshold") = py::none(), py::arg("probability") = py::none(),
-             py::arg("format") = py::none(), py::arg("threads") = 0, py::arg("limit") = 0,
-             py::arg("tf_damping") = 1.0, py::arg("bounds") = true)
-        .def("cluster", &ClusterStage, py::arg("predictions"),
+        .def("rescore", &RescoreStage, py::arg("model"), py::arg("spill"),
+             py::arg("out") = "", py::arg("threshold") = py::none(),
+             py::arg("probability") = py::none(), py::arg("format") = py::none(),
+             py::arg("threads") = 0, py::arg("limit") = 0, py::arg("tf_damping") = 1.0,
+             py::arg("bounds") = true)
+        .def("cluster", &ClusterStage, py::arg("predictions") = py::none(),
              py::arg("threshold") = py::none(), py::arg("probability") = py::none(),
              py::arg("out") = "", py::arg("min_size") = 2, py::arg("truth") = "");
 

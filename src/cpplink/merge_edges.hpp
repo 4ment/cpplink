@@ -4,12 +4,14 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <iosfwd>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "cpplink/arrow_c.hpp"
 #include "cpplink/record_store.hpp"
 
 namespace cpplink {
@@ -75,6 +77,35 @@ struct EdgeRow {
     uint32_t gamma = 0;
     double weight = 0.0;
 };
+
+// Which columns a prediction file's rows were read with. The ids are always
+// there; the datasets come together or not at all; the weight and the pattern
+// are each read where the file holds them, and a caller that needs one asks
+// for it by name and is refused before any row where it is missing.
+struct EdgeColumns {
+    bool datasets = false;
+    bool weight = false;
+    bool gamma = false;
+};
+
+using EdgeVisitor = std::function<bool(const EdgeRow&, std::string*)>;
+
+// Every row of a prediction table read through the C Data Interface, whether it
+// came from a merged parquet file or from a data frame: the same reader either
+// way, so `cluster --predictions x.parquet` and `cluster(predictions_df)` cannot
+// read a row differently. `required` names the columns beyond the ids the caller
+// cannot do without, of `match_weight` and `gamma`; `what` names the caller in
+// the message. A row with a null id or dataset is passed with that view empty.
+// The stream is released on return.
+bool ReadPredictionStream(ArrowArrayStream* stream, const std::string& what,
+                          const std::string& source,
+                          const std::vector<std::string>& required, EdgeColumns* columns,
+                          const EdgeVisitor& visit, std::string* error);
+
+// The same over a merged parquet file, reading only the columns the shape has.
+bool ReadPredictionFile(const std::string& path, const std::string& what,
+                        const std::vector<std::string>& required, EdgeColumns* columns,
+                        const EdgeVisitor& visit, std::string* error);
 
 // Which of the two csv shapes a file is in, read off its header.
 struct EdgeCsvLayout {

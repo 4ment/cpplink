@@ -17,6 +17,15 @@ import cpplink
 ROWS = 20000
 SEED = 7
 
+# A build without Arrow takes frames in and hands frames out, and reads or
+# writes a parquet file through pandas; what it cannot do is run the command
+# line over a parquet file, or load a file's ids alone, since those are the
+# core reading parquet itself. The tests of those paths are skipped there.
+CORE_PARQUET = cpplink._cpplink.parquet_supported()
+needs_core_parquet = pytest.mark.skipif(
+    not CORE_PARQUET, reason="this build reads and writes parquet through pandas only"
+)
+
 
 class Fixture:
     """A sample file, its truth pairs, the drafted schema and a Linker over it."""
@@ -34,9 +43,8 @@ class Fixture:
             out=self.model_path, seed=SEED
         )
         self.predictions = root / "predictions.parquet"
-        self.predict_report = self.linker.predict(
-            self.model, self.predictions, threshold=10
-        )
+        self.frame = self.linker.predict(self.model, self.predictions, threshold=10)
+        self.predict_report = self.linker.last_predict
 
 
 class LinkFixture:

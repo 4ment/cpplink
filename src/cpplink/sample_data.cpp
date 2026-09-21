@@ -12,9 +12,8 @@
 #include <utility>
 #include <vector>
 
-#include <arrow/api.h>
-#include <arrow/io/api.h>
-#include <parquet/arrow/writer.h>
+#include "cpplink/arrow_export.hpp"
+#include "cpplink/parquet_io.hpp"
 
 namespace cpplink {
 namespace {
@@ -223,153 +222,89 @@ class Generator {
     Vocabulary street_words_;
 };
 
-std::shared_ptr<arrow::Schema> MakeArrowSchema() {
-    return arrow::schema({
-        arrow::field("id", arrow::utf8()),
-        arrow::field("first_name", arrow::utf8()),
-        arrow::field("last_name", arrow::utf8()),
-        arrow::field("gender", arrow::utf8()),
-        arrow::field("dob", arrow::date32()),
-        arrow::field("email", arrow::utf8()),
-        arrow::field("phone", arrow::utf8()),
-        arrow::field("postcode", arrow::utf8()),
-        arrow::field("latitude", arrow::float64()),
-        arrow::field("longitude", arrow::float64()),
-        arrow::field("address_tokens", arrow::list(arrow::utf8())),
-    });
-}
-
-// The eleven builders one output file accumulates rows into, and the writer they
-// are flushed to. Routing a row to one of two files is then a choice of sink rather
-// than a second copy of the append code.
+// The eleven columns one output file accumulates rows into, as C Data batches,
+// and the writer they are flushed to. Routing a row to one of two files is then
+// a choice of sink rather than a second copy of the append code.
 struct RowSink {
-    explicit RowSink(arrow::MemoryPool* pool)
-        : id(pool),
-          first(pool),
-          last(pool),
-          gender(pool),
-          email(pool),
-          phone(pool),
-          postcode(pool),
-          dob(pool),
-          latitude(pool),
-          longitude(pool),
-          token_values(std::make_shared<arrow::StringBuilder>(pool)),
-          tokens(pool, token_values) {}
+    RowSink() {
+        builder.AddColumn("id", ExportType::kString);
+        builder.AddColumn("first_name", ExportType::kString);
+        builder.AddColumn("last_name", ExportType::kString);
+        builder.AddColumn("gender", ExportType::kString);
+        builder.AddColumn("dob", ExportType::kDate32);
+        builder.AddColumn("email", ExportType::kString);
+        builder.AddColumn("phone", ExportType::kString);
+        builder.AddColumn("postcode", ExportType::kString);
+        builder.AddColumn("latitude", ExportType::kDouble);
+        builder.AddColumn("longitude", ExportType::kDouble);
+        builder.AddColumn("address_tokens", ExportType::kStringList);
+    }
 
-    bool Open(const std::string& path, const arrow::Schema& schema, std::string* error) {
+    bool Open(const std::string& path, std::string* error) {
         this->path = path;
-        auto sink_result = arrow::io::FileOutputStream::Open(path);
-        if (!sink_result.ok()) {
-            *error = "cannot create " + path + ": " + sink_result.status().message();
-            return false;
-        }
-        auto props = parquet::WriterProperties::Builder()
-                         .compression(parquet::Compression::SNAPPY)
-                         ->build();
-        auto writer_result = parquet::arrow::FileWriter::Open(
-            schema, arrow::default_memory_pool(), *sink_result, props);
-        if (!writer_result.ok()) {
-            *error = "cannot open parquet writer for " + path + ": " +
-                     writer_result.status().message();
-            return false;
-        }
-        writer = std::move(*writer_result);
-        return true;
+        ArrowSchema schema;
+        builder.ExportSchema(&schema);
+        const bool ok = writer.Open(path, schema, error);
+        schema.release(&schema);
+        writing = ok;
+        return ok;
     }
 
-    bool Append(const SampleRecord& record, const std::string& identifier,
-                std::string* error) {
-        auto status = id.Append(identifier);
-        status &= first.Append(record.first_name);
-        status &= last.Append(record.last_name);
-        status &= record.gender < 0 ? gender.AppendNull()
-                                    : gender.Append(record.gender == 1 ? "M" : "F");
-        status &= dob.Append(record.dob);
-        status &= record.email.empty() ? email.AppendNull() : email.Append(record.email);
-        status &= record.phone.empty() ? phone.AppendNull() : phone.Append(record.phone);
-        status &= record.postcode.empty() ? postcode.AppendNull()
-                                          : postcode.Append(record.postcode);
-        status &= latitude.Append(record.latitude);
-        status &= longitude.Append(record.longitude);
-        status &= tokens.Append();
-        for (const std::string& token : record.address_tokens) {
-            status &= token_values->Append(token);
+    void Append(const SampleRecord& record, const std::string& identifier) {
+        builder.AppendString(0, identifier);
+        builder.AppendString(1, record.first_name);
+        builder.AppendString(2, record.last_name);
+        if (record.gender < 0) {
+            builder.AppendNull(3);
+        } else {
+            builder.AppendString(3, record.gender == 1 ? "M" : "F");
         }
-        if (!status.ok()) {
-            *error = "building row " + identifier + ": " + status.message();
-            return false;
+        builder.AppendDate32(4, record.dob);
+        if (record.email.empty()) {
+            builder.AppendNull(5);
+        } else {
+            builder.AppendString(5, record.email);
         }
-        ++pending;
-        return true;
+        if (record.phone.empty()) {
+            builder.AppendNull(6);
+        } else {
+            builder.AppendString(6, record.phone);
+        }
+        if (record.postcode.empty()) {
+            builder.AppendNull(7);
+        } else {
+            builder.AppendString(7, record.postcode);
+        }
+        builder.AppendDouble(8, record.latitude);
+        builder.AppendDouble(9, record.longitude);
+        builder.AppendStringList(10, record.address_tokens);
     }
 
-    bool Flush(const std::shared_ptr<arrow::Schema>& schema, std::string* error) {
-        if (pending == 0) return true;
-        std::vector<std::shared_ptr<arrow::Array>> arrays(11);
-        arrow::Status status = id.Finish(&arrays[0]);
-        status &= first.Finish(&arrays[1]);
-        status &= last.Finish(&arrays[2]);
-        status &= gender.Finish(&arrays[3]);
-        status &= dob.Finish(&arrays[4]);
-        status &= email.Finish(&arrays[5]);
-        status &= phone.Finish(&arrays[6]);
-        status &= postcode.Finish(&arrays[7]);
-        status &= latitude.Finish(&arrays[8]);
-        status &= longitude.Finish(&arrays[9]);
-        status &= tokens.Finish(&arrays[10]);
-        if (!status.ok()) {
-            *error = "finishing a batch: " + status.message();
-            return false;
-        }
-        const auto table =
-            arrow::Table::Make(schema, arrays, static_cast<int64_t>(pending));
-        status = writer->WriteTable(*table, static_cast<int64_t>(pending));
-        if (!status.ok()) {
-            *error = "writing a row group to " + path + ": " + status.message();
-            return false;
-        }
-        pending = 0;
-        return true;
+    uint64_t Pending() const { return static_cast<uint64_t>(builder.Rows()); }
+
+    // A sink with no file keeps every row in its builder.
+    bool Flush(std::string* error) {
+        if (!writing || builder.Rows() == 0) return true;
+        ArrowArray batch;
+        if (!builder.ExportBatch(&batch, error)) return false;
+        return writer.Write(&batch, error);
     }
 
-    bool Close(std::string* error) {
-        const arrow::Status closed = writer->Close();
-        if (!closed.ok()) {
-            *error = "closing " + path + ": " + closed.message();
-            return false;
-        }
-        return true;
-    }
+    bool Close(std::string* error) { return !writing || writer.Close(error); }
 
-    arrow::StringBuilder id, first, last, gender, email, phone, postcode;
-    arrow::Date32Builder dob;
-    arrow::DoubleBuilder latitude, longitude;
-    std::shared_ptr<arrow::StringBuilder> token_values;
-    arrow::ListBuilder tokens;
-    uint64_t pending = 0;
+    BatchBuilder builder;
     std::string path;
-    std::unique_ptr<parquet::arrow::FileWriter> writer;
+    bool writing = false;
+    ParquetWriter writer;
 };
 
-}  // namespace
-
-bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
-                        std::string* error) {
-    const auto schema = MakeArrowSchema();
-    auto* pool = arrow::default_memory_pool();
-
-    // One sink per output file. With more than one file every planted duplicate is
-    // routed to one of the later ones, so the files are exactly the link fixture
-    // the cross-dataset path needs: every recorded pair crosses them.
-    std::vector<std::unique_ptr<RowSink>> sinks;
-    sinks.push_back(std::make_unique<RowSink>(pool));
-    if (!sinks.back()->Open(path, *schema, error)) return false;
-    const bool linking = !options.link_paths.empty();
-    for (const std::string& link_path : options.link_paths) {
-        sinks.push_back(std::make_unique<RowSink>(pool));
-        if (!sinks.back()->Open(link_path, *schema, error)) return false;
-    }
+// Plants the rows into the sinks: originals into the first, every duplicate into
+// one of the later ones where there are any. The one generator behind both the
+// files and the in-memory tables.
+bool GenerateInto(const SampleOptions& options,
+                  std::vector<std::unique_ptr<RowSink>>* sinks_ptr, std::string* error) {
+    std::vector<std::unique_ptr<RowSink>>& sinks = *sinks_ptr;
+    const bool linking = sinks.size() > 1;
     // Never asked when there is no later file, but constructed either way, and a
     // distribution over an empty range is undefined.
     std::uniform_int_distribution<size_t> which_link(
@@ -429,17 +364,51 @@ bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
         // A duplicate lands in one of the later files, drawn from the planner so
         // the file a row lands in is as reproducible as the row.
         RowSink& sink = *sinks[linking && duplicate ? which_link(planner) : 0];
-        if (!sink.Append(record, identifier, error)) return false;
-        if (sink.pending >= static_cast<uint64_t>(options.row_group_size) &&
-            !sink.Flush(schema, error)) {
+        sink.Append(record, identifier);
+        if (sink.Pending() >= static_cast<uint64_t>(options.row_group_size) &&
+            !sink.Flush(error)) {
             return false;
         }
     }
 
     for (const std::unique_ptr<RowSink>& sink : sinks) {
-        if (!sink->Flush(schema, error)) return false;
+        if (!sink->Flush(error)) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool WriteSampleParquet(const std::string& path, const SampleOptions& options,
+                        std::string* error) {
+    // One sink per output file. With more than one file every planted duplicate is
+    // routed to one of the later ones, so the files are exactly the link fixture
+    // the cross-dataset path needs: every recorded pair crosses them.
+    std::vector<std::unique_ptr<RowSink>> sinks;
+    sinks.push_back(std::make_unique<RowSink>());
+    if (!sinks.back()->Open(path, error)) return false;
+    for (const std::string& link_path : options.link_paths) {
+        sinks.push_back(std::make_unique<RowSink>());
+        if (!sinks.back()->Open(link_path, error)) return false;
+    }
+    if (!GenerateInto(options, &sinks, error)) return false;
+    for (const std::unique_ptr<RowSink>& sink : sinks) {
         if (!sink->Close(error)) return false;
     }
+    return true;
+}
+
+bool GenerateSampleTables(const SampleOptions& options, std::vector<BatchBuilder>* tables,
+                          std::string* error) {
+    std::vector<std::unique_ptr<RowSink>> sinks;
+    sinks.push_back(std::make_unique<RowSink>());
+    for (size_t i = 0; i < options.link_paths.size(); ++i) {
+        sinks.push_back(std::make_unique<RowSink>());
+    }
+    if (!GenerateInto(options, &sinks, error)) return false;
+    tables->clear();
+    for (std::unique_ptr<RowSink>& sink : sinks)
+        tables->push_back(std::move(sink->builder));
     return true;
 }
 

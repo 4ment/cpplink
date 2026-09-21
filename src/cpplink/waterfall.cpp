@@ -15,14 +15,12 @@
 #include <utility>
 #include <vector>
 
-#include <arrow/api.h>
-#include <arrow/io/api.h>
-#include <parquet/arrow/reader.h>
-#include <parquet/arrow/writer.h>
-
+#include "cpplink/arrow_export.hpp"
 #include "cpplink/explain.hpp"
 #include "cpplink/format.hpp"
 #include "cpplink/id_index.hpp"
+#include "cpplink/merge_edges.hpp"
+#include "cpplink/parquet_io.hpp"
 
 namespace cpplink {
 namespace {
@@ -72,107 +70,27 @@ bool ForEachCsvPrediction(const std::string& path, const PredictionSink& sink,
     return true;
 }
 
+// Every row of the merged parquet, through the same reader clustering uses. A
+// row with a null id is skipped, as the csv reader skips what it cannot parse.
 bool ForEachParquetPrediction(const std::string& path, const PredictionSink& sink,
                               std::string* error) {
-    auto input = arrow::io::ReadableFile::Open(path);
-    if (!input.ok()) {
-        *error = "explain: cannot open " + path + ": " + input.status().message();
-        return false;
-    }
-    parquet::arrow::FileReaderBuilder builder;
-    arrow::Status status = builder.Open(*input);
-    if (!status.ok()) {
-        *error =
-            "explain: cannot read parquet metadata for " + path + ": " + status.message();
-        return false;
-    }
-    auto reader_result = builder.Build();
-    if (!reader_result.ok()) {
-        *error = "explain: cannot open parquet reader for " + path + ": " +
-                 reader_result.status().message();
-        return false;
-    }
-    std::unique_ptr<parquet::arrow::FileReader> reader = std::move(*reader_result);
-    std::shared_ptr<arrow::Schema> schema;
-    status = reader->GetSchema(&schema);
-    if (!status.ok()) {
-        *error = "explain: cannot read the schema of " + path + ": " + status.message();
-        return false;
-    }
-    std::vector<int> indices;
-    for (const char* name : {"id_a", "id_b", "gamma"}) {
-        const int at = schema->GetFieldIndex(name);
-        if (at < 0) {
-            *error = "explain: '" + path + "' has no column \"" + name +
-                     "\", so it is not a cpplink prediction file";
-            return false;
-        }
-        indices.push_back(at);
-    }
-    const bool datasets = schema->GetFieldIndex("dataset_a") >= 0;
-    if (datasets) {
-        for (const char* name : {"dataset_a", "dataset_b"}) {
-            const int at = schema->GetFieldIndex(name);
-            if (at < 0) {
-                *error = "explain: '" + path + "' has dataset_a but no " + name;
-                return false;
+    EdgeColumns columns;
+    return ReadPredictionFile(
+        path, "explain", {"gamma"}, &columns,
+        [&](const EdgeRow& edge, std::string* visit_error) {
+            if (edge.id_a.empty() || edge.id_b.empty()) return true;
+            if (columns.datasets && (edge.dataset_a.empty() || edge.dataset_b.empty())) {
+                return true;
             }
-            indices.push_back(at);
-        }
-    }
-    for (int group = 0; group < reader->num_row_groups(); ++group) {
-        auto group_result = reader->ReadRowGroup(group, indices);
-        if (!group_result.ok()) {
-            *error = "explain: cannot read row group " + std::to_string(group) + " of " +
-                     path + ": " + group_result.status().message();
-            return false;
-        }
-        const std::shared_ptr<arrow::Table> table = *group_result;
-        const auto ids_a = table->GetColumnByName("id_a");
-        const auto ids_b = table->GetColumnByName("id_b");
-        const auto gammas = table->GetColumnByName("gamma");
-        const auto sets_a = datasets ? table->GetColumnByName("dataset_a") : nullptr;
-        const auto sets_b = datasets ? table->GetColumnByName("dataset_b") : nullptr;
-        for (int chunk = 0; chunk < ids_a->num_chunks(); ++chunk) {
-            const auto a_array =
-                std::dynamic_pointer_cast<arrow::StringArray>(ids_a->chunk(chunk));
-            const auto b_array =
-                std::dynamic_pointer_cast<arrow::StringArray>(ids_b->chunk(chunk));
-            const auto gamma_array =
-                std::dynamic_pointer_cast<arrow::UInt32Array>(gammas->chunk(chunk));
-            std::shared_ptr<arrow::StringArray> set_a;
-            std::shared_ptr<arrow::StringArray> set_b;
-            if (datasets) {
-                set_a =
-                    std::dynamic_pointer_cast<arrow::StringArray>(sets_a->chunk(chunk));
-                set_b =
-                    std::dynamic_pointer_cast<arrow::StringArray>(sets_b->chunk(chunk));
-            }
-            if (a_array == nullptr || b_array == nullptr || gamma_array == nullptr ||
-                (datasets && (set_a == nullptr || set_b == nullptr))) {
-                *error = "explain: '" + path +
-                         "' holds id_a, id_b, dataset_a, dataset_b or gamma in a type "
-                         "a cpplink prediction file does not use";
-                return false;
-            }
-            for (int64_t row = 0; row < a_array->length(); ++row) {
-                if (a_array->IsNull(row) || b_array->IsNull(row) ||
-                    (datasets && (set_a->IsNull(row) || set_b->IsNull(row)))) {
-                    continue;
-                }
-                NamedPrediction prediction;
-                if (datasets) {
-                    prediction.dataset_a = set_a->GetView(row);
-                    prediction.dataset_b = set_b->GetView(row);
-                }
-                prediction.id_a = a_array->GetView(row);
-                prediction.id_b = b_array->GetView(row);
-                prediction.gamma = gamma_array->IsNull(row) ? 0 : gamma_array->Value(row);
-                if (!sink(prediction, error)) return false;
-            }
-        }
-    }
-    return true;
+            NamedPrediction prediction;
+            prediction.dataset_a = edge.dataset_a;
+            prediction.id_a = edge.id_a;
+            prediction.dataset_b = edge.dataset_b;
+            prediction.id_b = edge.id_b;
+            prediction.gamma = edge.gamma;
+            return sink(prediction, visit_error);
+        },
+        error);
 }
 
 // Column names are the comparison's name with a suffix, and an interaction's is
@@ -259,97 +177,77 @@ class CsvWideSink : public WideSink {
     std::string buffer_;
 };
 
+// The wide row as C Data batches handed to the parquet writer: the same builder
+// a data frame is handed in Python, so the two cannot name a column differently.
 class ParquetWideSink : public WideSink {
    public:
     ParquetWideSink(size_t batch_rows, size_t comparisons, size_t interactions)
         : batch_rows_(batch_rows == 0 ? 1 : batch_rows),
-          levels_(comparisons),
-          bits_(comparisons),
-          tf_(comparisons),
-          frequency_(comparisons),
-          interaction_(interactions) {}
+          comparisons_(comparisons),
+          interactions_(interactions) {}
 
     bool Open(const std::string& path, const std::vector<std::string>& columns,
               std::string* error) {
         path_ = path;
-        std::vector<std::shared_ptr<arrow::Field>> fields = {
-            arrow::field("id_a", arrow::utf8()),
-            arrow::field("id_b", arrow::utf8()),
-            arrow::field("gamma", arrow::uint32()),
-            arrow::field("prior", arrow::float64()),
-            arrow::field("match_weight", arrow::float64()),
-            arrow::field("match_probability", arrow::float64()),
-            arrow::field("bracket_low", arrow::float64()),
-            arrow::field("bracket_high", arrow::float64()),
-            arrow::field("threshold", arrow::float64()),
-            arrow::field("zone", arrow::utf8()),
-            arrow::field("emitted", arrow::boolean()),
-        };
+        builder_.AddColumn("id_a", ExportType::kString);
+        builder_.AddColumn("id_b", ExportType::kString);
+        builder_.AddColumn("gamma", ExportType::kUInt32);
+        builder_.AddColumn("prior", ExportType::kDouble);
+        builder_.AddColumn("match_weight", ExportType::kDouble);
+        builder_.AddColumn("match_probability", ExportType::kDouble);
+        builder_.AddColumn("bracket_low", ExportType::kDouble);
+        builder_.AddColumn("bracket_high", ExportType::kDouble);
+        builder_.AddColumn("threshold", ExportType::kDouble);
+        builder_.AddColumn("zone", ExportType::kString);
+        builder_.AddColumn("emitted", ExportType::kBoolean);
         size_t at = kFixedColumns;
-        for (size_t c = 0; c < levels_.size(); ++c) {
-            fields.push_back(arrow::field(columns[at++], arrow::uint8()));
-            fields.push_back(arrow::field(columns[at++], arrow::float64()));
-            fields.push_back(arrow::field(columns[at++], arrow::float64()));
-            fields.push_back(arrow::field(columns[at++], arrow::uint32()));
+        for (size_t c = 0; c < comparisons_; ++c) {
+            builder_.AddColumn(columns[at++], ExportType::kUInt8);
+            builder_.AddColumn(columns[at++], ExportType::kDouble);
+            builder_.AddColumn(columns[at++], ExportType::kDouble);
+            builder_.AddColumn(columns[at++], ExportType::kUInt32);
         }
-        for (size_t i = 0; i < interaction_.size(); ++i) {
-            fields.push_back(arrow::field(columns[at++], arrow::float64()));
+        for (size_t i = 0; i < interactions_; ++i) {
+            builder_.AddColumn(columns[at++], ExportType::kDouble);
         }
-        schema_ = arrow::schema(fields);
-        auto sink = arrow::io::FileOutputStream::Open(path);
-        if (!sink.ok()) {
-            *error = "explain: cannot create " + path + ": " + sink.status().message();
-            return false;
-        }
-        auto props = parquet::WriterProperties::Builder()
-                         .compression(parquet::Compression::SNAPPY)
-                         ->build();
-        auto writer = parquet::arrow::FileWriter::Open(
-            *schema_, arrow::default_memory_pool(), *sink, props);
-        if (!writer.ok()) {
-            *error = "explain: cannot open parquet writer for " + path + ": " +
-                     writer.status().message();
-            return false;
-        }
-        writer_ = std::move(*writer);
-        return true;
+        ArrowSchema schema;
+        builder_.ExportSchema(&schema);
+        const bool ok = writer_.Open(path, schema, error);
+        schema.release(&schema);
+        if (!ok) *error = "explain: " + *error;
+        return ok;
     }
 
     bool Write(const PairWaterfall& w, std::string* error) override {
-        arrow::Status status = id_a_.Append(w.id_a);
-        status &= id_b_.Append(w.id_b);
-        status &= gamma_.Append(w.gamma);
-        status &= prior_.Append(w.prior);
-        status &= weight_.Append(w.weight);
-        status &= probability_.Append(w.probability);
-        status &= low_.Append(w.bracket_low);
-        status &= high_.Append(w.bracket_high);
-        status &= threshold_.Append(w.threshold);
-        status &= zone_.Append(ZoneName(w.zone));
-        status &= emitted_.Append(w.emitted);
+        int at = 0;
+        builder_.AppendString(at++, w.id_a);
+        builder_.AppendString(at++, w.id_b);
+        builder_.AppendUInt32(at++, w.gamma);
+        builder_.AppendDouble(at++, w.prior);
+        builder_.AppendDouble(at++, w.weight);
+        builder_.AppendDouble(at++, w.probability);
+        builder_.AppendDouble(at++, w.bracket_low);
+        builder_.AppendDouble(at++, w.bracket_high);
+        builder_.AppendDouble(at++, w.threshold);
+        builder_.AppendString(at++, ZoneName(w.zone));
+        builder_.AppendBoolean(at++, w.emitted);
         for (size_t c = 0; c < w.steps.size(); ++c) {
-            status &= levels_[c].Append(w.steps[c].level);
-            status &= bits_[c].Append(w.steps[c].bits);
-            status &= tf_[c].Append(w.steps[c].tf);
-            status &= frequency_[c].Append(w.steps[c].frequency);
+            builder_.AppendUInt8(at++, w.steps[c].level);
+            builder_.AppendDouble(at++, w.steps[c].bits);
+            builder_.AppendDouble(at++, w.steps[c].tf);
+            builder_.AppendUInt32(at++, w.steps[c].frequency);
         }
         for (size_t i = 0; i < w.interactions.size(); ++i) {
-            status &= interaction_[i].Append(w.interactions[i].bits);
+            builder_.AppendDouble(at++, w.interactions[i].bits);
         }
-        if (!status.ok()) {
-            *error = "explain: building a row: " + status.message();
-            return false;
-        }
-        ++pending_;
-        if (pending_ >= batch_rows_) return Flush(error);
+        if (builder_.Rows() >= static_cast<int64_t>(batch_rows_)) return Flush(error);
         return true;
     }
 
     bool Close(std::string* error) override {
         if (!Flush(error)) return false;
-        const arrow::Status closed = writer_->Close();
-        if (!closed.ok()) {
-            *error = "explain: closing " + path_ + ": " + closed.message();
+        if (!writer_.Close(error)) {
+            *error = "explain: " + *error;
             return false;
         }
         return true;
@@ -357,61 +255,21 @@ class ParquetWideSink : public WideSink {
 
    private:
     bool Flush(std::string* error) {
-        if (pending_ == 0) return true;
-        std::vector<std::shared_ptr<arrow::Array>> arrays;
-        arrays.reserve(static_cast<size_t>(schema_->num_fields()));
-        arrow::Status status;
-        const auto finish = [&](arrow::ArrayBuilder* builder) {
-            std::shared_ptr<arrow::Array> array;
-            status &= builder->Finish(&array);
-            arrays.push_back(std::move(array));
-        };
-        finish(&id_a_);
-        finish(&id_b_);
-        finish(&gamma_);
-        finish(&prior_);
-        finish(&weight_);
-        finish(&probability_);
-        finish(&low_);
-        finish(&high_);
-        finish(&threshold_);
-        finish(&zone_);
-        finish(&emitted_);
-        for (size_t c = 0; c < levels_.size(); ++c) {
-            finish(&levels_[c]);
-            finish(&bits_[c]);
-            finish(&tf_[c]);
-            finish(&frequency_[c]);
-        }
-        for (auto& builder : interaction_) finish(&builder);
-        if (!status.ok()) {
-            *error = "explain: finishing a batch: " + status.message();
+        if (builder_.Rows() == 0) return true;
+        ArrowArray batch;
+        if (!builder_.ExportBatch(&batch, error) || !writer_.Write(&batch, error)) {
+            *error = "explain: " + *error;
             return false;
         }
-        const auto table =
-            arrow::Table::Make(schema_, arrays, static_cast<int64_t>(pending_));
-        status = writer_->WriteTable(*table, static_cast<int64_t>(pending_));
-        if (!status.ok()) {
-            *error = "explain: writing a row group to " + path_ + ": " + status.message();
-            return false;
-        }
-        pending_ = 0;
         return true;
     }
 
     size_t batch_rows_;
-    std::shared_ptr<arrow::Schema> schema_;
-    arrow::StringBuilder id_a_, id_b_, zone_;
-    arrow::UInt32Builder gamma_;
-    arrow::DoubleBuilder prior_, weight_, probability_, low_, high_, threshold_;
-    arrow::BooleanBuilder emitted_;
-    std::vector<arrow::UInt8Builder> levels_;
-    std::vector<arrow::DoubleBuilder> bits_, tf_;
-    std::vector<arrow::UInt32Builder> frequency_;
-    std::vector<arrow::DoubleBuilder> interaction_;
-    size_t pending_ = 0;
+    size_t comparisons_;
+    size_t interactions_;
+    BatchBuilder builder_;
     std::string path_;
-    std::unique_ptr<parquet::arrow::FileWriter> writer_;
+    ParquetWriter writer_;
 };
 
 }  // namespace

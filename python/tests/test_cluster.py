@@ -14,7 +14,8 @@ from conftest import ROWS
 
 
 def test_views_are_one_entry_per_record(sample, tmp_path: Path) -> None:
-    result = sample.linker.cluster(sample.predictions, out=tmp_path / "c.csv")
+    sample.linker.cluster(sample.predictions, out=tmp_path / "c.csv")
+    result = sample.linker.last_cluster
     root = result.assignment.root
     size = result.assignment.size
     assert isinstance(root, np.ndarray) and root.dtype == np.uint32
@@ -38,7 +39,8 @@ def test_views_are_one_entry_per_record(sample, tmp_path: Path) -> None:
 
 def test_views_agree_with_the_written_clusters(sample, tmp_path: Path) -> None:
     out = tmp_path / "clusters.csv"
-    result = sample.linker.cluster(sample.predictions, out=out)
+    sample.linker.cluster(sample.predictions, out=out)
+    result = sample.linker.last_cluster
     with open(out, newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == result.report.written
@@ -58,7 +60,8 @@ def test_views_agree_with_the_written_clusters(sample, tmp_path: Path) -> None:
 
 
 def test_view_outlives_the_result(sample) -> None:
-    root = sample.linker.cluster(sample.predictions).assignment.root
+    sample.linker.cluster(sample.predictions)
+    root = sample.linker.last_cluster.assignment.root
     import gc
 
     gc.collect()
@@ -67,8 +70,10 @@ def test_view_outlives_the_result(sample) -> None:
 
 
 def test_threshold_reclusters_without_rescoring(sample) -> None:
-    low = sample.linker.cluster(sample.predictions)
-    high = sample.linker.cluster(sample.predictions, threshold=60)
+    sample.linker.cluster(sample.predictions)
+    low = sample.linker.last_cluster
+    sample.linker.cluster(sample.predictions, threshold=60)
+    high = sample.linker.last_cluster
     assert high.report.predictions_used < low.report.predictions_used
     assert high.report.clusters <= low.report.clusters
     assert high.report.predictions_read == low.report.predictions_read

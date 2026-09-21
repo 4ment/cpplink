@@ -78,8 +78,14 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
         return false;
     }
 
+    const bool to_files = !options.out_dir.empty();
+    if (!to_files && options.table == nullptr) {
+        *error =
+            "rescore: nowhere to put the predictions, neither a directory nor a table";
+        return false;
+    }
     std::error_code ec;
-    std::filesystem::create_directories(options.out_dir, ec);
+    if (to_files) std::filesystem::create_directories(options.out_dir, ec);
     if (ec) {
         *error =
             "cannot create output directory \"" + options.out_dir + "\": " + ec.message();
@@ -91,7 +97,7 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
     const char* suffix = options.format == EdgeFormat::kBinary ? ".bin" : ".csv";
     std::vector<std::unique_ptr<EdgeShardWriter>> writers;
     writers.reserve(threads);
-    for (unsigned t = 0; t < threads; ++t) {
+    for (unsigned t = 0; t < threads && to_files; ++t) {
         const std::string path =
             (std::filesystem::path(options.out_dir) / (EdgeShardName(t) + suffix))
                 .string();
@@ -112,10 +118,12 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
     std::vector<std::string> failures(threads);
     const uint64_t limit = options.max_edges;
     const bool csv = options.format == EdgeFormat::kCsv;
+    std::vector<EdgeTable> tables(options.table != nullptr ? threads : 0);
 
     auto work = [&](unsigned t) {
         ThreadTally* counts = &tally[t];
-        EdgeShardWriter* writer = writers[t].get();
+        EdgeShardWriter* writer = to_files ? writers[t].get() : nullptr;
+        EdgeTable* table = tables.empty() ? nullptr : &tables[t];
         std::vector<uint32_t> batch(kBatchPairs * 3);
         for (;;) {
             const size_t index = next.fetch_add(1);
@@ -147,6 +155,8 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
                     }
                     if (limit > 0 && emitted.fetch_add(1) >= limit) continue;
                     ++counts->edges;
+                    if (table != nullptr) table->Push(a, b, gamma, weight);
+                    if (writer == nullptr) continue;
                     if (csv) {
                         writer->WriteCsv(store, a, b, gamma, weight);
                     } else {
@@ -174,7 +184,7 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
         }
     }
     for (unsigned t = 0; t < threads; ++t) {
-        if (!writers[t]->Close()) {
+        if (to_files && !writers[t]->Close()) {
             *error = "failed while writing \"" + report->shards[t] + "\"";
             return false;
         }
@@ -183,11 +193,14 @@ bool Rescore(const RecordStore& store, const ComparisonSet& comparisons,
         report->dropped += tally[t].dropped;
         report->tf_lookups += tally[t].tf_lookups;
     }
+    if (options.table != nullptr) {
+        for (EdgeTable& t : tables) options.table->Append(&t);
+    }
     report->threads = threads;
     report->truncated = limit > 0 && emitted.load() > limit;
     report->below_spill_threshold = report->manifest.sample_rate <= 0.0 &&
                                     scorer.threshold() < report->manifest.threshold;
-    if (!options.merge_path.empty()) {
+    if (!options.merge_path.empty() && to_files) {
         if (!MergeStagedShards(store, options.out_dir, options.merge_path,
                                options.format == EdgeFormat::kBinary,
                                &report->merge_seconds, error)) {
@@ -221,7 +234,9 @@ void PrintRescoreReport(const RescoreReport& report, const Scorer& scorer,
             << static_cast<double>(report.pairs) / report.seconds << " pairs/s)";
     }
     out << "\n";
-    if (report.merged_path.empty()) {
+    if (report.merged_path.empty() && report.shards.empty()) {
+        out << "  kept in memory\n";
+    } else if (report.merged_path.empty()) {
         for (const std::string& shard : report.shards) out << "  " << shard << "\n";
     } else {
         out << "  " << report.merged_path << "  (" << report.threads << " shard"

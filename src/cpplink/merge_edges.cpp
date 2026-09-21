@@ -17,11 +17,10 @@
 #include <utility>
 #include <vector>
 
-#include <arrow/api.h>
-#include <arrow/io/api.h>
-#include <parquet/arrow/writer.h>
-
+#include "cpplink/arrow_export.hpp"
+#include "cpplink/batch_loader.hpp"
 #include "cpplink/format.hpp"
+#include "cpplink/parquet_io.hpp"
 #include "cpplink/predict.hpp"
 #include "cpplink/score.hpp"
 
@@ -110,72 +109,47 @@ class CsvSink : public EdgeSink {
     std::string buffer_;
 };
 
-// The csv columns, typed, in the same order and under the same names.
-std::shared_ptr<arrow::Schema> MergedArrowSchema(bool datasets) {
-    std::vector<std::shared_ptr<arrow::Field>> fields;
-    if (datasets) fields.push_back(arrow::field("dataset_a", arrow::utf8()));
-    fields.push_back(arrow::field("id_a", arrow::utf8()));
-    if (datasets) fields.push_back(arrow::field("dataset_b", arrow::utf8()));
-    fields.push_back(arrow::field("id_b", arrow::utf8()));
-    fields.push_back(arrow::field("gamma", arrow::uint32()));
-    fields.push_back(arrow::field("match_weight", arrow::float64()));
-    fields.push_back(arrow::field("match_probability", arrow::float64()));
-    return arrow::schema(fields);
-}
-
+// The csv columns, typed, in the same order and under the same names. The rows
+// are built as C Data batches and handed to the parquet writer, which is the
+// same builder a data frame is handed in Python.
 class ParquetSink : public EdgeSink {
    public:
     ParquetSink(size_t batch_rows, bool datasets)
-        : batch_rows_(batch_rows == 0 ? 1 : batch_rows),
-          datasets_(datasets),
-          schema_(MergedArrowSchema(datasets)) {}
+        : batch_rows_(batch_rows == 0 ? 1 : batch_rows), datasets_(datasets) {
+        if (datasets) dataset_a_ = builder_.AddColumn("dataset_a", ExportType::kString);
+        id_a_ = builder_.AddColumn("id_a", ExportType::kString);
+        if (datasets) dataset_b_ = builder_.AddColumn("dataset_b", ExportType::kString);
+        id_b_ = builder_.AddColumn("id_b", ExportType::kString);
+        gamma_ = builder_.AddColumn("gamma", ExportType::kUInt32);
+        weight_ = builder_.AddColumn("match_weight", ExportType::kDouble);
+        probability_ = builder_.AddColumn("match_probability", ExportType::kDouble);
+    }
 
     bool Open(const std::string& path, std::string* error) {
-        path_ = path;
-        auto sink = arrow::io::FileOutputStream::Open(path);
-        if (!sink.ok()) {
-            *error = "merging predictions: cannot create " + path + ": " +
-                     sink.status().message();
-            return false;
-        }
-        auto props = parquet::WriterProperties::Builder()
-                         .compression(parquet::Compression::SNAPPY)
-                         ->build();
-        auto writer = parquet::arrow::FileWriter::Open(
-            *schema_, arrow::default_memory_pool(), *sink, props);
-        if (!writer.ok()) {
-            *error = "merging predictions: cannot open parquet writer for " + path +
-                     ": " + writer.status().message();
-            return false;
-        }
-        writer_ = std::move(*writer);
-        return true;
+        ArrowSchema schema;
+        builder_.ExportSchema(&schema);
+        const bool ok = writer_.Open(path, schema, error);
+        schema.release(&schema);
+        if (!ok) *error = "merging predictions: " + *error;
+        return ok;
     }
 
     bool Write(const EdgeRow& edge, std::string* error) override {
-        arrow::Status status = id_a_.Append(edge.id_a);
-        status &= id_b_.Append(edge.id_b);
-        if (datasets_) {
-            status &= dataset_a_.Append(edge.dataset_a);
-            status &= dataset_b_.Append(edge.dataset_b);
-        }
-        status &= gamma_.Append(edge.gamma);
-        status &= weight_.Append(edge.weight);
-        status &= probability_.Append(ProbabilityForWeight(edge.weight));
-        if (!status.ok()) {
-            *error = "merging predictions: building a row: " + status.message();
-            return false;
-        }
-        ++pending_;
-        if (pending_ >= batch_rows_) return Flush(error);
+        if (datasets_) builder_.AppendString(dataset_a_, edge.dataset_a);
+        builder_.AppendString(id_a_, edge.id_a);
+        if (datasets_) builder_.AppendString(dataset_b_, edge.dataset_b);
+        builder_.AppendString(id_b_, edge.id_b);
+        builder_.AppendUInt32(gamma_, edge.gamma);
+        builder_.AppendDouble(weight_, edge.weight);
+        builder_.AppendDouble(probability_, ProbabilityForWeight(edge.weight));
+        if (builder_.Rows() >= static_cast<int64_t>(batch_rows_)) return Flush(error);
         return true;
     }
 
     bool Close(std::string* error) override {
         if (!Flush(error)) return false;
-        const arrow::Status closed = writer_->Close();
-        if (!closed.ok()) {
-            *error = "merging predictions: closing " + path_ + ": " + closed.message();
+        if (!writer_.Close(error)) {
+            *error = "merging predictions: " + *error;
             return false;
         }
         return true;
@@ -183,47 +157,21 @@ class ParquetSink : public EdgeSink {
 
    private:
     bool Flush(std::string* error) {
-        if (pending_ == 0) return true;
-        std::vector<std::shared_ptr<arrow::Array>> arrays;
-        arrays.reserve(7);
-        arrow::Status status;
-        auto take = [&](arrow::ArrayBuilder* builder) {
-            std::shared_ptr<arrow::Array> array;
-            status &= builder->Finish(&array);
-            arrays.push_back(std::move(array));
-        };
-        if (datasets_) take(&dataset_a_);
-        take(&id_a_);
-        if (datasets_) take(&dataset_b_);
-        take(&id_b_);
-        take(&gamma_);
-        take(&weight_);
-        take(&probability_);
-        if (!status.ok()) {
-            *error = "merging predictions: finishing a batch: " + status.message();
+        if (builder_.Rows() == 0) return true;
+        ArrowArray batch;
+        if (!builder_.ExportBatch(&batch, error) || !writer_.Write(&batch, error)) {
+            *error = "merging predictions: " + *error;
             return false;
         }
-        const auto table =
-            arrow::Table::Make(schema_, arrays, static_cast<int64_t>(pending_));
-        status = writer_->WriteTable(*table, static_cast<int64_t>(pending_));
-        if (!status.ok()) {
-            *error = "merging predictions: writing a row group to " + path_ + ": " +
-                     status.message();
-            return false;
-        }
-        pending_ = 0;
         return true;
     }
 
     size_t batch_rows_;
     bool datasets_;
-    std::shared_ptr<arrow::Schema> schema_;
-    arrow::StringBuilder dataset_a_, dataset_b_, id_a_, id_b_;
-    arrow::UInt32Builder gamma_;
-    arrow::DoubleBuilder weight_, probability_;
-    size_t pending_ = 0;
-    std::string path_;
-    std::unique_ptr<parquet::arrow::FileWriter> writer_;
+    BatchBuilder builder_;
+    int dataset_a_ = -1, id_a_ = -1, dataset_b_ = -1, id_b_ = -1;
+    int gamma_ = -1, weight_ = -1, probability_ = -1;
+    ParquetWriter writer_;
 };
 
 bool CollectShards(const std::string& dir, MergeSource wanted,
@@ -525,6 +473,142 @@ bool MergeStagedShards(const RecordStore& store, const std::string& staging,
     *seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return true;
+}
+
+bool ReadPredictionStream(ArrowArrayStream* stream, const std::string& what,
+                          const std::string& source,
+                          const std::vector<std::string>& required, EdgeColumns* columns,
+                          const EdgeVisitor& visit, std::string* error) {
+    auto release = [&]() {
+        if (stream->release != nullptr) stream->release(stream);
+    };
+    ArrowSchema schema;
+    schema.release = nullptr;
+    if (const int code = stream->get_schema(stream, &schema); code != 0) {
+        const char* detail =
+            stream->get_last_error == nullptr ? nullptr : stream->get_last_error(stream);
+        *error = what + ": cannot read the schema of '" + source +
+                 "': " + (detail == nullptr ? "error " + std::to_string(code) : detail);
+        release();
+        return false;
+    }
+    auto fail = [&](const std::string& message) {
+        *error = what + ": " + message;
+        schema.release(&schema);
+        release();
+        return false;
+    };
+
+    const int id_a = FieldIndex(schema, "id_a");
+    const int id_b = FieldIndex(schema, "id_b");
+    if (id_a < 0 || id_b < 0) {
+        return fail("'" + source + "' has no column \"" + (id_a < 0 ? "id_a" : "id_b") +
+                    "\", so it is not a cpplink prediction table");
+    }
+    const int dataset_a = FieldIndex(schema, "dataset_a");
+    const int dataset_b = FieldIndex(schema, "dataset_b");
+    if ((dataset_a < 0) != (dataset_b < 0)) {
+        return fail("'" + source + "' has " +
+                    (dataset_a < 0 ? "dataset_b" : "dataset_a") + " but no " +
+                    (dataset_a < 0 ? "dataset_a" : "dataset_b"));
+    }
+    const int weight = FieldIndex(schema, "match_weight");
+    const int gamma = FieldIndex(schema, "gamma");
+    for (const std::string& name : required) {
+        if (FieldIndex(schema, name) < 0) {
+            return fail("'" + source + "' has no column \"" + name +
+                        "\", so it is not a cpplink prediction table");
+        }
+    }
+    columns->datasets = dataset_a >= 0;
+    columns->weight = weight >= 0;
+    columns->gamma = gamma >= 0;
+
+    while (true) {
+        ArrowArray batch;
+        batch.release = nullptr;
+        if (const int code = stream->get_next(stream, &batch); code != 0) {
+            const char* detail = stream->get_last_error == nullptr
+                                     ? nullptr
+                                     : stream->get_last_error(stream);
+            return fail("cannot read the next batch of '" + source + "': " +
+                        (detail == nullptr ? "error " + std::to_string(code) : detail));
+        }
+        if (batch.release == nullptr) break;
+        TextReader a, b, set_a, set_b;
+        NumberReader weights, gammas;
+        std::string bind_error;
+        const bool bound =
+            a.Bind(schema, batch, id_a, &bind_error) &&
+            b.Bind(schema, batch, id_b, &bind_error) &&
+            (!columns->datasets || (set_a.Bind(schema, batch, dataset_a, &bind_error) &&
+                                    set_b.Bind(schema, batch, dataset_b, &bind_error))) &&
+            (!columns->weight || weights.Bind(schema, batch, weight, &bind_error)) &&
+            (!columns->gamma || gammas.Bind(schema, batch, gamma, &bind_error));
+        if (!bound) {
+            batch.release(&batch);
+            return fail("'" + source +
+                        "' holds a column in a type a cpplink prediction " +
+                        "table does not use: " + bind_error);
+        }
+        char scratch_a[24], scratch_b[24], scratch_c[24], scratch_d[24];
+        for (int64_t row = 0; row < batch.length; ++row) {
+            EdgeRow edge;
+            if (!a.At(row, &edge.id_a, &scratch_a)) edge.id_a = std::string_view();
+            if (!b.At(row, &edge.id_b, &scratch_b)) edge.id_b = std::string_view();
+            if (columns->datasets) {
+                if (!set_a.At(row, &edge.dataset_a, &scratch_c)) {
+                    edge.dataset_a = std::string_view();
+                }
+                if (!set_b.At(row, &edge.dataset_b, &scratch_d)) {
+                    edge.dataset_b = std::string_view();
+                }
+            }
+            double value = 0.0;
+            if (columns->weight && weights.At(row, &value)) edge.weight = value;
+            if (columns->gamma && gammas.At(row, &value)) {
+                edge.gamma = static_cast<uint32_t>(value);
+            }
+            if (!visit(edge, error)) {
+                batch.release(&batch);
+                schema.release(&schema);
+                release();
+                return false;
+            }
+        }
+        batch.release(&batch);
+    }
+    schema.release(&schema);
+    release();
+    return true;
+}
+
+bool ReadPredictionFile(const std::string& path, const std::string& what,
+                        const std::vector<std::string>& required, EdgeColumns* columns,
+                        const EdgeVisitor& visit, std::string* error) {
+    // Only the columns the shape has are read: the pattern and the posterior
+    // stay in the file for whoever else opens it.
+    ArrowSchema schema;
+    schema.release = nullptr;
+    if (!ReadParquetSchema(path, &schema, error)) {
+        *error = what + ": " + *error;
+        return false;
+    }
+    std::vector<std::string> names;
+    for (const char* name : {"id_a", "id_b", "dataset_a", "dataset_b"}) {
+        if (FieldIndex(schema, name) >= 0) names.push_back(name);
+    }
+    for (const std::string& name : required) {
+        if (FieldIndex(schema, name) >= 0) names.push_back(name);
+    }
+    schema.release(&schema);
+    ArrowArrayStream stream;
+    stream.release = nullptr;
+    if (!OpenParquetStream(path, names, &stream, error)) {
+        *error = what + ": " + *error;
+        return false;
+    }
+    return ReadPredictionStream(&stream, what, path, required, columns, visit, error);
 }
 
 bool MergedFormatOf(const std::string& path, MergeFormat* format) {

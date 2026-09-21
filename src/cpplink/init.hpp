@@ -96,6 +96,18 @@ bool DraftSchema(const std::string& path, const DraftOptions& options,
 bool DraftSchema(const std::vector<std::string>& paths, const DraftOptions& options,
                  DraftReport* report, std::string* error);
 
+// One input as its columns describe it, from a footer or from a frame's schema.
+struct DescribedInput {
+    std::string name;  // the path, or the dataset name a frame was given
+    std::vector<FileColumn> columns;
+};
+
+// The draft over inputs already described, which is what a frame's schema
+// gives with no file to open. The two file forms read the footers and come here.
+bool DraftSchemaFrom(const std::vector<DescribedInput>& inputs,
+                     const DraftOptions& options, DraftReport* report,
+                     std::string* error);
+
 // Every draft is re-parsed before it is returned, so what comes out is a file
 // the other commands accept, not a fragment.
 std::string SchemaToJson(const Schema& schema);
