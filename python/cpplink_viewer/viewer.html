@@ -274,16 +274,9 @@ kbd {
   </div>
   <div id="detail"><div class="empty-state">Pick a cluster.</div></div>
 </main>
-<script type="application/json" id="payload">__CLUSTER_DATA__</script>
 <script>
-// The payload is the whole dataset when this page was written by
-// cluster_view.py, and the literal null when cluster_server.py served it. In
-// that second case the same screens are filled from the API instead, so the
-// page is one UI over either a sample small enough to embed or a database too
-// large to.
-const raw = document.getElementById('payload').textContent.trim();
-const EMBEDDED = raw === '__CLUSTER' + '_DATA__' || raw === 'null' ? null : JSON.parse(raw);
-const LIVE = EMBEDDED === null;
+// Every screen is filled from the server's API: the page holds no data of its
+// own, so a run of any size is reachable and a click is one request.
 const PAGE = 100;  // list rows fetched at a time
 const truthColors = ['#2f6f5e', '#8a5a2b', '#4a5d9c', '#8c3f6d', '#6b7a2f', '#a03232'];
 
@@ -292,7 +285,6 @@ let SOURCE = '';
 let TOTALS = { clusters: 0, records: 0, pairs: 0 };
 let HAS_TRUTH = false;
 let HAS_MODEL = false;
-let MODEL = null;        // embedded mode: the per-level table the ledgers expand from
 let entries = [];        // the cluster list, as far as it has been loaded
 let matched = 0;         // entries the current filter matches
 let exhausted = false;
@@ -329,7 +321,7 @@ async function api(path, params) {
 }
 
 // Per-column distinct values and the commonest one, over whatever rows are in
-// hand. In live mode the server sends the counts over the whole cluster, since
+// hand. For a cluster the server sends the counts over the whole cluster, since
 // the rows are only the first page of a cluster that may be much larger.
 function statsOf(rows, distinct) {
     return COLS.map((_, i) => {
@@ -504,23 +496,12 @@ async function loadPage(reset) {
                     dir: sortDesc ? 'desc' : 'asc', only: $('#only').value,
                     offset: entries.length, limit: PAGE };
     if (search.field === 'col') query.column = COLS[search.col];
-    let found = null;  // id search: the ids that name a record
-    if (LIVE) {
-        const page = await api('/api/list', query);
-        if (mine !== token) return;
-        entries = entries.concat(page.clusters);
-        matched = page.matched;
-        exhausted = entries.length >= matched;
-        found = page.found || null;
-    } else {
-        const all = EMBEDDED.clusters.filter(c => passes(c, query));
-        matched = all.length;
-        sortLocal(all, query.sort, sortDesc);
-        entries = all.slice(0, entries.length + PAGE);
-        exhausted = entries.length >= matched;
-        if (search.field === 'id') found = search.ids.filter(id => EMBEDDED.records.has(id));
-    }
-    searchNote(found);
+    const page = await api('/api/list', query);
+    if (mine !== token) return;
+    entries = entries.concat(page.clusters);
+    matched = page.matched;
+    exhausted = entries.length >= matched;
+    searchNote(page.found || null);  // id search: the ids that name a record
 }
 
 // The search box against the field selector: the text lowered for a substring
@@ -591,19 +572,6 @@ function placeholder() {
         : 'search any value';
 }
 
-function passes(c, query) {
-    if (query.only === 'split' && !c.discord) return false;
-    if (query.only === 'transitive' && !(c.size * (c.size - 1) / 2 > c.edge_count)) return false;
-    if (query.only === 'mixed' && !(c.entities > 1)) return false;
-    if (!query.q) return true;
-    switch (query.field) {
-        case 'id': return c.rows.some(r => search.ids.includes(r.id));
-        case 'cluster': return c.id.toLowerCase().includes(query.q);
-        case 'col': return c.rows.some(r => cellHit(r.v[search.col], query.q));
-        default: return c.hay.includes(query.q);
-    }
-}
-
 const cellHit = (v, q) => v !== null && v !== undefined && String(v).toLowerCase().includes(q);
 
 // What the search matched in one row: its id, and the columns the query is a
@@ -634,28 +602,9 @@ function sortBy(list, key) {
     list.sort((a, b) => compare(key(a), key(b)));
 }
 
-// The list's order: the chosen key in the chosen direction, a cluster with no
-// value for it (no predictions, so no weakest edge) last either way, and the
-// ties broken the same way whichever direction the key runs.
-function sortLocal(list, sort, desc) {
-    const primary = { discord: c => c.discord, size: c => c.size,
-                      weakest: c => c.weakest, id: c => c.id }[sort];
-    const ties = { discord: c => [-c.size, c.id], size: c => [-c.discord, c.id],
-                   weakest: c => [-c.size, c.id], id: c => [] }[sort];
-    const sign = desc ? -1 : 1;
-    list.sort((a, b) => {
-        const pa = primary(a), pb = primary(b);
-        const na = pa === null || pa === undefined, nb = pb === null || pb === undefined;
-        if (na !== nb) return na ? 1 : -1;
-        if (!na && pa !== pb) return (pa < pb ? -1 : 1) * sign;
-        return compare(ties(a), ties(b));
-    });
-}
-
 async function detail(id) {
     if (details.has(id)) return details.get(id);
-    const got = LIVE ? await api('/api/cluster', { id })
-                     : EMBEDDED.clusters.find(c => c.id === id);
+    const got = await api('/api/cluster', { id });
     details.set(id, got);
     return got;
 }
@@ -671,57 +620,18 @@ function pairsOf(c) {
         a, b, w, other: null,
         same: HAS_TRUTH ? label.get(a) !== undefined && label.get(a) === label.get(b) : null,
     }));
-    const rejected = LIVE ? c.rejected || [] : EMBEDDED.rejectedOf.get(c.id) || [];
-    c.pairs = list.concat(rejected);
+    c.pairs = list.concat(c.rejected || []);
     return c.pairs;
 }
 
-// A pair's detail is its two records, the weight, and the ledger behind it.
-// Embedded, the records are the ones its clusters hold and the ledger is
-// expanded from the compact form the builder wrote; live, the server answers
-// and the ledger is the explainer's own object.
+// A pair's detail is its two records, the weight, and the ledger behind it,
+// which is the explainer's own object read back from the waterfall file.
 async function pairDetail(a, b) {
     const key = pairKey(a, b);
     if (details.has(key)) return details.get(key);
-    let got;
-    if (LIVE) {
-        got = await api('/api/pair', { a, b });
-    } else {
-        const p = EMBEDDED.pairIndex.get(key);
-        got = p ? {
-            a, b, w: p.w, ca: p.ca, cb: p.cb,
-            rows: [EMBEDDED.records.get(a), EMBEDDED.records.get(b)],
-            waterfall: p.wf ? expand(p.wf) : null,
-        } : null;
-        if (got && HAS_TRUTH && got.rows[0] && got.rows[1]) {
-            // Truth labels are per cluster, so across two clusters the pair's
-            // own labels are the two entity groups the builder recorded.
-            const ta = EMBEDDED.entityOf.get(a), tb = EMBEDDED.entityOf.get(b);
-            got.rows = got.rows.map(r => ({ id: r.id, v: r.v }));
-            got.rows[0].t = 0;
-            got.rows[1].t = ta !== undefined && ta === tb ? 0 : 1;
-        }
-    }
+    const got = await api('/api/pair', { a, b });
     details.set(key, got);
     return got;
-}
-
-// The compact ledger back to the shape `cpplink explain --json` writes.
-function expand(wf) {
-    let running = MODEL.prior;
-    const steps = wf.s.map(([level, tf, frequency], c) => {
-        const cmp = MODEL.comparisons[c], lvl = cmp.levels[level];
-        running += lvl.bits + (tf || 0);
-        return { name: cmp.name, label: lvl.label, level, m: lvl.m, u: lvl.u,
-                 bits: lvl.bits, tf: tf || 0, frequency: frequency || 0, running };
-    });
-    const interactions = wf.i.map((bits, i) => {
-        running += bits;
-        return { name: MODEL.interactions[i], bits, running };
-    });
-    return { prior: MODEL.prior, records: MODEL.records, threshold: MODEL.threshold,
-             steps, interactions, weight: wf.w, probability: wf.p,
-             bracket: wf.b, zone: wf.z, emitted: wf.w >= MODEL.threshold };
 }
 
 function renderList() {
@@ -756,8 +666,7 @@ function renderList() {
         ? ` &middot; ${TOTALS.pairs.toLocaleString()} predictions` : '';
     $('#hmeta').innerHTML =
         `<b>${matched.toLocaleString()}</b> of <b>${TOTALS.clusters.toLocaleString()}</b> clusters` +
-        ` &middot; ${TOTALS.records.toLocaleString()} records${predictions} &middot; ${esc(SOURCE)}` +
-        (LIVE ? ' &middot; <span style="color:var(--accent)">live</span>' : '');
+        ` &middot; ${TOTALS.records.toLocaleString()} records${predictions} &middot; ${esc(SOURCE)}`;
 }
 
 function fillSelect(el, options) {
@@ -1333,61 +1242,12 @@ $('#theme').onclick = () => {
 };
 
 (async function boot() {
-    if (LIVE) {
-        const summary = await api('/api/summary');
-        COLS = summary.columns;
-        SOURCE = summary.source;
-        TOTALS = summary.totals;
-        HAS_TRUTH = summary.has_truth;
-        HAS_MODEL = summary.has_model;
-    } else {
-        COLS = EMBEDDED.columns;
-        SOURCE = EMBEDDED.source;
-        MODEL = EMBEDDED.model || null;
-        HAS_MODEL = MODEL !== null;
-        HAS_TRUTH = EMBEDDED.clusters.some(c => c.rows.some(r => r.t !== undefined));
-        TOTALS = { clusters: EMBEDDED.totals.clusters, records: EMBEDDED.totals.records || 0 };
-        EMBEDDED.records = new Map();
-        EMBEDDED.entityOf = new Map();
-        EMBEDDED.pairIndex = new Map();
-        EMBEDDED.rejectedOf = new Map();
-        let predictions = 0;
-        for (const c of EMBEDDED.clusters) {
-            const stats = statsOf(c.rows, null);
-            c.size = c.size || c.rows.length + (c.more || 0);
-            c.discord = stats.filter(s => s.distinct > 1).length;
-            c.edge_count = (c.edges || []).length;
-            c.weakest = c.edges && c.edges.length ? Math.min(...c.edges.map(e => e[2])) : null;
-            c.entities = c.rows[0] && c.rows[0].t !== undefined
-                ? new Set(c.rows.map(r => r.t)).size : 0;
-            c.hay = (c.id + ' ' + c.rows.map(r => r.id + ' ' + r.v.join(' ')).join(' ')).toLowerCase();
-            for (const r of c.rows) {
-                EMBEDDED.records.set(r.id, r);
-                // An entity label is only comparable inside its cluster; across
-                // clusters the builder's group is what says "same entity".
-                if (r.g !== undefined) EMBEDDED.entityOf.set(r.id, r.g);
-            }
-            c.edges = (c.edges || []).map(([i, j, x, wf]) => {
-                const a = c.rows[i].id, b = c.rows[j].id;
-                EMBEDDED.pairIndex.set(pairKey(a, b), { a, b, w: x, ca: c.id, cb: c.id, wf });
-                predictions++;
-                return [a, b, x];
-            });
-        }
-        // A rejected prediction is listed under both of its clusters, each
-        // naming the other as where the pair's second record went.
-        for (const p of EMBEDDED.rejected || []) {
-            EMBEDDED.pairIndex.set(pairKey(p.a, p.b), p);
-            predictions++;
-            const ga = EMBEDDED.entityOf.get(p.a), gb = EMBEDDED.entityOf.get(p.b);
-            const same = HAS_TRUTH ? ga !== undefined && ga === gb : null;
-            for (const [mine, other] of [[p.ca, p.cb], [p.cb, p.ca]]) {
-                if (!EMBEDDED.rejectedOf.has(mine)) EMBEDDED.rejectedOf.set(mine, []);
-                EMBEDDED.rejectedOf.get(mine).push({ a: p.a, b: p.b, w: p.w, other, same });
-            }
-        }
-        TOTALS.pairs = predictions;
-    }
+    const summary = await api('/api/summary');
+    COLS = summary.columns;
+    SOURCE = summary.source;
+    TOTALS = summary.totals;
+    HAS_TRUTH = summary.has_truth;
+    HAS_MODEL = summary.has_model;
     try { tab = localStorage.getItem('cpplink.tab') === 'pairs' ? 'pairs' : 'cluster'; } catch (e) {}
     fillSelect($('#field'), FIELDS.concat(COLS.map((name, i) => [`col:${i}`, name])));
     fillSelect($('#sort'), SORTS);
