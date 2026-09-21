@@ -103,6 +103,10 @@ transform.
 | `month` | `date` | `string` | the month, zero-padded | `03` |
 | `day` | `date` | `string` | the day of the month, zero-padded | `09` |
 | `year_month` | `date` | `string` | `YYYY-MM` | `1974-03` |
+| `email_username` | `string` | `string` | the part before the first `@`, or the whole value when there is none | `Smith-Jones, John` |
+| `email_domain` | `string` | `string` | the part after the last `@`; missing when there is none | *missing* |
+
+`email_username` and `email_domain` exist for the [email comparison](#a-comparison-over-several-string-columns) below, where the username is compared as its own level of the address's comparison rather than extracted per pair.
 
 A separator becomes a space under `normalize` rather than vanishing, which is what lets
 `["normalize", "sorted_tokens"]` chain and still see tokens: that pair takes the same input to
@@ -142,6 +146,25 @@ because `year` reads a date, and so is a chain whose stages do not fit together.
     that data it reaches more pairs without reaching better ones. Run
     [`recall`](../commands/recall.md) rather than assuming.
 
+### Keys the file already holds: `derived_from`
+
+A file often arrives with a key its preparer computed from other columns: a memo prefix, an amount rounded beside its week, a phonetic code written by another tool.
+cpplink reads such a column from the file like any other, and `derived_from` declares where it came from:
+
+```json
+"columns": [
+  {"name": "memo",       "type": "string"},
+  {"name": "amount",     "type": "double"},
+  {"name": "memo_key",   "type": "string", "derived_from": "memo"},
+  {"name": "amount_key", "type": "string", "derived_from": ["amount", "date"]}
+]
+```
+
+The value is one column name or a list, each of which must be a declared column other than the one it is on.
+It changes nothing about how the column is loaded, interned or compared.
+What it carries is the dependency: an [`estimate`](../commands/estimate.md) session blocked on `memo_key` holds the comparisons on `memo` out, exactly as it holds a `derive`d column's source out, and [`profile`](../commands/profile.md) reads the pair as tied rather than trying to detect it.
+A column may declare `derive` or `derived_from`, not both, since a column cpplink computes already knows its source.
+
 ## `comparisons`
 
 A comparison is one logical field, which may span more than one column — a coordinate pair is
@@ -165,7 +188,7 @@ A comparison is one logical field, which may span more than one column — a coo
 | `columns` | yes | the store columns this comparison reads |
 | `levels` | yes | ordered, non-empty; see below |
 | `name` | no | defaults to the first column's name; used in reports |
-| `term_frequency` | no | `true` enables [TF adjustment](../model.md#term-frequency-adjustment) on this comparison's `exact` level |
+| `term_frequency` | no | `true` enables [TF adjustment](../model.md#term-frequency-adjustment) on each of this comparison's `exact` levels, over the column that level reads |
 
 ### Levels
 
@@ -180,6 +203,7 @@ the strongest evidence first.
 | `jaro_winkler` | required | 1 string | similarity ≥ threshold |
 | `date_within` | required | 1 date | \|difference\| ≤ threshold days |
 | `numeric_within` | required | 1 double | \|difference\| ≤ threshold |
+| `percentage_within` | required | 1 double | \|difference\| / max(\|a\|, \|b\|) < threshold, a fraction in (0, 1] |
 | `geo_within` | required | 2 doubles | great-circle distance ≤ threshold km |
 | `list_overlap` | required | 1 string_list | intersection size ≥ threshold |
 | `list_jaccard` | required | 1 string_list | Jaccard similarity ≥ threshold |
@@ -195,6 +219,67 @@ An optional `"label"` overrides the generated description in reports:
 ```json
 {"type": "date_within", "threshold": 370, "label": "within a year"}
 ```
+
+`percentage_within` is splink's percentage difference: the gap over the larger of the two magnitudes, strictly below the threshold, for an amount whose tolerance scales with its size.
+`exact` on a `double` is equality to the last digit.
+
+Two more optional fields apply to one level type each.
+
+#### `direction` on `date_within`
+
+```json
+{"type": "date_within", "threshold": 3, "direction": "forward"}
+```
+
+`"forward"` fires when the **later input's** date is on or after the earlier input's, within the threshold: a payment arrives after it is sent, and a window either side would admit every near-date pair with the dates the wrong way round.
+The level orients by which file each row came from, not by which side of the pair it sits on, because the sampler and the enumerator do not agree about pair order.
+It therefore needs two inputs and is refused on one; two rows of the same input under `--mode link-and-dedup` have no earlier side and read the window either way.
+The default, `"either"`, is the plain window.
+See [Linking two files](../linking.md).
+
+#### `column` on a level of a comparison over several string columns
+
+A level may say which of the comparison's columns it reads, which is how a field and a key derived from it are ranked inside one comparison rather than counted as two pieces of evidence.
+The [next section](#a-comparison-over-several-string-columns) is the worked example.
+
+### A comparison over several string columns
+
+This is how splink's email comparison is written here: exact on the address, then exact on the username, then Jaro-Winkler on either.
+The username is a [derived column](#derived-columns), split once at load, and the comparison names both:
+
+```json
+{"name": "email_username", "derive": {"from": "email", "transform": "email_username"}}
+```
+
+```json
+{
+  "name": "email",
+  "columns": ["email", "email_username"],
+  "term_frequency": true,
+  "levels": [
+    {"type": "null"},
+    {"type": "exact"},
+    {"type": "exact", "column": "email_username"},
+    {"type": "jaro_winkler", "threshold": 0.88},
+    {"type": "jaro_winkler", "threshold": 0.88, "column": "email_username"},
+    {"type": "else"}
+  ]
+}
+```
+
+The rules, all checked at parse time:
+
+- `column` must be one of the comparison's `columns`, every column of the comparison must be a `string`, and only a level that reads one column may name one.
+- A level without a `column` reads the first one.
+- The comparison is **null wherever any of its columns is**, so an address with nothing before the `@` compares as missing rather than falling through to `else`.
+- With `term_frequency`, each `exact` level gets its own adjustment over the column it read, and the first one's `u` is still closed form: an address is the column whose collision rate sits near `1/N`, where a sampled `u` sees nothing.
+- A level that names a column is labelled `exact on email_username` in reports unless it carries its own `label`, so two exact levels do not print alike.
+
+**Why a declared column rather than an expression the comparison evaluates per pair**, which is what splink's `EmailComparison` does with `regexp_extract`: per pair, the split would turn an integer equality into a `find('@')`, a substring and a string compare on every candidate.
+Declared as a column, it runs once per distinct address, is interned and counted like any other column, and that is what gives its exact level a term-frequency adjustment, a closed-form `u`, a signature table for the fuzzy bound, and the option of blocking on it.
+The cost is one `uint32` a row plus the username dictionary, and a column that shows in `inspect` and `profile` under the name you gave it.
+
+What the shape does not get: `--fuzzy-tf`, `--fuzzy-u` and [`levels`](../commands/levels.md) read a single string column and refuse it, and [`simplify`](../commands/simplify.md) never merges two levels reading different columns.
 
 ### The closest pair of two lists: `list_levenshtein` and `list_jaro_winkler`
 
@@ -398,9 +483,27 @@ produces it. Order them cheapest-predicate-first.
 | `rows_per_band` | 4 | `minhash` | rows per band |
 | `ngram` | 3 | `minhash` | character n-gram size for shingling |
 | `seed` | 1 | `minhash` | hash seed |
+| `use` | `both` | all | `both`, `estimate` or `predict`: which of the two unions the source joins |
 
 `minhash` additionally requires a `string` column, and non-zero `bands`, `rows_per_band` and
 `ngram`. `sorted_neighbourhood` requires a non-zero `window`.
+
+### What a source is for: `use`
+
+Estimation and prediction run over different unions of sources, and `use` says which one a source joins.
+`"use": "estimate"` conditions an EM session and produces no candidate; `"use": "predict"` produces candidates and conditions no session; the default does both.
+
+```json
+"blocking": [
+  {"type": "exact_value", "column": "email"},
+  {"type": "rare_value", "column": "last_name", "max_frequency": 100},
+  {"type": "exact_value", "column": "phone", "use": "estimate"}
+]
+```
+
+That is splink's split between the rule passed to its EM call and its `blocking_rules_to_generate_predictions`, and it is how a session can be blocked on a column the run has no reason to score on.
+Every plan is built through one of the two filtered views of the schema, so a training source never produces a candidate and a scoring rule never conditions a session.
+See [Blocking](../blocking.md) and [Estimation and EM](../em.md#em-safety).
 
 `all_pairs` is the degenerate source: it produces every pair the mode admits, which is the
 whole triangle when deduplicating and the cross product when linking.
