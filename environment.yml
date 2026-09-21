@@ -21,3 +21,5 @@ dependencies:
   - numpy
   - pytest
   - ruff
+  # The viewer's cache; the `viewer` extra of the wheel.
+  - python-duckdb
