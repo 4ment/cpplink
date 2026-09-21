@@ -42,6 +42,7 @@ nav:
       - Estimation and EM: em.md
       - Dependence between comparisons: dependence.md
       - Blocking: blocking.md
+      - Prior art: prior-art.md
       - Linking two files: linking.md
   - Commands:
       - Overview: commands/index.md

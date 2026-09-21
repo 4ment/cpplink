@@ -67,6 +67,29 @@ a row are a single contiguous range and a cursor walks straight to it.
     and there is no contiguous range to jump to. That source pays one comparison per candidate
     in link mode. It is the only one that pays anything.
 
+## Naming a record across files
+
+Each file is a dataset named by its stem, and an id need only be unique within its file: both files may number their rows 1, 2, 3, ...
+Wherever the files share ids a record is named `<dataset>:<id>`, so `census:17` is the row with `unique_id` 17 in `census.parquet`, and that is the form `explain --pair` takes:
+
+```sh
+cpplink init --out schema.json census.parquet tax.parquet
+cpplink estimate --schema schema.json --out model.json census.parquet tax.parquet
+cpplink predict --schema schema.json --model model.json --out predictions.parquet \
+                --threshold 20 census.parquet tax.parquet
+cpplink explain --schema schema.json --pair census:17,tax:17 census.parquet tax.parquet
+```
+
+`init` drafts from the first file and refuses, by column and file, a later input that lacks a column or holds it at a type that reads differently, so a link's schema fails here rather than at the second file's load.
+The prediction files carry `dataset_a, id_a, dataset_b, id_b` and the cluster file carries `dataset` beside the id for the same reason.
+
+## Two schema declarations a link tends to need
+
+Both are in the [schema reference](reference/schema.md); they are named here because a deduplication rarely wants either.
+
+- [`"direction": "forward"`](reference/schema.md#direction-on-date_within) on a `date_within` level fires only when the later input's date is on or after the earlier input's, which is what a transaction that arrives after it is sent looks like, and it needs two inputs to know which is later.
+- [`"use": "estimate"`](reference/schema.md#what-a-source-is-for-use) on a blocking source conditions an EM session without producing a candidate, so estimation can be blocked on an amount the run has no reason to score on.
+
 ## What linking changes about the model
 
 Two things move, and both are about *u* — the probability a level fires on a pair drawn at

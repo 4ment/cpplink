@@ -24,6 +24,8 @@ Which columns go in the plan, and at what cap or window, is still declared in th
 still chosen by measurement: [`recall`](commands/recall.md) reports what each source
 contributes over and above the ones before it, and no command proposes a plan for you.
 
+None of the sources is a new idea; [Prior art](prior-art.md) says where each comes from.
+
 ## A blocking source is an iterator, not a join
 
 Blocking is not a rule language. A **pair source** is anything that yields `(row_a, row_b)` on

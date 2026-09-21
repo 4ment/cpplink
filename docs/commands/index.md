@@ -84,6 +84,83 @@ made *before* any expensive work runs, and both are hard to reason about without
 plan and no known pairs, just the columns. [`levels`](levels.md) is the one that answers the
 first of those two decisions, and it needs nothing more than `profile` does.
 
+## Every command at a glance
+
+One invocation of each, in the order above, all against the same schema.
+Each command's page says what its report means.
+
+```sh
+# Draft a schema from the file: guess what each column is from its name and its
+# type, and write a default comparison per column, the derived columns a role
+# wants, and the blocking sources a role is strong enough to carry.
+# --role overrides a guess and --id names the record id; without --out the
+# schema is stdout and the report stderr
+cpplink init --out schema.json data.parquet
+cpplink init --role notes=text --role reg_no=national_id data.parquet > schema.json
+
+# Report cardinality, null rates and the memory each structure costs
+cpplink inspect --schema schema.json data.parquet
+
+# Ledger what the columns can be worth, what a matching pair will score, and
+# which pairs of columns are the same evidence twice; no model, no blocking
+# plan, no known pairs
+cpplink profile --schema schema.json data.parquet
+
+# Check the schema's fuzzy thresholds against the column they run on, from the
+# exact u curve of the dictionary self-join and an m curve from anchor pairs
+cpplink levels --schema schema.json --out proposed.json data.parquet
+
+# Show which level each comparison assigns to one pair, and the packed pattern
+cpplink explain --schema schema.json --pair r17,r19 data.parquet
+
+# Price every blocking source exactly, without enumerating a single pair
+cpplink explain-blocking --schema schema.json data.parquet
+
+# Measure what fraction of known duplicate pairs blocking actually reaches
+cpplink recall --schema schema.json --truth truth.csv data.parquet
+
+# Learn m, u and lambda and write the model
+cpplink estimate --schema schema.json --out model.json data.parquet
+
+# Merge adjacent levels a run of this size cannot tell apart, which narrows the
+# packed pattern; --min-gap decides on how much a level is worth rather than on
+# whether the difference is significant, which on a large file it always is
+cpplink simplify --schema schema.json --model model.json \
+                 --min-gap 1.0 --out simpler.json data.parquet
+
+# Score every candidate pair and write the predictions above a threshold. --out
+# names a directory to get one shard per thread, or a .csv/.parquet file to get
+# one file: threads still write a shard each and the run merges them at the end.
+# -v prints the plan first (every source priced, the threshold, where the output
+# goes) and a progress line while the pairs are walked, on stderr
+cpplink predict --schema schema.json --model model.json \
+                --out predictions.parquet --threshold 20 -v data.parquet
+
+# Re-score a spilled run under a new model, without comparing anything again
+cpplink predict --schema schema.json --model model.json \
+                --out predictions/ --spill spill/ --threshold 20 data.parquet
+cpplink rescore --schema schema.json --model tuned.json \
+                --spill spill/ --out predictions2/ --threshold 20 data.parquet
+
+# Join those predictions into duplicate clusters, and score the result against
+# known pairs; --predictions takes the merged file or the shard directory, and
+# the extension of --out picks csv or parquet
+cpplink cluster --schema schema.json --predictions predictions.parquet \
+                --out clusters.parquet --truth truth.csv data.parquet
+
+# Combine the shards of an existing run into one file something else can open
+cpplink merge-predictions --schema schema.json --shards predictions/ \
+                          --out predictions.parquet data.parquet
+
+# Write a sample file with realistic cardinalities and planted duplicates
+cpplink gen-sample --out sample.parquet --rows 1000000 --truth sample.truth.csv
+# ... or split across files for a link fixture: originals to --out, every planted
+# duplicate to one of the --out-b files, so every recorded pair crosses them
+cpplink gen-sample --out a.parquet --out-b b.parquet --out-b c.parquet --rows 100000 --truth truth.csv
+```
+
+Every command takes more than one parquet file, and two with nothing said means linking them; see [Linking two files](../linking.md) for the link-mode forms of the same commands.
+
 ## Conventions shared by every command
 
 - **`--schema <file.json>` is required** by everything except `gen-sample`. It declares
