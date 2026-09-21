@@ -13,7 +13,7 @@ A worked example over a real dataset, with plots and tables at every stage, is t
 
 ## Install
 
-Inside the project's conda environment:
+Inside the project's conda environment, against the Arrow C++ it holds:
 
 ```sh
 conda env update -f environment.yml
@@ -25,11 +25,27 @@ python -c "import cpplink; print(cpplink.__version__)"
 The build goes through [scikit-build-core](https://scikit-build-core.readthedocs.io/) and lands in `build/python/`, beside the command line's `build/`.
 The editable install redirects the Python sources to `python/cpplink/`, so a change there needs no rebuild; a change to the bindings or the core does, with the same `pip install` line.
 
+Outside conda, in any environment with a C++17 compiler, the package builds with no Arrow at all:
+
+```sh
+pip install . -Ccmake.define.CPPLINK_WITH_ARROW=OFF
+```
+
+That is the build the wheels workflow makes, and it links nothing but the C++ standard library: `pandas`, `numpy` and `pyarrow` are its only dependencies, at whatever versions the environment holds.
+`cpplink.parquet_supported()` says which build is loaded.
+
 !!! note "What the module links"
-    Nothing but the C++ standard library.
     Every frame, table and file crosses between Python and the core through the [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html), three C structs with a frozen ABI that the core vendors, so no Arrow C++ object and no `pyarrow` version is part of the contract.
     `pyarrow` is what pandas uses to export a frame and what reads a parquet file into the module, and any version of it will do.
-    The conda build above links Arrow C++ as well, so that `predict(out="x.parquet")` and the command line write parquet themselves; a wheel built with `-DCPPLINK_WITH_ARROW=OFF` leaves that to pandas.
+    The conda build links Arrow C++ as well, so that `predict(out="x.parquet")` and the command line write parquet themselves.
+
+What a build without Arrow does differently, all of it at the edges:
+
+- A parquet path given to `Linker`, `init`, `cluster` or `gen_sample` is read or written through `pyarrow` and `pandas`, from the same rows the conda build reads and writes itself, so the model, the predictions and the clusters are the same.
+- `cpplink.run` and `python -m cpplink` still dispatch every command, but the ones that open a parquet file fail with the reason, since that is the core reading the file.
+- `cluster_file`, which loads the id column alone, and `merge_predictions` over binary shards, which needs the input to turn rows back into ids, need the core to read parquet and are refused the same way.
+
+The test suite marks those paths `needs_core_parquet` and skips them there; everything else runs on both builds.
 
 ## The command line, in process
 
@@ -55,6 +71,14 @@ frame = cpplink.gen_sample(rows=200000, truth="sample.truth.csv")   # a pandas f
 cpplink.gen_sample("sample.parquet", rows=200000)                   # or the file
 ```
 
+`seed` and `duplicate_rate` are the command's flags.
+`out_b` makes the link fixture, originals in the first file and every planted duplicate in a later one: a list of paths with `out`, or a count of later files without it, which then returns a list of frames.
+
+```python
+cpplink.gen_sample("a.parquet", rows=20000, truth="link.truth.csv", out_b=["b.parquet"])
+a, b = cpplink.gen_sample(rows=20000, out_b=1)
+```
+
 ### 2. Draft a schema and load
 
 ```python
@@ -64,6 +88,10 @@ print(draft)                         # what was guessed, column by column
 linker = cpplink.Linker(schema, frame)
 print(linker.inspect())              # cardinality and memory per column
 ```
+
+`init` reads no rows: a parquet path gives up its footer, and a frame, a pyarrow table or schema, or a `{name: input}` dict of them gives up its Arrow schema, which says what the footer would have.
+`roles={"birth_place": "city"}` overrides a guessed role, as `--role COLUMN=ROLE` does, and `id=` names the record id; the roles `init` accepts are `cpplink.known_roles()`.
+The report has a `DraftColumn` per column, with its `type`, its `role` and whether the role was `role_given` or guessed.
 
 `Linker` takes a `Schema` or the path of one, and the data: a pandas frame, a pyarrow table or reader, a polars frame or anything else with `__arrow_c_stream__`, or a parquet path.
 Several inputs are a `{name: input}` dict, each becoming a dataset named by its key, or a list of paths named by their stems; two inputs and no `mode` means linking them.
@@ -80,13 +108,25 @@ The frame's index is not read; the record id must be a column, and an integer id
 Several files are several datasets and default to linking; `mode="dedup"` or `"link-and-dedup"` scores the within-file pairs too, exactly as `--mode` does.
 `all_pairs=True` is `--all-pairs`.
 
-A `Schema` is edited by dict round trip, which is what `init` itself does:
+What was loaded is on the `Linker` itself: `records`, `datasets`, `mode` (the pairs the store admits: `all pairs` deduplicating, `cross-dataset pairs` linking), `all_pairs`, `files` and `stats`, the `LoadStats` with the rows and seconds per input.
+`id_of(row)` and `row_of(id)` go between a row index and a record id, and `repr(linker)` says what it holds.
+
+```python
+>>> linker
+Linker(200,000 records, 1 dataset, mode=all pairs)
+```
+
+A `Schema` comes from `Schema.from_file`, `Schema.from_json` or `Schema.from_dict`, and is edited by dict round trip, which is what `init` itself does:
 
 ```python
 d = schema.to_dict()
 d["blocking"].append({"type": "exact_value", "column": "postcode"})
 schema = cpplink.Schema.from_dict(d)
+schema.save("schema.json")
 ```
+
+`to_json` is the writer `cpplink init` uses, and `save` writes the source text where the schema came from one.
+The read-only side describes what was parsed: `unique_id`, `column_names`, `input_columns` (the id and every column that is not derived, which is what a reader is asked for), `comparison_names`, `comparisons` (the description of each level, per comparison), `blocking` and `gamma_width`.
 
 ### 3. Price the blocking
 
@@ -114,8 +154,12 @@ model.lambda_, model.prior_weight()
 [(c.name, [(l.label, l.m, l.u) for l in c.levels]) for c in model.comparisons]
 ```
 
-`estimate` takes every flag of the command by name: `u_sample`, `session_pairs`, `threads`, `iterations`, `lambda_`, `seed`, `fuzzy_u`, `ball_budget`, `tie_holdout`, `tied_bits`, `interactions`, `max_interactions`, `interaction_bits`, and so on.
-An `EstimateOptions` can be built and passed as `options=` instead.
+`estimate` takes every flag of the command by name: `u_sample`, `session_pairs`, `threads`, `iterations`, `lambda_`, `seed`, `fuzzy_u`, `ball_budget`, `tie_holdout`, `tied_bits`, `tie_sample_rows`, `interactions`, `max_interactions`, `interaction_bits`, `interaction_clamp`, `min_interaction_sessions` and `min_pairs_per_parameter`.
+An `EstimateOptions` can be built and passed as `options=` instead, with the keywords applied over it.
+
+A `Model` is the `model.json` file as an object: `Model.from_file` and `Model.from_json` read one, `to_json`, `to_dict` and `save` write it, and `text` or `repr(model)` is the table `estimate` prints.
+It carries `lambda_`, `lambda_basis`, `records`, a `ModelComparison` per comparison with a `ModelLevel` per level (`label`, `m`, `u` and `weight()`, the bits `log2(m / u)`), and a `ModelInteraction` per fitted two-way term.
+Every method that takes a `model` takes a `Model` or the path of one.
 
 ### 6. Score the candidates
 
@@ -139,6 +183,16 @@ table = pa.table(report.table)     # zero copy; the ids are a dictionary over th
 ```
 
 The frame decodes that dictionary into plain string columns, since a pandas `Categorical` over every record of the store is neither cheap nor what a frame of predictions wants; the decode copies only the ids the rows name.
+`cpplink.to_pandas(table)` is that decode, for any table the core hands out.
+
+`cpplink.weight_for_probability` and `cpplink.probability_for_weight` are the two conversions the reports use, so a threshold can be stated either way and read back:
+
+```python
+>>> cpplink.probability_for_weight(20)
+0.9999990463265931
+>>> cpplink.weight_for_probability(0.99)
+6.629356620079609
+```
 
 ### 7. Join the predictions into clusters
 
@@ -167,12 +221,18 @@ linker.profile()                             # what the columns are worth, befor
 linker.levels()                              # (LevelsReport, Schema with the proposal)
 linker.simplify(model, min_gap=1.0)          # (SimplifyReport, Schema or None)
 linker.completeness(model)                   # blocking recall with no truth file
-linker.rescore(model, "spill/", "again.parquet", threshold=25)
+linker.rescore(model, "spill/", threshold=25)  # a frame, with the report on last_rescore
 cpplink.merge_predictions("shards/", "merged.csv", schema="schema.json", files=["sample.parquet"])
+cpplink.cluster_file("schema.json", "sample.parquet", "predictions.parquet", truth="sample.truth.csv")
 ```
 
 `explain` resolves ids the way the command does, including `dataset:id` where the inputs share ids; `by_row=True` takes row indices.
+The `Explanation` has `levels`, comparison name to the label the pair landed on, and with a model a `waterfall`, the `PairWaterfall` ledger of `prior`, one `WaterfallStep` per comparison with its `bits`, `tf` move and `running` total, the `interactions`, and the final `weight` and `probability`; `json()` is the command's `--json`.
 Its `weight` is the scorer's own, and the parity test asserts it equals the weight in the predictions file.
+`explain` takes `fuzzy_tf` and `interactions=False` for the same reason the command does: scored under different options than the run, it explains a different weight than the file holds.
+
+`rescore` replays a spill `predict` wrote under a new model and returns the predictions as `predict` does, with `out=` writing them the same two ways.
+`levels` and `simplify` return the schema with the proposal written in, or `None` from `simplify` where nothing merged, and `out=` writes it.
 
 ## Reports
 

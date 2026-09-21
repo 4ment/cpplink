@@ -3,10 +3,10 @@
 """cpplink from Python: the command line in process, and a ``Linker`` over it.
 
 Two ways in. ``run(args)`` forwards an argument list to the command line
-dispatcher exactly as the binary would receive it. ``Linker`` loads the parquet
-input once and runs every stage against the same store, returning the reports
-as objects rather than text. Both call the same core; no number is computed in
-Python.
+dispatcher exactly as the binary would receive it. ``Linker`` loads the input
+once, a data frame or a parquet file, and runs every stage against the same
+store, returning predictions and clusters as frames and the reports as objects
+rather than text. Both call the same core; no number is computed in Python.
 """
 
 from __future__ import annotations
@@ -58,6 +58,7 @@ from ._cpplink import (  # noqa: F401  (re-exported)
     SimplifyReport,
     __version__,
     known_roles,
+    parquet_supported,
     probability_for_weight,
     run,
     weight_for_probability,
@@ -108,6 +109,7 @@ __all__ = [
     "init",
     "known_roles",
     "merge_predictions",
+    "parquet_supported",
     "probability_for_weight",
     "run",
     "to_dict",
