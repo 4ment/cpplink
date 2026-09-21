@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    workflow_dispatch:
+  workflow_dispatch:
 
 # The conda environment ships no compiler, so every job builds with the runner's
 # system toolchain against the conda Arrow, as a local build does.
