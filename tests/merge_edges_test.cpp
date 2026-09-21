@@ -15,11 +15,11 @@
 #include <arrow/io/api.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/reader.h>
-#include <unistd.h>
 
 #include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
 
 namespace {
 
@@ -42,7 +42,7 @@ class MergeFixture : public ::testing::Test {
         // a fixed name has concurrent cases of this fixture writing the same files
         // and deleting the directory under one another.
         root_ = std::filesystem::temp_directory_path() /
-                ("cpplink_merge_" + std::to_string(::getpid()));
+                ("cpplink_merge_" + cpplink_test::ProcessId());
         std::filesystem::remove_all(root_);
         std::filesystem::create_directories(root_);
 

@@ -23,7 +23,6 @@
 #include <gtest/gtest.h>
 #include <parquet/arrow/reader.h>
 #include <parquet/arrow/writer.h>
-#include <unistd.h>
 
 #include "cpplink/app.hpp"
 #include "cpplink/cluster.hpp"
@@ -33,6 +32,7 @@
 #include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
 
 namespace {
 
@@ -181,7 +181,7 @@ class SharedIdFiles : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_shared_ids_" + std::to_string(::getpid()));
+               ("cpplink_shared_ids_" + cpplink_test::ProcessId());
         std::filesystem::remove_all(dir_);
         std::filesystem::create_directories(dir_);
         store_ = SharedIdStore();
@@ -465,7 +465,7 @@ class SharedIdCommands : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_shared_id_cli_" + std::to_string(::getpid()));
+               ("cpplink_shared_id_cli_" + cpplink_test::ProcessId());
         std::filesystem::remove_all(dir_);
         std::filesystem::create_directories(dir_);
         left_ = (dir_ / "left.parquet").string();

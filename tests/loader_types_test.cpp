@@ -20,11 +20,11 @@
 #include <arrow/io/api.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/writer.h>
-#include <unistd.h>
 
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
 
 namespace {
 
@@ -32,7 +32,7 @@ class LoaderTypes : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_loader_types_" + std::to_string(::getpid()));
+               ("cpplink_loader_types_" + cpplink_test::ProcessId());
         std::filesystem::remove_all(dir_);
         std::filesystem::create_directories(dir_);
         path_ = (dir_ / "typed.parquet").string();
