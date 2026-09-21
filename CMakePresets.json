@@ -47,7 +47,7 @@
             "name": "windows",
             "displayName": "MSVC x64, with tests",
             "inherits": "base",
-            "generator": "Visual Studio 17 2022",
+            "generator": "Visual Studio 18 2026",
             "architecture": {"value": "x64", "strategy": "set"},
             "cacheVariables": {"CMAKE_PREFIX_PATH": "$env{CONDA_PREFIX}/Library"}
         }
