@@ -61,7 +61,7 @@
             "name": "windows",
             "configurePreset": "windows",
             "configuration": "Release",
-            "targets": ["cpplink", "run_tests"]
+            "targets": ["cpplink", "cpplink_tests"]
         }
     ],
     "testPresets": [
