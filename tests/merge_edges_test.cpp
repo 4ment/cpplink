@@ -20,6 +20,7 @@
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 #include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -43,7 +44,7 @@ class MergeFixture : public ::testing::Test {
         // and deleting the directory under one another.
         root_ = std::filesystem::temp_directory_path() /
                 ("cpplink_merge_" + cpplink_test::ProcessId());
-        std::filesystem::remove_all(root_);
+        cpplink_test::RemoveAll(root_);
         std::filesystem::create_directories(root_);
 
         cpplink::Schema schema;
@@ -56,7 +57,7 @@ class MergeFixture : public ::testing::Test {
         store_->Finalize();
     }
 
-    void TearDown() override { std::filesystem::remove_all(root_); }
+    void TearDown() override { cpplink_test::RemoveAll(root_); }
 
     std::filesystem::path MakeDir(const std::string& name) const {
         const std::filesystem::path dir = root_ / name;

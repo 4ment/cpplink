@@ -26,6 +26,7 @@
 #include "cpplink/model.hpp"
 #include "cpplink/sample_data.hpp"
 #include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -68,7 +69,7 @@ class ExplainBatch : public ::testing::Test {
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
                ("cpplink_explain_batch_" + cpplink_test::ProcessId());
-        std::filesystem::remove_all(dir_);
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
         data_ = (dir_ / "sample.parquet").string();
         schema_ = (dir_ / "schema.json").string();

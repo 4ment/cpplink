@@ -26,6 +26,7 @@
 #include "cpplink/score.hpp"
 #include "cpplink/spill.hpp"
 #include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -68,7 +69,7 @@ class RescoreFixture : public ::testing::Test {
         // and deleting the directory under one another.
         dir_ = std::filesystem::temp_directory_path() /
                ("cpplink_rescore_" + cpplink_test::ProcessId());
-        std::filesystem::remove_all(dir_);
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
 
         std::string error;

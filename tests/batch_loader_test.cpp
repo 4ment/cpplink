@@ -29,6 +29,7 @@
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 #include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -517,7 +518,7 @@ TEST(BatchLoader, MatchesTheParquetPathMemberForMember) {
     cpplink::RecordStore from_file(schema);
     std::string error;
     ASSERT_TRUE(cpplink::LoadParquet(path, schema, &from_file, nullptr, &error)) << error;
-    std::filesystem::remove_all(dir);
+    cpplink_test::RemoveAll(dir);
 
     // The same table, decoded from its buffers in batches of two.
     cpplink::RecordStore from_buffers(schema);

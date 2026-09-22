@@ -21,6 +21,7 @@
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
 #include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -102,7 +103,7 @@ class DraftFixture : public ::testing::Test {
         std::string error;
         ASSERT_TRUE(cpplink::WriteSampleParquet(path_, options, &error)) << error;
     }
-    void TearDown() override { std::filesystem::remove_all(dir_); }
+    void TearDown() override { cpplink_test::RemoveAll(dir_); }
 
     const cpplink::DraftColumn* Column(const cpplink::DraftReport& report,
                                        const std::string& name) {
