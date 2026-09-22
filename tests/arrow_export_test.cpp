@@ -19,12 +19,13 @@
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include "cpplink/batch_loader.hpp"
 #include "cpplink/parquet_io.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -223,7 +224,7 @@ TEST(ArrowExport, ABatchCanBeReusedAfterExport) {
 // same batches, through nothing but the C structs on either side.
 TEST(ArrowExport, ParquetRoundTrip) {
     const auto dir = std::filesystem::temp_directory_path() /
-                     ("cpplink_arrow_export_" + std::to_string(::getpid()));
+                     ("cpplink_arrow_export_" + cpplink_test::ProcessId());
     std::filesystem::create_directories(dir);
     const std::string path = (dir / "rows.parquet").string();
 
@@ -274,5 +275,5 @@ TEST(ArrowExport, ParquetRoundTrip) {
     ArrowArrayStream missing;
     EXPECT_FALSE(cpplink::OpenParquetStream(path, {"gone"}, &missing, &error));
     EXPECT_NE(error.find("\"gone\" is not in"), std::string::npos) << error;
-    std::filesystem::remove_all(dir);
+    cpplink_test::RemoveAll(dir);
 }

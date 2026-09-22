@@ -15,7 +15,6 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
@@ -24,6 +23,8 @@
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -65,8 +66,8 @@ class PredictFixture : public ::testing::Test {
         // a fixed name has concurrent cases of this fixture writing the same files
         // and deleting the directory under one another.
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_predict_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_predict_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
 
         std::string error;

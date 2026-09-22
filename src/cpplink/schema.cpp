@@ -3,6 +3,7 @@
 
 #include "cpplink/schema.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iomanip>

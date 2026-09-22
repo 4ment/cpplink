@@ -12,7 +12,6 @@
 #include <variant>
 
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include "cpplink/app.hpp"
 #include "cpplink/blocking.hpp"
@@ -25,6 +24,8 @@
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
 #include "cpplink/string_metrics.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -73,8 +74,8 @@ class RoundTrip : public ::testing::Test {
         // a fixed name has concurrent cases of this fixture writing the same files
         // and deleting the directory under one another.
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_roundtrip_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_roundtrip_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
         data_ = (dir_ / "sample.parquet").string();
         link_ = (dir_ / "sample.b.parquet").string();

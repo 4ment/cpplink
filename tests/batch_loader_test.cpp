@@ -24,11 +24,12 @@
 #include <arrow/io/api.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/writer.h>
-#include <unistd.h>
 
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -505,7 +506,7 @@ TEST(BatchLoader, MatchesTheParquetPathMemberForMember) {
                                        {true, true, false, true})});
 
     const auto dir = std::filesystem::temp_directory_path() /
-                     ("cpplink_batch_loader_" + std::to_string(::getpid()));
+                     ("cpplink_batch_loader_" + cpplink_test::ProcessId());
     std::filesystem::create_directories(dir);
     const std::string path = (dir / "table.parquet").string();
     auto sink = arrow::io::FileOutputStream::Open(path);
@@ -513,11 +514,14 @@ TEST(BatchLoader, MatchesTheParquetPathMemberForMember) {
     ASSERT_TRUE(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *sink,
                                            /*chunk_size=*/3)
                     .ok());
+    // `WriteTable` does not close a stream it was handed, and a file with a
+    // handle still on it is one Windows will not let the removal below delete.
+    ASSERT_TRUE((*sink)->Close().ok());
 
     cpplink::RecordStore from_file(schema);
     std::string error;
     ASSERT_TRUE(cpplink::LoadParquet(path, schema, &from_file, nullptr, &error)) << error;
-    std::filesystem::remove_all(dir);
+    cpplink_test::RemoveAll(dir);
 
     // The same table, decoded from its buffers in batches of two.
     cpplink::RecordStore from_buffers(schema);

@@ -3,6 +3,7 @@
 
 #include "cpplink/explain.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <sstream>

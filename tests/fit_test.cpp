@@ -14,7 +14,6 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include "cpplink/app.hpp"
 #include "cpplink/blocking.hpp"
@@ -24,6 +23,7 @@
 #include "cpplink/record_store.hpp"
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
 
 namespace {
 
@@ -290,9 +290,8 @@ TEST_F(FitFixture, TheReportPrintsTheFit) {
 
 // --report writes the full report beside the compact one on the terminal.
 TEST(FitReport, ReportOptionWritesTheFullReport) {
-    const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() /
-        ("cpplink_fit_report_" + std::to_string(::getpid()));
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                      ("cpplink_fit_report_" + cpplink_test::ProcessId());
     std::filesystem::create_directories(dir);
     const std::string parquet = (dir / "sample.parquet").string();
     cpplink::SampleOptions sample;

@@ -16,7 +16,6 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
@@ -26,6 +25,8 @@
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
 #include "cpplink/spill.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -67,8 +68,8 @@ class RescoreFixture : public ::testing::Test {
         // a fixed name has concurrent cases of this fixture writing the same files
         // and deleting the directory under one another.
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_rescore_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_rescore_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
 
         std::string error;
