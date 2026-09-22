@@ -59,19 +59,26 @@ if(BUILD_TESTING)
     include(GoogleTest)
 
     file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
-    add_executable(run_tests ${TEST_SOURCES})
-    target_link_libraries(run_tests PRIVATE cpplink_core GTest::gtest_main)
+    # The target is cpplink_tests and the binary is run_tests: enable_testing()
+    # defines a target called RUN_TESTS, and the Visual Studio generator names a
+    # project file after its target, so a target called run_tests and that one
+    # are the same file on a case-insensitive filesystem. Whichever is written
+    # second wins, and building the test executable then runs ctest against a
+    # tree with no test executable in it.
+    add_executable(cpplink_tests ${TEST_SOURCES})
+    set_target_properties(cpplink_tests PROPERTIES OUTPUT_NAME run_tests)
+    target_link_libraries(cpplink_tests PRIVATE cpplink_core GTest::gtest_main)
     # Test-only headers are included as "tests/x.hpp", rooted at the project
     # directory, the way the library's are rooted at src/.
-    target_include_directories(run_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(cpplink_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     # A test reading a checked-in fixture names it from the source tree, so the
     # suite passes from ctest's working directory as well as from the root.
-    target_compile_definitions(run_tests PRIVATE
+    target_compile_definitions(cpplink_tests PRIVATE
         CPPLINK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
     # Arrow pulls in a large shared library graph; discovery needs longer than the
     # 5 s default to load it.
-    gtest_discover_tests(run_tests DISCOVERY_TIMEOUT 120)
+    gtest_discover_tests(cpplink_tests DISCOVERY_TIMEOUT 120)
 endif()
 
 # clang-format target
