@@ -24,11 +24,11 @@
 #include <arrow/io/api.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/writer.h>
-#include <unistd.h>
 
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
 
 namespace {
 
@@ -505,7 +505,7 @@ TEST(BatchLoader, MatchesTheParquetPathMemberForMember) {
                                        {true, true, false, true})});
 
     const auto dir = std::filesystem::temp_directory_path() /
-                     ("cpplink_batch_loader_" + std::to_string(::getpid()));
+                     ("cpplink_batch_loader_" + cpplink_test::ProcessId());
     std::filesystem::create_directories(dir);
     const std::string path = (dir / "table.parquet").string();
     auto sink = arrow::io::FileOutputStream::Open(path);

@@ -389,7 +389,7 @@ TEST_F(LevelsFixture, ReportsPrintAndParse) {
 
     std::ostringstream json;
     WriteLevelsJson(report, json);
-    EXPECT_NO_THROW(nlohmann::json::parse(json.str()));
+    EXPECT_NO_THROW((void)nlohmann::json::parse(json.str()));
 }
 
 TEST(LevelsCommand, NeedsSchemaAndData) {
