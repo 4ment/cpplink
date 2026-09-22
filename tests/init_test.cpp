@@ -14,13 +14,14 @@
 #include <arrow/io/api.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/writer.h>
-#include <unistd.h>
 
 #include "cpplink/app.hpp"
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -93,7 +94,7 @@ class DraftFixture : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_init_" + std::to_string(::getpid()));
+               ("cpplink_init_" + cpplink_test::ProcessId());
         std::filesystem::create_directories(dir_);
         path_ = (dir_ / "sample.parquet").string();
         cpplink::SampleOptions options;
@@ -102,7 +103,7 @@ class DraftFixture : public ::testing::Test {
         std::string error;
         ASSERT_TRUE(cpplink::WriteSampleParquet(path_, options, &error)) << error;
     }
-    void TearDown() override { std::filesystem::remove_all(dir_); }
+    void TearDown() override { cpplink_test::RemoveAll(dir_); }
 
     const cpplink::DraftColumn* Column(const cpplink::DraftReport& report,
                                        const std::string& name) {
@@ -289,6 +290,8 @@ TEST_F(DraftFixture, DraftsALinkFromTheFirstInputAndChecksTheOthers) {
             ASSERT_TRUE(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(),
                                                    *sink, 1024)
                             .ok());
+            // `WriteTable` does not close a stream it was handed.
+            ASSERT_TRUE((*sink)->Close().ok());
         };
         write(narrow, {arrow::field("id", arrow::utf8())}, {id_array});
         std::vector<cpplink::FileColumn> columns;

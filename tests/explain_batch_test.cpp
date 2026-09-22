@@ -21,11 +21,12 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <parquet/arrow/reader.h>
-#include <unistd.h>
 
 #include "cpplink/app.hpp"
 #include "cpplink/model.hpp"
 #include "cpplink/sample_data.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -67,8 +68,8 @@ class ExplainBatch : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_explain_batch_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_explain_batch_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
         data_ = (dir_ / "sample.parquet").string();
         schema_ = (dir_ / "schema.json").string();

@@ -15,13 +15,14 @@
 #include <arrow/io/api.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/reader.h>
-#include <unistd.h>
 
 #include "cpplink/merge_edges.hpp"
 #include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -40,8 +41,8 @@ class ClusterFixture : public ::testing::Test {
         // a fixed name has concurrent cases of this fixture writing the same files
         // and deleting the directory under one another.
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_cluster_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_cluster_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
 
         cpplink::Schema schema;
@@ -54,7 +55,7 @@ class ClusterFixture : public ::testing::Test {
         store_->Finalize();
     }
 
-    void TearDown() override { std::filesystem::remove_all(dir_); }
+    void TearDown() override { cpplink_test::RemoveAll(dir_); }
 
     // Writes one shard in the exact form predict emits.
     std::string WriteShard(const std::string& name,

@@ -36,9 +36,10 @@ Two of them run the suite under a sanitizer, which is what checks the claim that
 ```sh
 cmake --preset asan && cmake --build --preset asan && ctest --preset asan   # ASan + UBSan, about 30 s
 cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan   # ThreadSanitizer, about 5 min
+cmake --preset windows && cmake --build --preset windows && ctest --preset windows   # MSVC, from an activated conda prompt
 ```
 
-Both are clean over the whole suite.
+The two sanitizer presets are clean over the whole suite; `windows` is the same suite under MSVC, and CI runs it on `windows-latest`.
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs `release`, `asan` and `tsan` on Linux and macOS, then the Python suite and the format and lint checks below.
 
 ## The Python package

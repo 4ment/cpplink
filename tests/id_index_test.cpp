@@ -23,7 +23,6 @@
 #include <gtest/gtest.h>
 #include <parquet/arrow/reader.h>
 #include <parquet/arrow/writer.h>
-#include <unistd.h>
 
 #include "cpplink/app.hpp"
 #include "cpplink/cluster.hpp"
@@ -33,6 +32,8 @@
 #include "cpplink/recall.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -55,13 +56,26 @@ std::unique_ptr<cpplink::RecordStore> SharedIdStore() {
 TEST(DatasetNames, AreTheFileStemsMadeDistinctAndCsvSafe) {
     EXPECT_TRUE(cpplink::DatasetNamesFor({"only.parquet"}).empty());
     const std::vector<std::string> names = cpplink::DatasetNamesFor(
-        {"/data/a.parquet", "b/a.parquet", "x,y:z.parquet", "/other/b.parquet"});
+        {"/data/a.parquet", "b/a.parquet", "x,y.parquet", "/other/b.parquet"});
     ASSERT_EQ(names.size(), 4u);
     EXPECT_EQ(names[0], "a");
     EXPECT_EQ(names[1], "a#1");
-    EXPECT_EQ(names[2], "x_y_z");
+    EXPECT_EQ(names[2], "x_y");
     EXPECT_EQ(names[3], "b");
 }
+
+// The other character a name may not carry, checked where a file can carry it.
+// Windows forbids a colon in a filename and its path parser reads one in a path
+// as punctuation rather than as part of the stem, so there the rule guards
+// against a name no file can have.
+#ifndef _WIN32
+TEST(DatasetNames, AColonInAStemIsReplaced) {
+    const std::vector<std::string> names =
+        cpplink::DatasetNamesFor({"x:y.parquet", "b.parquet"});
+    ASSERT_EQ(names.size(), 2u);
+    EXPECT_EQ(names[0], "x_y") << "a name is written into `dataset:id`";
+}
+#endif
 
 TEST(DatasetNames, ASingleInputHasNoNameAndNoQualifier) {
     cpplink::Schema schema;
@@ -181,8 +195,8 @@ class SharedIdFiles : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_shared_ids_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_shared_ids_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
         store_ = SharedIdStore();
     }
@@ -465,8 +479,8 @@ class SharedIdCommands : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_shared_id_cli_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_shared_id_cli_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
         left_ = (dir_ / "left.parquet").string();
         right_ = (dir_ / "right.parquet").string();
@@ -510,6 +524,8 @@ class SharedIdCommands : public ::testing::Test {
         ASSERT_TRUE(
             parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *sink, 1024)
                 .ok());
+        // `WriteTable` does not close a stream it was handed.
+        ASSERT_TRUE((*sink)->Close().ok());
     }
 
     std::filesystem::path dir_;

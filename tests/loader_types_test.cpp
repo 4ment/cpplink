@@ -20,11 +20,12 @@
 #include <arrow/io/api.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/writer.h>
-#include <unistd.h>
 
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -32,8 +33,8 @@ class LoaderTypes : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_loader_types_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_loader_types_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
         path_ = (dir_ / "typed.parquet").string();
     }
@@ -52,6 +53,8 @@ class LoaderTypes : public ::testing::Test {
                                                *sink,
                                                /*chunk_size=*/2)
                         .ok());
+        // `WriteTable` does not close a stream it was handed.
+        ASSERT_TRUE((*sink)->Close().ok());
     }
 
     template <typename Builder, typename T>

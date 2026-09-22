@@ -22,7 +22,6 @@
 #include <arrow/io/api.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/writer.h>
-#include <unistd.h>
 
 #include "cpplink/blocking.hpp"
 #include "cpplink/comparison.hpp"
@@ -35,6 +34,8 @@
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -292,8 +293,8 @@ class BooleanLoadFixture : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_boolean_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_boolean_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
         path_ = (dir_ / "flags.parquet").string();
     }
@@ -319,6 +320,8 @@ class BooleanLoadFixture : public ::testing::Test {
                                                *sink,
                                                /*chunk_size=*/3)
                         .ok());
+        // `WriteTable` does not close a stream it was handed.
+        ASSERT_TRUE((*sink)->Close().ok());
     }
 
     std::filesystem::path dir_;

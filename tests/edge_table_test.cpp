@@ -20,7 +20,6 @@
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include "cpplink/arrow_export.hpp"
 #include "cpplink/blocking.hpp"
@@ -31,6 +30,8 @@
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
+#include "tests/process_id.hpp"
+#include "tests/temp_dir.hpp"
 
 namespace {
 
@@ -69,8 +70,8 @@ class EdgeTableFixture : public ::testing::Test {
    protected:
     void SetUp() override {
         dir_ = std::filesystem::temp_directory_path() /
-               ("cpplink_edge_table_" + std::to_string(::getpid()));
-        std::filesystem::remove_all(dir_);
+               ("cpplink_edge_table_" + cpplink_test::ProcessId());
+        cpplink_test::RemoveAll(dir_);
         std::filesystem::create_directories(dir_);
         std::string error;
         ASSERT_TRUE(cpplink::ParseSchema(kSchemaJson, &schema_, &error)) << error;
