@@ -320,6 +320,8 @@ class BooleanLoadFixture : public ::testing::Test {
                                                *sink,
                                                /*chunk_size=*/3)
                         .ok());
+        // `WriteTable` does not close a stream it was handed.
+        ASSERT_TRUE((*sink)->Close().ok());
     }
 
     std::filesystem::path dir_;

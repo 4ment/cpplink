@@ -514,6 +514,9 @@ TEST(BatchLoader, MatchesTheParquetPathMemberForMember) {
     ASSERT_TRUE(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *sink,
                                            /*chunk_size=*/3)
                     .ok());
+    // `WriteTable` does not close a stream it was handed, and a file with a
+    // handle still on it is one Windows will not let the removal below delete.
+    ASSERT_TRUE((*sink)->Close().ok());
 
     cpplink::RecordStore from_file(schema);
     std::string error;

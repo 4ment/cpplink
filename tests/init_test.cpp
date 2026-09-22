@@ -290,6 +290,8 @@ TEST_F(DraftFixture, DraftsALinkFromTheFirstInputAndChecksTheOthers) {
             ASSERT_TRUE(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(),
                                                    *sink, 1024)
                             .ok());
+            // `WriteTable` does not close a stream it was handed.
+            ASSERT_TRUE((*sink)->Close().ok());
         };
         write(narrow, {arrow::field("id", arrow::utf8())}, {id_array});
         std::vector<cpplink::FileColumn> columns;

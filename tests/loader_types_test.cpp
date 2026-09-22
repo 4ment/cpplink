@@ -53,6 +53,8 @@ class LoaderTypes : public ::testing::Test {
                                                *sink,
                                                /*chunk_size=*/2)
                         .ok());
+        // `WriteTable` does not close a stream it was handed.
+        ASSERT_TRUE((*sink)->Close().ok());
     }
 
     template <typename Builder, typename T>
