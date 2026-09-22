@@ -52,6 +52,10 @@ python -m pytest python/tests
 The editable install redirects the Python sources to `python/cpplink/`, so a change there needs no rebuild; a change to `python/bindings/` or to the core needs the `pip install` line again.
 The binding is a second front end over the same stage functions, not a second implementation, and `python/tests/test_parity.py` holds it to the command line's output byte for byte.
 
+The same package builds with `CPPLINK_WITH_ARROW=OFF`, which is what the wheels workflow ([.github/workflows/wheels.yml](.github/workflows/wheels.yml)) does through cibuildwheel and what CI's `no-arrow` job checks: the module then links nothing but the C++ standard library and a parquet file is read and written through pyarrow and pandas.
+`python/tests/conftest.py` marks the tests that need the core to read parquet itself `needs_core_parquet`, and they are skipped in that build; a new test over a parquet path the core opens takes the same mark.
+`test_reports.py` records a field count per bound report class, so a struct gaining a field the binding forgot is caught when the count is bumped deliberately.
+
 ## Code style
 
 C++ follows the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html) with two customizations, a 4-space indent and a 90-column limit, both in [.clang-format](.clang-format) and [CPPLINT.cfg](CPPLINT.cfg).

@@ -108,6 +108,41 @@ jobs:
       - name: Test
         run: python -m pytest python/tests
 
+  # The wheel's configuration: no conda, no Arrow, the one header-only
+  # dependency fetched. The library and the command line build, and the Python
+  # package passes its suite with PyPI's pandas and pyarrow, reading and writing
+  # parquet through them.
+  no-arrow:
+    name: without Arrow on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure and build the command line
+        run: |
+          cmake -S . -B build-noarrow -DCPPLINK_WITH_ARROW=OFF
+          cmake --build build-noarrow -j "$(nproc 2>/dev/null || sysctl -n hw.ncpu)"
+          ./build-noarrow/cpplink --version
+
+      - name: Install the package
+        run: pip install . -Ccmake.define.CPPLINK_WITH_ARROW=OFF
+
+      - name: Test
+        run: |
+          pip install pytest pandas pyarrow
+          cd "$RUNNER_TEMP" && python -m pytest "$GITHUB_WORKSPACE/python/tests"
+
   lint:
     name: format and lint
     runs-on: ubuntu-latest

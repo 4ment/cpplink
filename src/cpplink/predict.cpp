@@ -313,14 +313,28 @@ bool EdgeShardWriter::Close() {
     return !file_.fail();
 }
 
+void EdgeTable::Append(EdgeTable* other) {
+    a.insert(a.end(), other->a.begin(), other->a.end());
+    b.insert(b.end(), other->b.begin(), other->b.end());
+    gamma.insert(gamma.end(), other->gamma.begin(), other->gamma.end());
+    weight.insert(weight.end(), other->weight.begin(), other->weight.end());
+    *other = EdgeTable();
+}
+
 bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
              const BlockingPlan& plan, const Scorer& scorer,
              const PredictOptions& options, PredictReport* report, std::string* error) {
     const auto started = std::chrono::steady_clock::now();
     const unsigned threads = ResolveThreads(options.threads);
 
+    const bool to_files = !options.out_dir.empty();
+    if (!to_files && options.table == nullptr) {
+        *error =
+            "predict: nowhere to put the predictions, neither a directory nor a table";
+        return false;
+    }
     std::error_code ec;
-    std::filesystem::create_directories(options.out_dir, ec);
+    if (to_files) std::filesystem::create_directories(options.out_dir, ec);
     if (ec) {
         *error =
             "cannot create output directory \"" + options.out_dir + "\": " + ec.message();
@@ -330,7 +344,7 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
     const char* suffix = options.format == EdgeFormat::kBinary ? ".bin" : ".csv";
     std::vector<std::unique_ptr<EdgeShardWriter>> writers;
     writers.reserve(threads);
-    for (unsigned t = 0; t < threads; ++t) {
+    for (unsigned t = 0; t < threads && to_files; ++t) {
         const std::string path =
             (std::filesystem::path(options.out_dir) / (EdgeShardName(t) + suffix))
                 .string();
@@ -385,6 +399,9 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
     std::atomic<uint64_t> emitted{0};
     const uint64_t limit = options.max_edges;
     const bool csv = options.format == EdgeFormat::kCsv;
+    // One table per thread, joined after the threads do, for the same reason
+    // there is one shard file per thread.
+    std::vector<EdgeTable> tables(options.table != nullptr ? threads : 0);
 
     const std::vector<size_t> sources = plan.AllSources();
     std::unique_ptr<PredictProgress> progress;
@@ -397,9 +414,10 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         plan, sources, threads,
         [&](unsigned t) {
             ThreadTally* counts = &tally[t];
-            EdgeShardWriter* writer = writers[t].get();
+            EdgeShardWriter* writer = to_files ? writers[t].get() : nullptr;
             SpillWriter* spill = spilling ? spills[t].get() : nullptr;
-            return [&, counts, writer, spill](uint32_t a, uint32_t b) {
+            EdgeTable* table = tables.empty() ? nullptr : &tables[t];
+            return [&, counts, writer, spill, table](uint32_t a, uint32_t b) {
                 Bump(&counts->enumerated);
                 // Drawn per candidate, before anything decides the pair's fate, so
                 // the sample stays uniform over candidates.
@@ -452,6 +470,8 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
                     spill->Write(a, b, gamma);
                     ++counts->spilled;
                 }
+                if (table != nullptr) table->Push(a, b, gamma, weight);
+                if (writer == nullptr) return;
                 if (csv) {
                     writer->WriteCsv(store, a, b, gamma, weight);
                 } else {
@@ -463,7 +483,7 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
     if (progress) progress->Finish();
 
     for (unsigned t = 0; t < threads; ++t) {
-        if (!writers[t]->Close()) {
+        if (to_files && !writers[t]->Close()) {
             *error = "failed while writing \"" + report->shards[t] + "\"";
             return false;
         }
@@ -481,6 +501,15 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
             *error = "failed while writing \"" + spill_paths[t] + "\"";
             return false;
         }
+    }
+    if (options.table != nullptr) {
+        uint64_t total = 0;
+        for (const EdgeTable& t : tables) total += t.Size();
+        options.table->a.reserve(total);
+        options.table->b.reserve(total);
+        options.table->gamma.reserve(total);
+        options.table->weight.reserve(total);
+        for (EdgeTable& t : tables) options.table->Append(&t);
     }
     report->threads = threads;
     report->mode = plan.mode();
@@ -504,7 +533,7 @@ bool Predict(const RecordStore& store, const ComparisonSet& comparisons,
         manifest.layout = GammaLayout(comparisons);
         if (!WriteSpillManifest(options.spill_dir, manifest, error)) return false;
     }
-    if (!options.merge_path.empty()) {
+    if (!options.merge_path.empty() && to_files) {
         if (options.progress != nullptr) {
             *options.progress << "  merging " << threads
                               << (threads == 1 ? " shard" : " shards") << " into "
@@ -567,7 +596,13 @@ void PrintPredictPlan(const RecordStore& store, const BlockingPlan& plan,
     }
     out << "\n";
     const unsigned threads = ResolveThreads(options.threads);
-    if (!options.merge_path.empty()) {
+    const bool to_files = !options.out_dir.empty();
+    if (!to_files) {
+        out << "Predictions    kept in memory";
+        if (options.table != nullptr)
+            out << "  (one table per thread, joined at the end)";
+        out << "\n";
+    } else if (!options.merge_path.empty()) {
         out << "Predictions    " << options.merge_path << "  (" << threads
             << (threads == 1 ? " shard" : " shards") << " merged at the end)\n";
     } else {
@@ -682,6 +717,10 @@ void PrintPredictReport(const PredictReport& report, const Scorer& scorer,
         return;
     }
     out << "\nPredictions\n";
+    if (report.shards.empty()) {
+        out << "  kept in memory\n";
+        return;
+    }
     for (const std::string& shard : report.shards) out << "  " << shard << "\n";
 }
 

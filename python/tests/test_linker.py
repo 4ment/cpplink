@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
-from conftest import ROWS
+from conftest import CORE_PARQUET, ROWS, needs_core_parquet
 
 import cpplink
 
@@ -73,7 +73,8 @@ def test_estimate_refuses_unknown_option(sample) -> None:
 
 def test_predict_writes_one_file(sample) -> None:
     report = sample.predict_report
-    assert report.merged_path == str(sample.predictions)
+    # A build without Arrow hands the frame to pandas to write instead.
+    assert report.merged_path == (str(sample.predictions) if CORE_PARQUET else "")
     assert report.predictions > 0
     assert report.enumerated > report.predictions
     assert report.mode == "all pairs"
@@ -99,9 +100,12 @@ def test_predict_needs_a_threshold(sample, tmp_path: Path) -> None:
         )
 
 
+@needs_core_parquet
 def test_predict_to_shards_and_merge(sample, tmp_path: Path) -> None:
     shards = tmp_path / "shards"
-    report = sample.linker.predict(sample.model, shards, threshold=10, threads=2)
+    frame = sample.linker.predict(sample.model, shards, threshold=10, threads=2)
+    report = sample.linker.last_predict
+    assert len(frame) == report.predictions
     assert report.merged_path == ""
     assert len(report.shards) == 2
     merged = tmp_path / "merged.csv"
@@ -119,7 +123,9 @@ def test_predict_to_shards_and_merge(sample, tmp_path: Path) -> None:
 
 def test_cluster_scores_the_planted_pairs(sample, tmp_path: Path) -> None:
     out = tmp_path / "clusters.csv"
-    result = sample.linker.cluster(sample.predictions, truth=sample.truth, out=out)
+    frame = sample.linker.cluster(sample.predictions, truth=sample.truth, out=out)
+    result = sample.linker.last_cluster
+    assert len(frame) == result.report.written
     assert result.quality is not None
     # Not exactly 1.0: `gen_sample` draws through the standard library's
     # distributions, whose output differs between libstdc++ and libc++, so the
@@ -133,14 +139,17 @@ def test_cluster_scores_the_planted_pairs(sample, tmp_path: Path) -> None:
     assert result.report.written > 0
     assert out.exists()
     assert "F1" in result.text or "f1" in result.text.lower()
-    without = sample.linker.cluster(sample.predictions)
+    sample.linker.cluster(sample.predictions)
+    without = sample.linker.last_cluster
     assert without.quality is None
     assert without.report.clusters == result.report.clusters
 
 
+@needs_core_parquet
 def test_cluster_file_matches_the_linker(sample) -> None:
     light = cpplink.cluster_file(sample.schema_path, [sample.parquet], sample.predictions)
-    full = sample.linker.cluster(sample.predictions)
+    sample.linker.cluster(sample.predictions)
+    full = sample.linker.last_cluster
     assert light.report.clusters == full.report.clusters
     assert (light.assignment.root == full.assignment.root).all()
 
@@ -249,13 +258,17 @@ def test_completeness(sample) -> None:
 
 def test_rescore_replays_a_spill(sample, tmp_path: Path) -> None:
     spill = tmp_path / "spill"
-    first = sample.linker.predict(
+    sample.linker.predict(
         sample.model, tmp_path / "first.parquet", threshold=10, spill=spill
     )
+    first = sample.linker.last_predict
     assert first.spilled > 0
-    report = sample.linker.rescore(
+    frame = sample.linker.rescore(
         sample.model, spill, tmp_path / "again.parquet", threshold=20
     )
+    report = sample.linker.last_rescore
+    assert len(frame) == report.predictions
+    assert frame["match_weight"].min() >= 20
     assert report.pairs == first.spilled
     assert report.predictions <= first.predictions
     assert not report.below_spill_threshold
@@ -263,9 +276,8 @@ def test_rescore_replays_a_spill(sample, tmp_path: Path) -> None:
     again = pq.read_table(str(tmp_path / "again.parquet"))
     assert again.num_rows == report.predictions
     assert min(again["match_weight"].to_pylist()) >= 20
-    lower = sample.linker.rescore(
-        sample.model, spill, tmp_path / "lower.parquet", threshold=5
-    )
+    sample.linker.rescore(sample.model, spill, tmp_path / "lower.parquet", threshold=5)
+    lower = sample.linker.last_rescore
     assert lower.below_spill_threshold
     assert "below" in lower.text.lower()
 
@@ -286,13 +298,16 @@ def test_link_mode(link, tmp_path: Path) -> None:
     assert recall.metrics.pair_completeness > 0.99
     model, _ = linker.estimate(seed=3)
     out = tmp_path / "link.parquet"
-    predict = linker.predict(model, out, threshold=10)
+    frame = linker.predict(model, out, threshold=10)
+    predict = linker.last_predict
     assert predict.datasets == 2
+    assert list(frame.columns)[:4] == ["dataset_a", "id_a", "dataset_b", "id_b"]
     table = pq.read_table(str(out))
     assert table.schema.names[:4] == ["dataset_a", "id_a", "dataset_b", "id_b"]
     assert set(table["dataset_a"].to_pylist()) == {"a"}
     assert set(table["dataset_b"].to_pylist()) == {"b"}
-    result = linker.cluster(out, truth=link.truth)
+    linker.cluster(out, truth=link.truth)
+    result = linker.last_cluster
     assert result.quality.f1 > 0.99
     row = table.slice(0, 1).to_pylist()[0]
     explanation = linker.explain(f"a:{row['id_a']}", f"b:{row['id_b']}", model=model)

@@ -216,8 +216,8 @@ A level's label, `m` and `u` are the model's rather than the pair's, so the file
 Ids are resolved through a sorted index over the id column, 4 bytes a record, so a file of millions of predictions costs one load and one pass.
 A prediction naming an id no record holds is skipped and counted, and so is one whose stored `gamma` the comparisons no longer produce, which means the schema changed after `predict` ran and the ledgers explain today's schema rather than the file's weights.
 
-This is what the cluster viewers in `tools/` draw from: `tools/cluster_view.py --waterfalls` embeds a ledger per prediction, and `tools/cluster_server.py --waterfalls` loads the file beside the predictions so a click is one lookup.
-Nothing in either recomputes a bit of the weight, and neither runs this binary.
+This is what [the cluster viewer](../viewer.md) draws from: `cpplink-viewer --waterfalls` loads the file beside the predictions so a click is one lookup.
+Nothing in it recomputes a bit of the weight, and it does not run this binary.
 
 ## See also
 

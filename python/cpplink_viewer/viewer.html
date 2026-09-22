@@ -1,0 +1,1274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cpplink clusters</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --ink: #1b1a18;
+  --muted: #6d6a64;
+  --line: #e3e0da;
+  --line-soft: #efece6;
+  --accent: #2f6f5e;
+  --accent-soft: #e6f1ed;
+  --warn: #9a5a12;
+  --warn-soft: #fdf1e0;
+  --bad: #a03232;
+  --bad-soft: #fbeaea;
+  --sel: #eef3f1;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+:root:not([data-theme="light"]) { }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16161a;
+    --panel: #1d1e22;
+    --ink: #e8e6e1;
+    --muted: #9a978f;
+    --line: #33343a;
+    --line-soft: #26272c;
+    --accent: #6fbfa5;
+    --accent-soft: #1e2f2a;
+    --warn: #d99a4e;
+    --warn-soft: #33281a;
+    --bad: #e0827e;
+    --bad-soft: #34211f;
+    --sel: #24262b;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16161a;
+  --panel: #1d1e22;
+  --ink: #e8e6e1;
+  --muted: #9a978f;
+  --line: #33343a;
+  --line-soft: #26272c;
+  --accent: #6fbfa5;
+  --accent-soft: #1e2f2a;
+  --warn: #d99a4e;
+  --warn-soft: #33281a;
+  --bad: #e0827e;
+  --bad-soft: #34211f;
+  --sel: #24262b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex: 0 0 auto;
+}
+header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+header .meta { color: var(--muted); font-size: 12px; }
+header .meta b { font-weight: 600; color: var(--ink); }
+header .spacer { flex: 1; }
+button.ghost {
+  font: inherit; font-size: 12px; color: var(--muted); background: none;
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer;
+}
+button.ghost:hover { color: var(--ink); border-color: var(--muted); }
+main { flex: 1; display: flex; min-height: 0; }
+#side {
+  width: 320px; flex: 0 0 320px; border-right: 1px solid var(--line);
+  background: var(--panel); display: flex; flex-direction: column; min-height: 0;
+}
+.controls { padding: 10px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 8px; }
+.controls input, .controls select {
+  font: inherit; font-size: 13px; width: 100%; padding: 5px 8px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+}
+.controls .row { display: flex; gap: 8px; align-items: center; }
+.controls .row select, .controls .row input { min-width: 0; }
+.controls #field { width: 118px; flex: 0 0 118px; }
+.controls #dir { flex: none; padding: 4px 8px; font-family: var(--mono); }
+.controls #qnote { font-size: 11px; }
+.controls #qnote .missing { color: var(--warn); }
+.controls label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+#list { overflow-y: auto; flex: 1; }
+.item {
+  padding: 8px 10px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+  display: flex; gap: 8px; align-items: baseline;
+}
+.item:hover { background: var(--sel); }
+.item.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.item.more { justify-content: center; color: var(--muted); font-size: 12px; }
+.item.more .cid { flex: none; }
+.item .cid { font-family: var(--mono); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .cid .sep { color: var(--muted); padding: 0 3px; }
+.item .sz { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill {
+  font-size: 10px; padding: 1px 5px; border-radius: 999px; white-space: nowrap;
+  background: var(--warn-soft); color: var(--warn);
+}
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.ok { background: var(--accent-soft); color: var(--accent); }
+#detail { flex: 1; overflow: auto; padding: 16px 20px 60px; min-width: 0; }
+#detail h2 { font-family: var(--mono); font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+.sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.tabs button {
+  font: inherit; font-size: 13px; padding: 7px 14px; border: none; background: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--muted); cursor: pointer;
+}
+.tabs button:hover { color: var(--ink); }
+.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs .count {
+  font-size: 11px; font-weight: 400; color: var(--muted); background: var(--line-soft);
+  border-radius: 999px; padding: 0 6px; margin-left: 5px; font-variant-numeric: tabular-nums;
+}
+.tabs .count.warn { background: var(--warn-soft); color: var(--warn); }
+.pairlist { max-height: 38vh; overflow: auto; }
+table.pairs tr.row { cursor: pointer; }
+table.pairs tr.row:hover td { background: var(--sel); }
+table.pairs tr.row.pin td { background: var(--accent-soft); box-shadow: none; }
+table.pairs td.n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+table.pairs td.rej { color: var(--warn); }
+table.pairs td.rej button.ghost { font-family: var(--mono); font-size: 11px; padding: 1px 6px; }
+table.pairs td.same { color: var(--accent); }
+table.pairs td.differ { color: var(--bad); }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--ink); }
+th.sortable.on { color: var(--ink); }
+th.sortable.on::after { content: " \2193"; }
+th.sortable.on.desc::after { content: " \2191"; }
+.pairhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 18px 0 4px; }
+.pairhead h3 { font-family: var(--mono); font-size: 14px; font-weight: 600; margin: 0; }
+.section { margin-bottom: 22px; }
+.section > h3 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+  margin: 0 0 8px; font-weight: 600;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; background: var(--panel);
+  font-size: 12px; display: flex; gap: 7px; align-items: baseline;
+}
+.chip .k { color: var(--muted); font-size: 11px; }
+.chip .v { font-family: var(--mono); }
+.chip.agree { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--accent-soft); }
+.chip.split .v { color: var(--warn); }
+.chip.empty { opacity: 0.55; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+th {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+  font-weight: 600; position: sticky; top: 0; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+th .dcount { font-weight: 400; text-transform: none; letter-spacing: 0; }
+tr:last-child td { border-bottom: none; }
+td.id { font-family: var(--mono); font-size: 12px; }
+td.val { font-family: var(--mono); font-size: 12px; }
+td.odd { background: var(--warn-soft); color: var(--warn); }
+td.miss { color: var(--muted); opacity: 0.6; }
+td.num { font-variant-numeric: tabular-nums; text-align: right; }
+.truth { font-size: 10px; padding: 1px 5px; border-radius: 4px; font-family: var(--mono); }
+.matrix { font-size: 12px; }
+.matrix td, .matrix th { text-align: right; font-variant-numeric: tabular-nums; padding: 4px 8px; }
+.matrix td.none { color: var(--muted); opacity: 0.45; }
+.matrix td.weak { background: var(--warn-soft); color: var(--warn); }
+.matrix th.rowhead { text-align: left; font-family: var(--mono); text-transform: none; letter-spacing: 0; }
+.note { color: var(--muted); font-size: 12px; }
+.links { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.links button.ghost { font-family: var(--mono); }
+.matrix td.pair, .matrix td.pair:hover { cursor: pointer; }
+.matrix td.pair:hover { background: var(--sel); color: var(--ink); }
+.wf { width: 100%; height: auto; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.wf text { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
+.wf text.dim { fill: var(--muted); }
+.wf text.tick { font-size: 10px; fill: var(--muted); text-anchor: middle; }
+.wf text.val { font-size: 10.5px; }
+.wf text.name { font-weight: 600; }
+.wf text.lvl { fill: var(--muted); text-anchor: end; font-size: 10px; }
+.wf line.grid { stroke: var(--line-soft); }
+.wf line.zero { stroke: var(--muted); stroke-dasharray: 3 3; }
+.wf line.thr { stroke: var(--accent); stroke-dasharray: 4 3; stroke-width: 1.5; }
+.wf line.step { stroke: var(--line); }
+.wf rect.up { fill: var(--accent); }
+.wf rect.down { fill: var(--bad); }
+.wf rect.tf { fill: var(--warn); }
+.wf rect.total { fill: var(--ink); opacity: 0.85; }
+.wf rect.prior { fill: var(--muted); }
+.wf g.bar:hover rect { opacity: 0.7; }
+.net {
+  width: 100%; height: auto; max-height: 55vh; display: block;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+}
+.net line { stroke: var(--muted); stroke-linecap: round; }
+.net line.weak { stroke: var(--warn); }
+.net line.hit { stroke: transparent; stroke-width: 9; }
+.net g.link { cursor: pointer; }
+.net g.link:hover line.wire { stroke: var(--ink); opacity: 1; }
+.net g.link.on line.wire { stroke: var(--accent); stroke-width: 3; opacity: 1; }
+.net circle { stroke: var(--panel); stroke-width: 1.5; cursor: pointer; }
+.net text { font-family: var(--mono); text-anchor: middle; pointer-events: none; }
+.net text.tag { font-size: 5.5px; fill: var(--muted); }
+.net text.num { font-size: 5px; fill: var(--panel); font-weight: 600; }
+.net g.node:hover circle { stroke: var(--ink); stroke-width: 2; }
+tr.lit td, tr.pin td { background: var(--accent-soft); }
+tr.lit td.odd, tr.pin td.odd { background: var(--warn-soft); }
+/* what the search matched: the row holding it, tinted whole so it reads as one
+   row (a disagreeing cell keeps its orange text), and the cell or id the query is in */
+tr.hit td, tr.hit td.odd { background: var(--accent-soft); }
+td.id.hit, td.val.hit { box-shadow: inset 0 -2px 0 var(--accent); }
+tr.pin td { box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
+.toggle {
+  font-size: 12px; color: var(--muted); display: flex; gap: 5px;
+  align-items: center; cursor: pointer; user-select: none;
+}
+.toggle input { margin: 0; accent-color: var(--accent); }
+.empty-state { color: var(--muted); padding: 40px 0; text-align: center; }
+kbd {
+  font: inherit; font-size: 11px; font-family: var(--mono); border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--muted);
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>cpplink clusters</h1>
+  <span class="meta" id="hmeta"></span>
+  <span class="spacer"></span>
+  <span class="meta"><kbd>j</kbd> <kbd>k</kbd> cluster &middot; <kbd>n</kbd> <kbd>p</kbd> pair &middot; <kbd>/</kbd> search</span>
+  <label class="toggle" title="draw the predictions of the selected cluster as a graph">
+    <input type="checkbox" id="net"> network
+  </label>
+  <button class="ghost" id="theme">theme</button>
+</header>
+<main>
+  <div id="side">
+    <div class="controls">
+      <div class="row">
+        <select id="field" title="which field the search reads"></select>
+        <input id="q" type="search" placeholder="search any value">
+      </div>
+      <div class="note" id="qnote" hidden></div>
+      <div class="row">
+        <label for="sort">sort</label>
+        <select id="sort"></select>
+        <button class="ghost" id="dir" title="flip the order"></button>
+      </div>
+      <div class="row">
+        <label for="only">show</label>
+        <select id="only"></select>
+      </div>
+    </div>
+    <div id="list"></div>
+  </div>
+  <div id="detail"><div class="empty-state">Pick a cluster.</div></div>
+</main>
+<script>
+// Every screen is filled from the server's API: the page holds no data of its
+// own, so a run of any size is reachable and a click is one request.
+const PAGE = 100;  // list rows fetched at a time
+const truthColors = ['#2f6f5e', '#8a5a2b', '#4a5d9c', '#8c3f6d', '#6b7a2f', '#a03232'];
+
+let COLS = [];
+let SOURCE = '';
+let TOTALS = { clusters: 0, records: 0, pairs: 0 };
+let HAS_TRUTH = false;
+let HAS_MODEL = false;
+let entries = [];        // the cluster list, as far as it has been loaded
+let matched = 0;         // entries the current filter matches
+let exhausted = false;
+let current = null;      // the selected cluster id
+let tab = 'cluster';     // which tab of the detail pane is open: cluster or pairs
+let pick = null;         // {a, b}: the pair open on the pairs tab
+let pairSort = { key: 'w', desc: false };  // the pairs table's order, kept across clusters
+let sortDesc = true;     // the list's direction; each sort key has its own default
+let search = { field: 'any', q: '', ids: [], col: -1 };  // the search as last parsed
+let details = new Map();
+let token = 0;           // guards against a slow response for an old query
+
+// Sort keys with the direction each starts in: the fragile clusters lead on
+// edge strength, the big and the split ones on size and disagreement.
+const SORTS = [['discord', 'most disagreement', true], ['size', 'size', true],
+               ['weakest', 'edge strength', false], ['id', 'cluster id', false]];
+// The field a search reads: everything, a record id (a comma-separated list of
+// them, matched whole), the cluster id, or one column, each as a substring.
+const FIELDS = [['any', 'any field'], ['id', 'record id'], ['cluster', 'cluster id']];
+const ONLYS = [['all', 'every cluster'], ['split', 'columns that disagree'],
+               ['transitive', 'transitive-only links'], ['mixed', 'mixed against truth']];
+const pairKey = (a, b) => a + '\u0000' + b;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+async function api(path, params) {
+    const url = new URL(path, location.href);
+    for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v);
+    const answer = await fetch(url);
+    if (!answer.ok) throw new Error(await answer.text());
+    return answer.json();
+}
+
+// Per-column distinct values and the commonest one, over whatever rows are in
+// hand. For a cluster the server sends the counts over the whole cluster, since
+// the rows are only the first page of a cluster that may be much larger.
+function statsOf(rows, distinct) {
+    return COLS.map((_, i) => {
+        const seen = new Map();
+        let missing = 0;
+        for (const r of rows) {
+            const v = r.v[i];
+            if (v === null || v === '') { missing++; continue; }
+            seen.set(v, (seen.get(v) || 0) + 1);
+        }
+        let top = null, best = 0;
+        for (const [v, n] of seen) if (n > best) { best = n; top = v; }
+        return { distinct: distinct ? distinct[i] : seen.size, missing, top };
+    });
+}
+
+// The network of one cluster. A force-directed layout is the expensive part of
+// this page -- it is O(n^2) an iteration, over rows the table already holds --
+// so it runs only when the checkbox asks for it, only up to NET_MAX members,
+// and its result is cached on the cluster the way the rest of the detail is.
+const NET_MAX = 250;          // members above which the layout is not worth it
+const NET_W = 640, NET_H = 360;
+
+// Fruchterman-Reingold in a unit square, seeded on a phyllotaxis spiral so the
+// same cluster always draws the same picture and no two nodes start on top of
+// one another. Gravity is what keeps a cluster held together only transitively
+// from flying apart into components the pane cannot fit.
+function layout(n, links) {
+    const x = new Float64Array(n), y = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+        const a = i * 2.39996323, r = 0.45 * Math.sqrt((i + 0.5) / n);
+        x[i] = 0.5 + r * Math.cos(a);
+        y[i] = 0.5 + r * Math.sin(a);
+    }
+    const k = Math.sqrt(1 / n);          // the edge length the layout aims at
+    const dx = new Float64Array(n), dy = new Float64Array(n);
+    const steps = n > 120 ? 160 : 300;
+    for (let step = 0; step < steps; step++) {
+        dx.fill(0); dy.fill(0);
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                const ex = x[i] - x[j], ey = y[i] - y[j];
+                const d2 = ex * ex + ey * ey || 1e-9;
+                const f = k * k / d2;    // k^2/d, over d again for the direction
+                dx[i] += ex * f; dy[i] += ey * f;
+                dx[j] -= ex * f; dy[j] -= ey * f;
+            }
+        }
+        for (const l of links) {
+            const ex = x[l.i] - x[l.j], ey = y[l.i] - y[l.j];
+            const d = Math.hypot(ex, ey) || 1e-9;
+            const f = d / k;             // d^2/k, over d for the direction
+            dx[l.i] -= ex * f; dy[l.i] -= ey * f;
+            dx[l.j] += ex * f; dy[l.j] += ey * f;
+        }
+        const t = 0.1 * (1 - step / steps) + 0.0005;
+        for (let i = 0; i < n; i++) {
+            dx[i] += (0.5 - x[i]) * 0.08 * k;
+            dy[i] += (0.5 - y[i]) * 0.08 * k;
+            const d = Math.hypot(dx[i], dy[i]) || 1e-9;
+            const move = Math.min(d, t) / d;
+            x[i] += dx[i] * move; y[i] += dy[i] * move;
+        }
+    }
+    // Fit whatever it settled on to the viewBox, keeping the aspect ratio.
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < n; i++) {
+        x0 = Math.min(x0, x[i]); x1 = Math.max(x1, x[i]);
+        y0 = Math.min(y0, y[i]); y1 = Math.max(y1, y[i]);
+    }
+    const pad = 22;
+    const scale = Math.min((NET_W - 2 * pad) / (x1 - x0 || 1),
+                           (NET_H - 2 * pad) / (y1 - y0 || 1));
+    const out = [];
+    for (let i = 0; i < n; i++) {
+        out.push([NET_W / 2 + (x[i] - (x0 + x1) / 2) * scale,
+                  NET_H / 2 + (y[i] - (y0 + y1) / 2) * scale]);
+    }
+    return out;
+}
+
+function network(c) {
+    if (c.net !== undefined) return c.net;
+    const rows = c.rows, n = rows.length;
+    let body;
+    if (n < 2 || !c.edges) {
+        body = '';
+    } else if (n > NET_MAX) {
+        body = `<div class="note">${n.toLocaleString()} members is more than the ` +
+            `${NET_MAX} this draws; the weights are below.</div>`;
+    } else {
+        const at = new Map(rows.map((r, i) => [r.id, i]));
+        const links = [];
+        let lo = Infinity, hi = -Infinity;
+        for (const [a, b, w] of c.edges) {
+            const i = at.get(a), j = at.get(b);
+            if (i === undefined || j === undefined || i === j) continue;
+            links.push({ i, j, w });
+            lo = Math.min(lo, w); hi = Math.max(hi, w);
+        }
+        const pos = layout(n, links);
+        const span = hi - lo || 1;
+        const lines = links.map(l => {
+            const [xa, ya] = pos[l.i], [xb, yb] = pos[l.j];
+            const width = (1 + 2.2 * (l.w - lo) / span).toFixed(2);
+            const dim = (0.3 + 0.5 * (l.w - lo) / span).toFixed(2);
+            // The visible line is a hairline at the weakest weight, which is
+            // nothing to aim a mouse at, so an invisible fat one carries the
+            // clicking and the thin one carries the reading.
+            const ends = `x1="${xa.toFixed(1)}" y1="${ya.toFixed(1)}" ` +
+                `x2="${xb.toFixed(1)}" y2="${yb.toFixed(1)}"`;
+            return `<g class="link" data-i="${l.i}" data-j="${l.j}">` +
+                `<title>${esc(rows[l.i].id)} &#8212; ${esc(rows[l.j].id)}: ` +
+                `${l.w.toFixed(1)} bits</title>` +
+                `<line class="hit" ${ends}/>` +
+                `<line class="wire${l.w === lo ? ' weak' : ''}" ${ends} ` +
+                `stroke-width="${width}" opacity="${dim}"/></g>`;
+        }).join('');
+        const truthy = rows[0].t !== undefined;
+        const nodes = rows.map((r, i) => {
+            const [px, py] = pos[i];
+            const colour = truthy ? truthColors[(r.t || 0) % truthColors.length]
+                                  : 'var(--accent)';
+            const tag = n <= 14
+                ? `<text class="tag" x="${px.toFixed(1)}" y="${(py + 14).toFixed(1)}">` +
+                  `${esc(r.id.length > 16 ? r.id.slice(0, 15) + '…' : r.id)}</text>`
+                : '';
+            const num = n <= 100
+                ? `<text class="num" x="${px.toFixed(1)}" y="${(py + 1.8).toFixed(1)}">` +
+                  `${i + 1}</text>`
+                : '';
+            return `<g class="node" data-i="${i}"><circle cx="${px.toFixed(1)}" ` +
+                `cy="${py.toFixed(1)}" r="${n <= 100 ? 6 : 4}" fill="${colour}">` +
+                `<title>${i + 1}. ${esc(r.id)}</title></circle>${num}${tag}</g>`;
+        }).join('');
+        const pairs = n * (n - 1) / 2;
+        body = `<svg class="net" viewBox="0 0 ${NET_W} ${NET_H}" ` +
+            `preserveAspectRatio="xMidYMid meet">${lines}${nodes}</svg>` +
+            `<div class="note" style="margin-top:6px">` +
+            `${links.length.toLocaleString()} of ${pairs.toLocaleString()} pairs were ` +
+            `scored above the threshold; a pair with no line is in this cluster ` +
+            `through the others. Line weight is the match weight, the thinnest ` +
+            `${links.length ? `(${lo.toFixed(1)} bits) ` : ''}marked. ` +
+            `Click a line to open that pair and its waterfall.</div>`;
+    }
+    c.net = body
+        ? `<div class="section"><h3>Network</h3>${body}</div>`
+        : '';
+    return c.net;
+}
+
+function summarise(cluster) {
+    const n = cluster.rows.length;
+    const stats = statsOf(cluster.rows, cluster.dist);
+    const pairs = cluster.size * (cluster.size - 1) / 2;
+    return {
+        stats,
+        agreeing: stats.filter(s => s.distinct === 1).length,
+        gaps: stats.filter(s => s.distinct === 1 && s.missing > 0).length,
+        transitive: Math.max(0, pairs - (cluster.edge_count ?? (cluster.edges || []).length)),
+        shown: n,
+    };
+}
+
+// Everything below reads `entries` and `details`; only these two fill them.
+async function loadPage(reset) {
+    if (reset) { entries = []; exhausted = false; matched = 0; }
+    if (exhausted) return;
+    const mine = ++token;
+    search = parseSearch();
+    const query = { field: search.field, q: search.q, sort: $('#sort').value,
+                    dir: sortDesc ? 'desc' : 'asc', only: $('#only').value,
+                    offset: entries.length, limit: PAGE };
+    if (search.field === 'col') query.column = COLS[search.col];
+    const page = await api('/api/list', query);
+    if (mine !== token) return;
+    entries = entries.concat(page.clusters);
+    matched = page.matched;
+    exhausted = entries.length >= matched;
+    searchNote(page.found || null);  // id search: the ids that name a record
+}
+
+// The search box against the field selector: the text lowered for a substring
+// match, or split on commas into whole ids when the field is the record id.
+function parseSearch() {
+    const field = $('#field').value;
+    const text = $('#q').value.trim();
+    const out = { field: 'any', q: text.toLowerCase(), ids: [], col: -1 };
+    if (!text) return out;
+    if (field === 'id') {
+        out.field = 'id';
+        out.ids = [...new Set(text.split(',').map(s => s.trim()).filter(s => s))];
+        out.q = out.ids.join(',');
+    } else if (field === 'cluster') {
+        out.field = 'cluster';
+    } else if (field.startsWith('col:')) {
+        out.field = 'col';
+        out.col = +field.slice(4);
+    }
+    return out;
+}
+
+// Under the box, for an id search: how many of the ids named a record, and
+// which did not, since "nothing matches" on five ids hides which one is wrong.
+function searchNote(found) {
+    const note = $('#qnote');
+    if (search.field !== 'id' || !search.ids.length || found === null) {
+        note.hidden = true;
+        return;
+    }
+    const have = new Set(found);
+    const missing = search.ids.filter(id => !have.has(id));
+    const n = search.ids.length;
+    let text = `${n} id${n === 1 ? '' : 's'} &middot; ${have.size} found`;
+    if (missing.length) {
+        text += ` &middot; <span class="missing">missing: ${missing.map(esc).join(', ')}</span>`;
+    }
+    note.innerHTML = text;
+    note.hidden = false;
+}
+
+// `field:text` typed into the box picks the field, so a keyboard user need not
+// reach for the selector; only a prefix that names a field counts, so a value
+// holding a colon is left alone.
+function shortcut() {
+    const box = $('#q');
+    const m = box.value.match(/^\s*([^:]+?)\s*:(.*)$/);
+    if (!m) return;
+    const name = m[1].toLowerCase();
+    const alias = { any: 'any', id: 'id', 'record id': 'id', cluster: 'cluster',
+                    'cluster id': 'cluster' };
+    let value = alias[name];
+    if (value === undefined) {
+        const i = COLS.findIndex(c => c.toLowerCase() === name);
+        if (i < 0) return;
+        value = `col:${i}`;
+    }
+    $('#field').value = value;
+    box.value = m[2].replace(/^\s+/, '');
+    placeholder();
+}
+
+function placeholder() {
+    const field = $('#field').value;
+    $('#q').placeholder = field === 'id' ? 'record ids, comma separated'
+        : field === 'cluster' ? 'cluster id contains'
+        : field.startsWith('col:') ? `${COLS[+field.slice(4)]} contains`
+        : 'search any value';
+}
+
+const cellHit = (v, q) => v !== null && v !== undefined && String(v).toLowerCase().includes(q);
+
+// What the search matched in one row: its id, and the columns the query is a
+// substring of. A cluster-id search names no row.
+function rowHits(r) {
+    const hits = { id: false, cols: new Set() };
+    if (!search.q) return hits;
+    switch (search.field) {
+        case 'id': hits.id = search.ids.includes(r.id); break;
+        case 'cluster': break;
+        case 'col': if (cellHit(r.v[search.col], search.q)) hits.cols.add(search.col); break;
+        default:
+            hits.id = cellHit(r.id, search.q);
+            r.v.forEach((v, i) => { if (cellHit(v, search.q)) hits.cols.add(i); });
+    }
+    return hits;
+}
+
+function compare(ka, kb) {
+    for (let i = 0; i < ka.length; i++) {
+        if (ka[i] < kb[i]) return -1;
+        if (ka[i] > kb[i]) return 1;
+    }
+    return 0;
+}
+
+function sortBy(list, key) {
+    list.sort((a, b) => compare(key(a), key(b)));
+}
+
+async function detail(id) {
+    if (details.has(id)) return details.get(id);
+    const got = await api('/api/cluster', { id });
+    details.set(id, got);
+    return got;
+}
+
+// Every prediction touching one cluster: its own edges, then the predictions
+// clustering rejected, which cross from one of its members into another
+// cluster. `other` is that other cluster, or null for a pair held inside;
+// `same` is the truth's verdict where there is one.
+function pairsOf(c) {
+    if (c.pairs) return c.pairs;
+    const label = new Map(c.rows.map(r => [r.id, r.t]));
+    const list = (c.edges || []).map(([a, b, w]) => ({
+        a, b, w, other: null,
+        same: HAS_TRUTH ? label.get(a) !== undefined && label.get(a) === label.get(b) : null,
+    }));
+    c.pairs = list.concat(c.rejected || []);
+    return c.pairs;
+}
+
+// A pair's detail is its two records, the weight, and the ledger behind it,
+// which is the explainer's own object read back from the waterfall file.
+async function pairDetail(a, b) {
+    const key = pairKey(a, b);
+    if (details.has(key)) return details.get(key);
+    const got = await api('/api/pair', { a, b });
+    details.set(key, got);
+    return got;
+}
+
+function renderList() {
+    const list = $('#list');
+    list.innerHTML = '';
+    for (const e of entries) {
+        const el = document.createElement('div');
+        el.className = 'item' + (e.id === current ? ' on' : '');
+        let pills = '';
+        if (e.entities > 1) pills += `<span class="pill bad">${e.entities} entities</span>`;
+        if (e.discord) pills += `<span class="pill">${e.discord} split</span>`;
+        else pills += `<span class="pill ok">all agree</span>`;
+        // The sort key's value is shown so the order can be read without
+        // opening anything; size and the split count are already there, so
+        // only the weakest edge needs adding.
+        const key = $('#sort').value === 'weakest' && e.weakest !== null && e.weakest !== undefined
+            ? `${e.weakest.toFixed(1)} bits` : '';
+        el.innerHTML = `<span class="cid">${esc(e.id)}</span>${pills}` +
+            (key ? `<span class="sz">${key}</span>` : '') +
+            `<span class="sz">${e.size.toLocaleString()}</span>`;
+        el.onclick = () => select(e.id);
+        list.appendChild(el);
+    }
+    if (!exhausted) {
+        const more = document.createElement('div');
+        more.className = 'item more';
+        more.innerHTML = `<span class="cid">${(matched - entries.length).toLocaleString()} more</span>`;
+        more.onclick = async () => { await loadPage(false); renderList(); };
+        list.appendChild(more);
+    }
+    const predictions = TOTALS.pairs
+        ? ` &middot; ${TOTALS.pairs.toLocaleString()} predictions` : '';
+    $('#hmeta').innerHTML =
+        `<b>${matched.toLocaleString()}</b> of <b>${TOTALS.clusters.toLocaleString()}</b> clusters` +
+        ` &middot; ${TOTALS.records.toLocaleString()} records${predictions} &middot; ${esc(SOURCE)}`;
+}
+
+function fillSelect(el, options) {
+    el.innerHTML = options.map(([v, label]) =>
+        `<option value="${esc(v)}">${esc(label)}</option>`).join('');
+}
+
+async function rebuild(reset) {
+    await loadPage(reset !== false);
+    renderList();
+    remember();
+    // The open cluster is redrawn either way: a search that still matches it
+    // may match different rows, and the table marks the rows it matched.
+    const keep = entries.some(e => e.id === current);
+    await select(keep ? current : entries.length ? entries[0].id : null,
+                 keep ? { tab, pair: pick } : undefined);
+}
+
+// The rows of a cluster, or of a pair, as one table: a cell differing from the
+// column's commonest value is marked, and the mark is what a reader scans for.
+function recordsTable(rows, stats, opts) {
+    const truthy = rows.length && rows[0].t !== undefined;
+    const head = ['<th>id</th>'].concat(truthy ? ['<th>truth</th>'] : [])
+        .concat(COLS.map((name, i) => {
+            const s = stats[i];
+            const d = s.distinct > 1 ? ` <span class="dcount">(${s.distinct})</span>` : '';
+            return `<th>${esc(name)}${d}</th>`;
+        })).join('');
+    const body = rows.map((r, i) => {
+        const hits = rowHits(r);
+        const cells = COLS.map((_, i) => {
+            const s = stats[i], v = r.v[i];
+            if (v === null || v === '') return '<td class="val miss">&mdash;</td>';
+            // Two rows have no majority, so both sides of a difference are marked.
+            const odd = s.distinct > 1 && (opts && opts.both ? true : v !== s.top);
+            const hit = hits.cols.has(i);
+            return `<td class="val${odd ? ' odd' : ''}${hit ? ' hit' : ''}">${esc(v)}</td>`;
+        }).join('');
+        const colour = truthColors[(r.t || 0) % truthColors.length];
+        const t = truthy ? `<td><span class="truth" style="background:${colour}22;` +
+            `color:${colour}">${r.t + 1}</span></td>` : '';
+        // The row the search matched is lit, so it is the one the eye lands on.
+        const hit = hits.id || hits.cols.size > 0;
+        return `<tr data-i="${i}"${hit ? ' class="hit"' : ''}>` +
+            `<td class="id${hits.id ? ' hit' : ''}">${esc(r.id)}</td>${t}${cells}</tr>`;
+    }).join('');
+    return `<div class="tablewrap"><table><thead><tr>${head}</tr></thead>` +
+        `<tbody>${body}</tbody></table></div>`;
+}
+
+// The address names what is open, so a cluster or a pair can be linked to:
+// #cluster=<id>, or #pair=<a>,<b> for a pair open on its cluster's pairs tab.
+// The search and the order go in the query string, defaults left out, so a
+// search is a link too.
+function remember() {
+    const hash = !current ? ''
+        : tab === 'pairs' && pick
+            ? `#pair=${encodeURIComponent(pick.a)},${encodeURIComponent(pick.b)}`
+            : `#cluster=${encodeURIComponent(current)}`;
+    const params = new URLSearchParams();
+    const field = $('#field').value, q = $('#q').value.trim();
+    if (q) {
+        if (field !== 'any') params.set('field', field === 'id' || field === 'cluster'
+            ? field : COLS[+field.slice(4)]);
+        params.set('q', q);
+    }
+    const sort = $('#sort').value;
+    const [, , defaultDesc] = SORTS.find(([k]) => k === sort);
+    if (sort !== SORTS[0][0]) params.set('sort', sort);
+    if (sortDesc !== defaultDesc) params.set('dir', sortDesc ? 'desc' : 'asc');
+    if ($('#only').value !== 'all') params.set('only', $('#only').value);
+    const query = params.toString();
+    try {
+        history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + hash);
+    } catch (e) {}  // a file:// page may refuse a new query string; the hash still works
+}
+
+// The controls from the query string, before the first list is drawn.
+function recall() {
+    const params = new URLSearchParams(location.search);
+    const field = params.get('field');
+    if (field === 'id' || field === 'cluster') $('#field').value = field;
+    else if (field !== null) {
+        const i = COLS.indexOf(field);
+        if (i >= 0) $('#field').value = `col:${i}`;
+    }
+    $('#q').value = params.get('q') || '';
+    const sort = SORTS.find(([k]) => k === params.get('sort'));
+    if (sort) $('#sort').value = sort[0];
+    sortDesc = SORTS.find(([k]) => k === $('#sort').value)[2];
+    if (params.get('dir') === 'asc') sortDesc = false;
+    if (params.get('dir') === 'desc') sortDesc = true;
+    if (ONLYS.some(([k]) => k === params.get('only'))) $('#only').value = params.get('only');
+    placeholder();
+    direction();
+}
+
+// Open one cluster in the detail pane: its heading, the two tabs, and both
+// panels, only one of them shown. `opts.tab` picks the tab and `opts.pair`
+// the pair to open on it; without them the tab in use stays in use, so
+// stepping through clusters on the pairs tab keeps reading pairs.
+async function select(id, opts) {
+    opts = opts || {};
+    const d = $('#detail');
+    if (id === null) {
+        current = null;
+        pick = null;
+        d.innerHTML = '<div class="empty-state">Nothing matches.</div>';
+        renderList();
+        remember();
+        return;
+    }
+    current = id;
+    pick = opts.pair || null;
+    if (opts.tab) tab = opts.tab;
+    renderList();
+    remember();
+    d.innerHTML = '<div class="empty-state">Loading&hellip;</div>';
+    const c = await detail(id);
+    if (current !== id) return;
+    if (!c) { d.innerHTML = `<div class="empty-state">No cluster ${esc(id)}.</div>`; return; }
+    const view = summarise(c);
+    const pairs = pairsOf(c);
+    const rejected = pairs.filter(p => p.other !== null).length;
+
+    let sub = `${c.size.toLocaleString()} records`;
+    if (view.shown < c.size) sub += ` (showing ${view.shown})`;
+    sub += ` &middot; ${view.agreeing} of ${COLS.length} columns agree wherever they are filled in`;
+    if (view.gaps) sub += ` (${view.gaps} with gaps)`;
+    if (c.weakest !== null && c.weakest !== undefined) {
+        sub += ` &middot; weakest edge ${c.weakest.toFixed(1)} bits`;
+    }
+    if (view.transitive > 0) {
+        sub += ` &middot; ${view.transitive.toLocaleString()} pair` +
+            `${view.transitive === 1 ? '' : 's'} only linked transitively`;
+    }
+    if (c.entities > 1) {
+        sub += ` &middot; <span style="color:var(--bad)">${c.entities} true entities merged</span>`;
+    }
+
+    const chips = COLS.map((name, i) => {
+        const s = view.stats[i];
+        if (s.distinct === 0) {
+            return `<div class="chip empty"><span class="k">${esc(name)}</span>` +
+                `<span class="v">all missing</span></div>`;
+        }
+        if (s.distinct === 1) {
+            const miss = s.missing ? ` <span class="k">(${s.missing} missing)</span>` : '';
+            return `<div class="chip agree"><span class="k">${esc(name)}</span>` +
+                `<span class="v">${esc(s.top)}</span>${miss}</div>`;
+        }
+        return `<div class="chip split"><span class="k">${esc(name)}</span>` +
+            `<span class="v">${s.distinct} values</span></div>`;
+    }).join('');
+
+    let matrix = '';
+    if (c.edges && c.rows.length <= 40) {
+        const at = new Map(c.rows.map((r, i) => [r.id, i]));
+        const w = new Map();
+        let lo = Infinity;
+        for (const [a, b, x] of c.edges) {
+            const i = at.get(a), j = at.get(b);
+            if (i === undefined || j === undefined) continue;
+            w.set(Math.min(i, j) + ':' + Math.max(i, j), x);
+            lo = Math.min(lo, x);
+        }
+        const cells = i => c.rows.map((_, j) => {
+            if (i === j) return '<td class="none">&middot;</td>';
+            const x = w.get(Math.min(i, j) + ':' + Math.max(i, j));
+            if (x === undefined) return '<td class="none">&mdash;</td>';
+            return `<td class="pair${x === lo ? ' weak' : ''}" data-i="${Math.min(i, j)}" ` +
+                `data-j="${Math.max(i, j)}" title="open this pair">${x.toFixed(1)}</td>`;
+        }).join('');
+        matrix = `
+      <div class="section">
+        <h3>Prediction weights, in bits &mdash; a dash is a pair the run never scored above the threshold; click one to see its waterfall</h3>
+        <div class="tablewrap"><table class="matrix">
+          <tr><th></th>${c.rows.map((_, j) => `<th>${j + 1}</th>`).join('')}</tr>
+          ${c.rows.map((r, i) => `<tr><th class="rowhead">${i + 1}. ${esc(r.id)}</th>${cells(i)}</tr>`).join('')}
+        </table></div>
+      </div>`;
+    }
+
+    const count = pairs.length
+        ? `<span class="count${rejected ? ' warn' : ''}">${pairs.length.toLocaleString()}` +
+          `${rejected ? ` &middot; ${rejected} rejected` : ''}</span>`
+        : '';
+    d.innerHTML = `
+    <h2>${esc(c.id)}</h2>
+    <div class="sub">${sub}</div>
+    <div class="tabs">
+      <button data-tab="cluster">Cluster</button>
+      <button data-tab="pairs" title="every prediction touching this cluster">Pairs${count}</button>
+    </div>
+    <div class="panel" data-panel="cluster">
+      <div class="section"><h3>What they have in common</h3><div class="chips">${chips}</div></div>
+      <div class="section"><h3>Records</h3>${recordsTable(c.rows, view.stats)}</div>
+      ${showNet ? network(c) : ''}
+      ${matrix}
+    </div>
+    <div class="panel" data-panel="pairs">
+      <div id="pairtable"></div>
+      <div id="pairbox"></div>
+    </div>`;
+    for (const b of d.querySelectorAll('.tabs button')) b.onclick = () => showTab(b.dataset.tab);
+    // A node is a record and a line is a pair of them, so hovering either lights
+    // the rows it names; a line is also clickable, and that one opens the pair.
+    const table = d.querySelector('[data-panel="cluster"] tbody');
+    const lit = (rows, on) => rows.forEach(r => r.classList.toggle('lit', on));
+    const edgeOf = (i, j) => c.edges.find(([a, b]) =>
+        (a === c.rows[i].id && b === c.rows[j].id) || (a === c.rows[j].id && b === c.rows[i].id));
+    for (const node of d.querySelectorAll('.net g.node')) {
+        const row = table.children[+node.dataset.i];
+        node.onmouseenter = () => lit([row], true);
+        node.onmouseleave = () => lit([row], false);
+        node.onclick = () => row.scrollIntoView({ block: 'nearest' });
+    }
+    for (const link of d.querySelectorAll('.net g.link')) {
+        const ends = [table.children[+link.dataset.i], table.children[+link.dataset.j]];
+        link.onmouseenter = () => lit(ends, true);
+        link.onmouseleave = () => lit(ends, false);
+        link.onclick = () => {
+            const e = edgeOf(+link.dataset.i, +link.dataset.j);
+            if (e) openPair(e[0], e[1]);
+        };
+    }
+    for (const cell of d.querySelectorAll('.matrix td.pair')) {
+        cell.onclick = () => {
+            const e = edgeOf(+cell.dataset.i, +cell.dataset.j);
+            if (e) openPair(e[0], e[1]);
+        };
+    }
+    renderPairTable(c);
+    showTab(tab);
+    d.scrollTop = 0;
+    // A cluster opened by a search scrolls to the first row it matched.
+    const hit = tab === 'cluster' && table.querySelector('tr.hit');
+    if (hit) hit.scrollIntoView({ block: 'nearest' });
+}
+
+function showTab(name) {
+    tab = name;
+    try { localStorage.setItem('cpplink.tab', tab); } catch (e) {}
+    for (const b of document.querySelectorAll('.tabs button')) {
+        b.classList.toggle('on', b.dataset.tab === tab);
+    }
+    for (const p of document.querySelectorAll('.panel')) p.hidden = p.dataset.panel !== tab;
+    remember();
+    if (tab !== 'pairs' || !current) return;
+    const c = details.get(current);
+    if (!c) return;
+    const pairs = sortedPairs(c);
+    // The pairs tab always has a pair open: the one asked for, else the
+    // weakest, which is the one most worth reading.
+    if (pick && !pairs.some(p => p.a === pick.a && p.b === pick.b)) pick = null;
+    if (!pick && pairs.length) pick = { a: pairs[0].a, b: pairs[0].b };
+    if (pick) pickPair(pick.a, pick.b);
+}
+
+// From the cluster tab's matrix or network: the pair opens on the pairs tab.
+function openPair(a, b) {
+    pick = { a, b };
+    showTab('pairs');
+    const row = document.querySelector(`table.pairs tr.row.pin`);
+    if (row) row.scrollIntoView({ block: 'nearest' });
+}
+
+function sortedPairs(c) {
+    const list = pairsOf(c).slice();
+    const key = {
+        w: p => [p.w, p.a, p.b],
+        a: p => [p.a, p.b],
+        b: p => [p.b, p.a],
+        other: p => [p.other === null ? '' : p.other, p.w],
+        same: p => [p.same === null ? 2 : p.same ? 1 : 0, p.w],
+    }[pairSort.key];
+    sortBy(list, key);
+    if (pairSort.desc) list.reverse();
+    return list;
+}
+
+// The table of one cluster's predictions, weakest first unless a header was
+// clicked. A row is a pair, and picking one fills the box under the table.
+function renderPairTable(c) {
+    const box = $('#pairtable');
+    const pairs = sortedPairs(c);
+    if (!pairs.length) {
+        box.innerHTML = `<div class="note">${TOTALS.pairs
+            ? 'No prediction touches the members shown.'
+            : 'Run the viewer with <code>--predictions</code> to list the pairs the run scored.'}</div>`;
+        return;
+    }
+    const heads = [['', '', false], ['a', 'id a', true], ['b', 'id b', true],
+                   ['w', 'bits', true], ['other', 'clustering', true]]
+        .concat(HAS_TRUTH ? [['same', 'truth', true]] : []);
+    const head = heads.map(([key, label, sortable]) => sortable
+        ? `<th class="sortable${pairSort.key === key ? ' on' : ''}` +
+          `${pairSort.key === key && pairSort.desc ? ' desc' : ''}" data-key="${key}">${label}</th>`
+        : `<th>${label}</th>`).join('');
+    const body = pairs.map((p, i) => {
+        const on = pick && pick.a === p.a && pick.b === p.b;
+        const where = p.other === null
+            ? '<td class="note">inside</td>'
+            : `<td class="rej">rejected &rarr; <button class="ghost" data-cluster="${esc(p.other)}"` +
+              ` title="open that cluster's pairs">${esc(p.other)}</button></td>`;
+        const truth = !HAS_TRUTH ? ''
+            : p.same === null ? '<td></td>'
+            : p.same ? '<td class="same">same entity</td>'
+            : '<td class="differ">different</td>';
+        return `<tr class="row${on ? ' pin' : ''}" data-a="${esc(p.a)}" data-b="${esc(p.b)}">` +
+            `<td class="n">${i + 1}</td><td class="id">${esc(p.a)}</td><td class="id">${esc(p.b)}</td>` +
+            `<td class="num">${p.w.toFixed(2)}</td>${where}${truth}</tr>`;
+    }).join('');
+    const notes = [];
+    const rejected = pairs.filter(p => p.other !== null).length;
+    if (rejected) {
+        notes.push(`${rejected} prediction${rejected === 1 ? '' : 's'} clustering rejected: scored ` +
+            `above the write threshold, below the clustering one, so the two records sit in different clusters.`);
+    }
+    if ((c.edge_count || 0) > (c.edges || []).length) {
+        notes.push(`${(c.edges || []).length.toLocaleString()} of the cluster's ` +
+            `${c.edge_count.toLocaleString()} predictions are among the members shown.`);
+    }
+    if (c.rejected_more) {
+        notes.push(`${c.rejected_more.toLocaleString()} more rejected predictions are not listed.`);
+    }
+    box.innerHTML = `<div class="section"><h3>Predictions</h3>` +
+        `<div class="tablewrap pairlist"><table class="pairs"><thead><tr>${head}</tr></thead>` +
+        `<tbody>${body}</tbody></table></div>` +
+        (notes.length ? `<div class="note" style="margin-top:6px">${notes.join(' ')}</div>` : '') +
+        `</div>`;
+    for (const th of box.querySelectorAll('th.sortable')) {
+        th.onclick = () => {
+            pairSort = pairSort.key === th.dataset.key
+                ? { key: th.dataset.key, desc: !pairSort.desc }
+                : { key: th.dataset.key, desc: false };
+            renderPairTable(c);
+        };
+    }
+    for (const row of box.querySelectorAll('tr.row')) {
+        row.onclick = e => {
+            if (e.target.tagName === 'BUTTON') return;
+            pickPair(row.dataset.a, row.dataset.b);
+        };
+    }
+    // The other cluster opens on its pairs tab with this same pair picked.
+    for (const btn of box.querySelectorAll('button[data-cluster]')) {
+        const row = btn.closest('tr');
+        btn.onclick = () => select(btn.dataset.cluster,
+                                   { tab: 'pairs', pair: { a: row.dataset.a, b: row.dataset.b } });
+    }
+}
+
+async function pickPair(a, b) {
+    pick = { a, b };
+    for (const row of document.querySelectorAll('table.pairs tr.row')) {
+        row.classList.toggle('pin', row.dataset.a === a && row.dataset.b === b);
+    }
+    remember();
+    const box = $('#pairbox');
+    box.innerHTML = '<div class="empty-state">Loading&hellip;</div>';
+    const cluster = current;
+    const p = await pairDetail(a, b);
+    if (current !== cluster || !pick || pick.a !== a || pick.b !== b) return;
+    if (!p || !p.rows[0] || !p.rows[1]) {
+        box.innerHTML = `<div class="empty-state">No prediction ${esc(a)} &middot; ${esc(b)}.</div>`;
+        return;
+    }
+    const rejected = p.ca !== p.cb;
+    let sub = `<b>${p.w.toFixed(2)} bits</b>`;
+    if (p.waterfall) sub += ` &middot; posterior ${probability(p.waterfall.probability)}`;
+    sub += rejected
+        ? ` &middot; <span style="color:var(--warn)">rejected by clustering</span>: the two records sit in different clusters`
+        : ` &middot; inside this cluster`;
+    if (p.rows[0].t !== undefined) {
+        sub += p.rows[0].t === p.rows[1].t
+            ? ' &middot; <span style="color:var(--accent)">same entity in the truth</span>'
+            : ' &middot; <span style="color:var(--bad)">different entities in the truth</span>';
+    }
+    const links = [];
+    for (const cid of new Set([p.ca, p.cb])) {
+        if (cid !== cluster) links.push(`<button class="ghost" data-cluster="${esc(cid)}">cluster ${esc(cid)} &rarr;</button>`);
+    }
+    const stats = statsOf(p.rows, null);
+    let ledger;
+    if (p.waterfall) {
+        ledger = waterfall(p.waterfall);
+    } else {
+        ledger = `<div class="note">${HAS_MODEL
+            ? 'No waterfall for this pair.'
+            : 'Write the waterfalls with <code>cpplink explain --predictions</code> and run the viewer with <code>--waterfalls</code> and <code>--model</code> to see how this weight was reached.'}</div>`;
+    }
+    box.innerHTML = `
+    <div class="pairhead"><h3>${esc(a)} <span style="color:var(--muted)">&middot;</span> ${esc(b)}</h3></div>
+    <div class="sub">${sub}</div>
+    ${links.length ? `<div class="links">${links.join('')}</div>` : ''}
+    <div class="section"><h3>Records</h3>${recordsTable(p.rows, stats, { both: true })}</div>
+    <div class="section"><h3>Match weight, as a ledger</h3>${ledger}</div>`;
+    for (const btn of box.querySelectorAll('.links button')) {
+        btn.onclick = () => select(btn.dataset.cluster, { tab: 'pairs', pair: { a, b } });
+    }
+}
+
+function probability(p) {
+    if (p >= 0.9999) return p.toFixed(6);
+    if (p >= 0.001) return p.toFixed(4);
+    return p.toExponential(2);
+}
+
+const fmt = x => (x >= 0 ? '+' : '') + x.toFixed(2);
+const sci = x => x === undefined || x === null ? '?' : (x >= 0.01 ? x.toFixed(3) : x.toExponential(2));
+
+// The waterfall: one floating bar per row of the ledger, from the running total
+// before it to the running total after, ending at the match weight. A
+// term-frequency move is its own thinner bar, since it is the part of the row
+// that depends on the value rather than the level, and the threshold is the
+// line the whole picture is read against.
+function waterfall(w) {
+    const rows = [];
+    rows.push({ kind: 'prior', name: '(prior)', label: 'lambda', from: 0, to: w.prior,
+                tip: `prior odds: ${fmt(w.prior)} bits` });
+    let at = w.prior;
+    for (const s of w.steps) {
+        const tip = [`${s.name}: ${s.label}`];
+        if (s.m !== undefined && s.m !== null) tip.push(`m = ${sci(s.m)}   u = ${sci(s.u)}`);
+        tip.push(`log2(m/u) = ${fmt(s.bits)}`);
+        tip.push(`values: ${s.values ? s.values.join('  |  ') : '(see the records above)'}`);
+        rows.push({ kind: s.bits >= 0 ? 'up' : 'down', name: s.name, label: s.label,
+                    from: at, to: at + s.bits, tip: tip.join('\n') });
+        at += s.bits;
+        if (s.tf) {
+            const rare = s.frequency ? `${s.frequency.toLocaleString()} of ${w.records.toLocaleString()} rows carry the value` : 'neighbourhood mass';
+            rows.push({ kind: 'tf', name: '', label: 'term frequency', from: at, to: at + s.tf,
+                        tip: `${s.name}: term-frequency move ${fmt(s.tf)}\n${rare}` });
+            at += s.tf;
+        }
+    }
+    for (const t of w.interactions) {
+        rows.push({ kind: t.bits >= 0 ? 'up' : 'down', name: '(interaction)', label: t.name,
+                    from: at, to: at + t.bits, tip: `${t.name}: ${fmt(t.bits)} bits` });
+        at += t.bits;
+    }
+    rows.push({ kind: 'total', name: 'match weight', label: `posterior ${probability(w.probability)}`,
+                from: 0, to: w.weight, tip: `match weight ${w.weight.toFixed(3)} bits` });
+
+    // Two label columns on the left, the comparison name and the level it hit,
+    // then the chart, then room for the value beside the last bar.
+    const W = 820, N = 8, L = 300, R = 80, TOP = 26, RH = 22, BH = 13;
+    const H = TOP + rows.length * RH + 8;
+    const points = rows.flatMap(r => [r.from, r.to]).concat([0, w.threshold]);
+    let lo = Math.min(...points), hi = Math.max(...points);
+    const pad = (hi - lo || 1) * 0.06;
+    lo -= pad; hi += pad;
+    const x = v => L + (v - lo) / (hi - lo) * (W - L - R);
+    const span = hi - lo;
+    const step = [1, 2, 5, 10, 20, 25, 50, 100, 200].find(s => span / s <= 9) || 500;
+    const clip = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;
+    let axis = '';
+    for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+        axis += `<line class="grid" x1="${x(v).toFixed(1)}" y1="${TOP - 4}" x2="${x(v).toFixed(1)}" y2="${H - 6}"/>` +
+            `<text class="tick" x="${x(v).toFixed(1)}" y="${TOP - 9}">${v}</text>`;
+    }
+    axis += `<line class="zero" x1="${x(0).toFixed(1)}" y1="${TOP - 4}" x2="${x(0).toFixed(1)}" y2="${H - 6}"/>`;
+    axis += `<line class="thr" x1="${x(w.threshold).toFixed(1)}" y1="${TOP - 4}" x2="${x(w.threshold).toFixed(1)}" y2="${H - 6}">` +
+        `<title>threshold ${w.threshold} bits</title></line>`;
+    let body = '';
+    rows.forEach((r, i) => {
+        const y = TOP + i * RH, mid = y + RH / 2;
+        const a = x(Math.min(r.from, r.to)), b = x(Math.max(r.from, r.to));
+        const h = r.kind === 'tf' ? BH - 5 : BH;
+        const yy = mid - h / 2;
+        body += `<text class="name" x="${N}" y="${mid + 4}">${esc(clip(r.name, 17))}</text>`;
+        body += `<text class="lvl" x="${L - 10}" y="${mid + 4}">${esc(clip(r.label, 24))}</text>`;
+        // The running total is continuous, so a hairline joins where one row
+        // ends to where the next begins.
+        if (i > 0 && i < rows.length - 1) {
+            body += `<line class="step" x1="${x(r.from).toFixed(1)}" y1="${(mid - RH).toFixed(1)}" ` +
+                `x2="${x(r.from).toFixed(1)}" y2="${mid.toFixed(1)}"/>`;
+        }
+        body += `<g class="bar"><title>${esc(r.tip)}</title>` +
+            `<rect class="${r.kind}" x="${a.toFixed(1)}" y="${yy.toFixed(1)}" ` +
+            `width="${Math.max(1, b - a).toFixed(1)}" height="${h}" rx="2"/></g>`;
+        // The value sits to the right of the bar whichever way it points, so
+        // it never lands on the label column or on the bar itself.
+        const value = r.kind === 'total' ? `= ${r.to.toFixed(2)}` : fmt(r.to - r.from);
+        body += `<text class="val${r.kind === 'tf' ? ' dim' : ''}" x="${(b + 5).toFixed(1)}" ` +
+            `y="${mid + 4}">${value}</text>`;
+    });
+    const zone = {
+        emit: 'every pair with this pattern clears the threshold, so no term-frequency table was consulted',
+        drop: 'no pair with this pattern can clear the threshold, whatever values it carries',
+        check: 'the bracket straddles the threshold, so this pattern was scored exactly',
+        unreachable: 'no evaluation can produce this pattern',
+    }[w.zone] || w.zone;
+    return `<svg class="wf" viewBox="0 0 ${W} ${H}">${axis}${body}</svg>` +
+        `<div class="note" style="margin-top:6px">Bits of match weight, left to right; the dashed ` +
+        `<span style="color:var(--accent)">green</span> line is the threshold (${w.threshold} bits) and ` +
+        `the grey one is even odds. Hover a bar for m, u and the values. Pattern bracket ` +
+        `${w.bracket[0].toFixed(1)} to ${w.bracket[1].toFixed(1)} bits: ${zone}.</div>`;
+}
+
+function move(step) {
+    const i = entries.findIndex(e => e.id === current);
+    const next = entries[Math.max(0, Math.min(entries.length - 1, i + step))];
+    if (next) {
+        select(next.id);
+        $('#list').children[entries.indexOf(next)].scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// The next or previous pair in the table's own order, on the pairs tab only.
+function movePair(step) {
+    if (tab !== 'pairs' || !pick) return;
+    const rows = Array.from(document.querySelectorAll('table.pairs tr.row'));
+    const i = rows.findIndex(r => r.classList.contains('pin'));
+    const next = rows[Math.max(0, Math.min(rows.length - 1, i + step))];
+    if (next && !next.classList.contains('pin')) {
+        pickPair(next.dataset.a, next.dataset.b);
+        next.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+        if (e.key === 'Escape') e.target.blur();
+        return;
+    }
+    if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+    if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+    if (e.key === 'n') { e.preventDefault(); movePair(1); }
+    if (e.key === 'p') { e.preventDefault(); movePair(-1); }
+    if (e.key === '/') { e.preventDefault(); $('#q').focus(); }
+});
+
+let typing = null;
+$('#q').addEventListener('input', () => {
+    shortcut();
+    clearTimeout(typing);
+    typing = setTimeout(() => rebuild(true), 200);
+});
+$('#field').addEventListener('change', () => { placeholder(); rebuild(true); });
+$('#sort').addEventListener('change', () => {
+    sortDesc = SORTS.find(([k]) => k === $('#sort').value)[2];
+    direction();
+    rebuild(true);
+});
+$('#dir').addEventListener('click', () => { sortDesc = !sortDesc; direction(); rebuild(true); });
+$('#only').addEventListener('change', () => rebuild(true));
+
+function direction() {
+    const b = $('#dir');
+    b.textContent = sortDesc ? '\u2193' : '\u2191';
+    b.title = sortDesc ? 'descending; click for ascending' : 'ascending; click for descending';
+}
+$('#list').addEventListener('scroll', async e => {
+    const el = e.target;
+    if (exhausted || el.scrollTop + el.clientHeight < el.scrollHeight - 200) return;
+    await loadPage(false);
+    renderList();
+});
+let showNet = false;
+try { showNet = localStorage.getItem('cpplink.net') === '1'; } catch (e) {}
+$('#net').checked = showNet;
+$('#net').addEventListener('change', () => {
+    showNet = $('#net').checked;
+    try { localStorage.setItem('cpplink.net', showNet ? '1' : '0'); } catch (e) {}
+    if (current) select(current, { pair: pick });
+});
+$('#theme').onclick = () => {
+    const now = document.documentElement.getAttribute('data-theme');
+    const dark = now ? now === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
+};
+
+(async function boot() {
+    const summary = await api('/api/summary');
+    COLS = summary.columns;
+    SOURCE = summary.source;
+    TOTALS = summary.totals;
+    HAS_TRUTH = summary.has_truth;
+    HAS_MODEL = summary.has_model;
+    try { tab = localStorage.getItem('cpplink.tab') === 'pairs' ? 'pairs' : 'cluster'; } catch (e) {}
+    fillSelect($('#field'), FIELDS.concat(COLS.map((name, i) => [`col:${i}`, name])));
+    fillSelect($('#sort'), SORTS);
+    fillSelect($('#only'), ONLYS);
+    recall();
+    const hash = decodeURIComponent(location.hash.slice(1));
+    let open = null;
+    if (hash.startsWith('pair=')) {
+        // A pair is opened on its first cluster's pairs tab, which needs the
+        // pair looked up before the list is drawn so that the list's first
+        // entry does not open in its place.
+        const at = hash.indexOf(',');
+        const p = at > 5 ? await pairDetail(hash.slice(5, at), hash.slice(at + 1)) : null;
+        if (p) open = { id: p.ca, tab: 'pairs', pair: { a: p.a, b: p.b } };
+    } else if (hash.startsWith('cluster=')) {
+        open = { id: hash.slice(8), tab: 'cluster' };
+    }
+    if (open) current = open.id;
+    await rebuild(true);
+    if (open) await select(open.id, open);
+})();
+</script>
+</body>
+</html>
