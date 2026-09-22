@@ -57,7 +57,12 @@
         {"name": "debug", "configurePreset": "debug"},
         {"name": "asan", "configurePreset": "asan"},
         {"name": "tsan", "configurePreset": "tsan"},
-        {"name": "windows", "configurePreset": "windows", "configuration": "Release"}
+        {
+            "name": "windows",
+            "configurePreset": "windows",
+            "configuration": "Release",
+            "targets": ["cpplink", "run_tests"]
+        }
     ],
     "testPresets": [
         {

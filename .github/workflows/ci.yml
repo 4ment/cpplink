@@ -48,7 +48,11 @@ jobs:
   # multi-config, so the preset names the configuration at build and test time
   # rather than through CMAKE_BUILD_TYPE; conda puts every library under
   # Library/, which is what the preset's prefix path points at. cmd rather than
-  # bash so that CONDA_PREFIX reaches CMake as a Windows path.
+  # bash so that CONDA_PREFIX reaches CMake as a Windows path. The build preset
+  # names its targets rather than taking the solution's default build, which on
+  # this generator includes the RUN_TESTS project: that runs ctest before
+  # anything is compiled, so the build aborts on a test executable it has not
+  # built yet.
   windows:
     name: msvc on windows-latest
     runs-on: windows-latest
