@@ -58,6 +58,8 @@ With `--clusters`, the file is taken as what `cluster --threshold` wrote at that
 Without one, the predictions are clustered here by the same union-find in the same order, so the cache holds exactly the partition that command would write, named by the same representatives; the test suite holds the two to the same file.
 
 A prediction whose two records clustering put in different clusters, above the write threshold and below the clustering one, is the prediction most worth reading, so it is kept and listed under both of its clusters as `rejected`, each naming the other cluster its second record went to.
+The `rejected` checkbox in the header is what lists them, and it is off by default: such a pair belongs to two clusters and is read for itself rather than for either of them, so the pairs tab holds only the cluster's own predictions until it is asked for them.
+The count beside the tab says how many are being held back, the toggle is remembered between visits, and a link naming a rejected pair turns it on so the address opens on the pair it names.
 `--min-size` and `--max-size` bound the clusters listed; `--max-rows` bounds the members shown per cluster, the rest being counted only.
 
 ## The list

@@ -250,6 +250,9 @@ kbd {
   <label class="toggle" title="draw the predictions of the selected cluster as a graph">
     <input type="checkbox" id="net"> network
   </label>
+  <label class="toggle" title="list the predictions clustering rejected, which cross from this cluster into another">
+    <input type="checkbox" id="rej"> rejected
+  </label>
   <button class="ghost" id="theme">theme</button>
 </header>
 <main>
@@ -292,6 +295,7 @@ let current = null;      // the selected cluster id
 let tab = 'cluster';     // which tab of the detail pane is open: cluster or pairs
 let pick = null;         // {a, b}: the pair open on the pairs tab
 let pairSort = { key: 'w', desc: false };  // the pairs table's order, kept across clusters
+let showRej = false;     // whether the pairs tab lists the predictions clustering rejected
 let sortDesc = true;     // the list's direction; each sort key has its own default
 let search = { field: 'any', q: '', ids: [], col: -1 };  // the search as last parsed
 let details = new Map();
@@ -624,6 +628,15 @@ function pairsOf(c) {
     return c.pairs;
 }
 
+// What the pairs tab lists: the pairs held inside the cluster, plus the ones
+// clustering rejected only where the toggle asks for them. They are off by
+// default because a cluster is read for what it holds, and a rejected pair is
+// listed under both of its clusters.
+function visiblePairs(c) {
+    const pairs = pairsOf(c);
+    return showRej ? pairs : pairs.filter(p => p.other === null);
+}
+
 // A pair's detail is its two records, the weight, and the ledger behind it,
 // which is the explainer's own object read back from the waterfall file.
 async function pairDetail(a, b) {
@@ -790,6 +803,7 @@ async function select(id, opts) {
     if (!c) { d.innerHTML = `<div class="empty-state">No cluster ${esc(id)}.</div>`; return; }
     const view = summarise(c);
     const pairs = pairsOf(c);
+    const shown = visiblePairs(c);
     const rejected = pairs.filter(p => p.other !== null).length;
 
     let sub = `${c.size.toLocaleString()} records`;
@@ -851,8 +865,8 @@ async function select(id, opts) {
     }
 
     const count = pairs.length
-        ? `<span class="count${rejected ? ' warn' : ''}">${pairs.length.toLocaleString()}` +
-          `${rejected ? ` &middot; ${rejected} rejected` : ''}</span>`
+        ? `<span class="count${rejected && showRej ? ' warn' : ''}">${shown.length.toLocaleString()}` +
+          `${rejected ? ` &middot; ${rejected} rejected${showRej ? '' : ' hidden'}` : ''}</span>`
         : '';
     d.innerHTML = `
     <h2>${esc(c.id)}</h2>
@@ -935,7 +949,7 @@ function openPair(a, b) {
 }
 
 function sortedPairs(c) {
-    const list = pairsOf(c).slice();
+    const list = visiblePairs(c).slice();
     const key = {
         w: p => [p.w, p.a, p.b],
         a: p => [p.a, p.b],
@@ -954,9 +968,13 @@ function renderPairTable(c) {
     const box = $('#pairtable');
     const pairs = sortedPairs(c);
     if (!pairs.length) {
-        box.innerHTML = `<div class="note">${TOTALS.pairs
-            ? 'No prediction touches the members shown.'
-            : 'Run the viewer with <code>--predictions</code> to list the pairs the run scored.'}</div>`;
+        const hidden = pairsOf(c).length;
+        box.innerHTML = `<div class="note">${!TOTALS.pairs
+            ? 'Run the viewer with <code>--predictions</code> to list the pairs the run scored.'
+            : hidden
+                ? `Every prediction touching this cluster is one clustering rejected; ` +
+                  `tick <b>rejected</b> to list ${hidden === 1 ? 'it' : `the ${hidden}`}.`
+                : 'No prediction touches the members shown.'}</div>`;
         return;
     }
     const heads = [['', '', false], ['a', 'id a', true], ['b', 'id b', true],
@@ -981,16 +999,20 @@ function renderPairTable(c) {
             `<td class="num">${p.w.toFixed(2)}</td>${where}${truth}</tr>`;
     }).join('');
     const notes = [];
-    const rejected = pairs.filter(p => p.other !== null).length;
-    if (rejected) {
+    const rejected = pairsOf(c).filter(p => p.other !== null).length;
+    if (rejected && showRej) {
         notes.push(`${rejected} prediction${rejected === 1 ? '' : 's'} clustering rejected: scored ` +
             `above the write threshold, below the clustering one, so the two records sit in different clusters.`);
+    } else if (rejected) {
+        notes.push(`${rejected} prediction${rejected === 1 ? '' : 's'} clustering rejected ` +
+            `${rejected === 1 ? 'is' : 'are'} not listed; tick <b>rejected</b> to see ` +
+            `${rejected === 1 ? 'it' : 'them'}.`);
     }
     if ((c.edge_count || 0) > (c.edges || []).length) {
         notes.push(`${(c.edges || []).length.toLocaleString()} of the cluster's ` +
             `${c.edge_count.toLocaleString()} predictions are among the members shown.`);
     }
-    if (c.rejected_more) {
+    if (c.rejected_more && showRej) {
         notes.push(`${c.rejected_more.toLocaleString()} more rejected predictions are not listed.`);
     }
     box.innerHTML = `<div class="section"><h3>Predictions</h3>` +
@@ -1229,6 +1251,15 @@ $('#list').addEventListener('scroll', async e => {
 });
 let showNet = false;
 try { showNet = localStorage.getItem('cpplink.net') === '1'; } catch (e) {}
+// Off unless it was last left on: a rejected pair belongs to two clusters and
+// is noise in both until it is asked for.
+try { showRej = localStorage.getItem('cpplink.rej') === '1'; } catch (e) {}
+$('#rej').checked = showRej;
+$('#rej').addEventListener('change', () => {
+    showRej = $('#rej').checked;
+    try { localStorage.setItem('cpplink.rej', showRej ? '1' : '0'); } catch (e) {}
+    if (current) select(current, { pair: pick });
+});
 $('#net').checked = showNet;
 $('#net').addEventListener('change', () => {
     showNet = $('#net').checked;
@@ -1262,6 +1293,9 @@ $('#theme').onclick = () => {
         const at = hash.indexOf(',');
         const p = at > 5 ? await pairDetail(hash.slice(5, at), hash.slice(at + 1)) : null;
         if (p) open = { id: p.ca, tab: 'pairs', pair: { a: p.a, b: p.b } };
+        // A link naming a pair clustering rejected shows it, whatever the
+        // toggle was left at, or the address would open on another pair.
+        if (p && p.ca !== p.cb && !showRej) $('#rej').click();
     } else if (hash.startsWith('cluster=')) {
         open = { id: hash.slice(8), tab: 'cluster' };
     }
