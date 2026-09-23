@@ -168,7 +168,7 @@ The two phases scale with different things, which is the point of reporting them
 - The **dictionary walk** grows with the queried columns' *distinct values*, at a flat 46 ns
   each. On a near-unique column with a fuzzy level — an email address — that is the whole of
   the latency: at 20M the `full` query walks 91.6M values and spends 76% of itself there,
-  while the same query without the email address is answered in 598 ms.
+  while the `fuzzy` query, one name column, walks 657k and is answered in 598 ms.
 
 So the thing to watch is not the size of the store but whether the query names a near-unique
 column that a fuzzy level reads. Both phases split 4–5× over eight threads.
@@ -195,8 +195,27 @@ Two more, both narrow:
   it compares fuzzily against everything as it should. It gets no entry in the
   `list_contains` alias map, so a nickname the store never saw is not looked up as one.
 
+## From Python
+
+The resident session behind [`Linker`](../python.md) is what a search service is: one store
+loaded once, a query answered in milliseconds.
+
+```python
+hits = linker.search(
+    {"last_name": "zolnerowich", "dob": "1979-08-06", "postcode": "4508"},
+    model, k=10, expected_matches=1,
+)
+for hit in hits:
+    print(hit.id, hit.match_weight, hit.match_probability)
+```
+
+A list or tuple value is spread over the repeats a list column takes one element per, `None` is
+the same as omitting the column, and `explain=True` fills `SearchResult.waterfalls` with the
+ledger behind each hit. See [From Python](../python.md#8-search-for-a-record).
+
 ## See also
 
 - [`predict`](predict.md) — the same weight over candidate pairs rather than one query
 - [`explain`](explain.md) — the waterfall `--explain` prints
 - [`cluster`](cluster.md) — what `--clusters` reads
+- [The model](../model.md) — where the weight, the prior and the bracket come from

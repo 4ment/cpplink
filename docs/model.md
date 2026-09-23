@@ -131,6 +131,16 @@ whose emails differ is worth **−18.06 bits**. The prior contributes
 \(\log_2(\lambda/(1-\lambda)) = -23.6\) bits at \(\lambda = 7.7\times10^{-8}\), which is the
 hurdle every pair starts behind.
 
+!!! note "λ is the prior of a *pair*, and a query asks a different question"
+    λ is the match rate over the pair space, which is what deduplication faces: of all
+    \(\binom{N}{2}\) pairs, how many are the same person. A query record against N records
+    faces something else — roughly "I expect this person to be in here about once" — and the
+    two differ by orders of magnitude. [`search`](commands/search.md) therefore takes the prior
+    as an option (`--expected-matches`) rather than inheriting it, and defaults to the model's
+    so that a hit scores exactly what `predict` would have given that pair. The prior is a
+    constant added to every pair, so it moves the posterior and where a threshold sits, and
+    never the order.
+
 !!! warning "Conditional independence is doing real work"
     Record data violates it — forename and sex are correlated, postcode and address more so.
     Splink carries the same exposure. Correlated comparisons double-count evidence and push

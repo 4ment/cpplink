@@ -156,6 +156,11 @@ const ComparisonSet& Session::Comparisons() {
     return *comparisons_;
 }
 
+ComparisonSet* Session::mutable_comparisons() {
+    Comparisons();
+    return comparisons_.get();
+}
+
 std::unique_ptr<ComparisonSet> Session::BindComparisons(bool use_signatures,
                                                         bool use_ladders) {
     Check(!schema_.comparisons.empty(), "the schema declares no \"comparisons\"");

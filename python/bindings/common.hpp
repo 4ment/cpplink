@@ -16,10 +16,12 @@
 #include "cpplink/blocking.hpp"
 #include "cpplink/cluster.hpp"
 #include "cpplink/comparison.hpp"
+#include "cpplink/explain.hpp"
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "cpplink/search.hpp"
 
 namespace cpplink {
 namespace python {
@@ -77,6 +79,14 @@ class Session {
 
     const Schema& schema() const { return schema_; }
     const RecordStore& store() const { return *store_; }
+    // The store and the bound comparisons as a `Searcher` needs them: it makes
+    // the query a row, which is a write, and grows the signature tables with any
+    // dictionary that row extends. Nothing else here is allowed to write, and
+    // the store reserved room for exactly this row when it was finalized, so the
+    // borrowed columns a prediction or cluster table hands to Python keep
+    // pointing at what they pointed at.
+    RecordStore* mutable_store() { return store_.get(); }
+    ComparisonSet* mutable_comparisons();
     const LoadStats& stats() const { return stats_; }
     const std::vector<std::string>& paths() const { return paths_; }
     PairMode mode() const { return mode_; }
@@ -158,6 +168,16 @@ class ArrowTable : public std::enable_shared_from_this<ArrowTable> {
     std::vector<std::string> names_;
 };
 
+// One search's hits, each with the ledger behind it where the caller asked for
+// one. The waterfalls are built while the query is still a row, because the row
+// goes as soon as the search returns and every report that explains a pair takes
+// a pair of rows.
+struct SearchOutcome {
+    SearchReport report;
+    std::vector<PairWaterfall> waterfalls;
+    std::string text;
+};
+
 // The predictions of one run: `dataset_a, id_a, dataset_b, id_b` (the datasets
 // only over several inputs), `gamma`, `match_weight`, `match_probability`, the
 // merged file's own columns.
@@ -205,6 +225,7 @@ void BindSchema(py::module_& m);
 void BindModel(py::module_& m);
 SessionClass BindSession(py::module_& m);
 void BindStages(py::module_& m, SessionClass* session);
+void BindSearch(py::module_& m, SessionClass* session);
 void BindDiagnostics(py::module_& m, SessionClass* session);
 
 }  // namespace python

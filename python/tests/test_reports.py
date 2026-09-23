@@ -38,6 +38,9 @@ FIELDS = {
     "ClusterQuality": 9,
     "MergeReport": 10,
     "Explanation": 8,
+    "SearchResult": 3,
+    "SearchReport": 14,
+    "SearchHit": 8,
     "PairWaterfall": 16,
     "WaterfallStep": 11,
     "BlockingReport": 7,
@@ -56,6 +59,13 @@ FIELDS = {
 }
 
 
+def _first_surname(sample) -> str:
+    """A value the store holds, so the search finds something."""
+    pq = pytest.importorskip("pyarrow.parquet")
+    table = pq.read_table(str(sample.parquet), columns=["last_name"])
+    return str(table.column("last_name")[0].as_py())
+
+
 @pytest.fixture(scope="module")
 def reports(sample, tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
     root = tmp_path_factory.mktemp("reports")
@@ -69,6 +79,7 @@ def reports(sample, tmp_path_factory: pytest.TempPathFactory) -> dict[str, objec
     linker.cluster(sample.predictions, truth=sample.truth)
     cluster = linker.last_cluster
     explanation = linker.explain(linker.id_of(0), linker.id_of(1), model=model)
+    hits = linker.search({"last_name": _first_surname(sample)}, model, k=3)
     recall = linker.recall(sample.truth, why=True)
     levels, _ = linker.levels()
     simplify, _ = linker.simplify(model)
@@ -95,6 +106,9 @@ def reports(sample, tmp_path_factory: pytest.TempPathFactory) -> dict[str, objec
         "ClusterReport": cluster.report,
         "ClusterQuality": cluster.quality,
         "Explanation": explanation,
+        "SearchResult": hits,
+        "SearchReport": hits.report,
+        "SearchHit": hits.hits[0],
         "PairWaterfall": explanation.waterfall,
         "WaterfallStep": explanation.waterfall.steps[0],
         "BlockingReport": linker.explain_blocking(),

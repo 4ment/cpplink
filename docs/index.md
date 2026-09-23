@@ -60,6 +60,9 @@ machine, and what it ran out of was scratch space rather than memory.
 5 Score    TF-adjusted, bound-pruned                 cpplink predict
                                                      cpplink rescore
 6 Cluster  union–find over the predictions            cpplink cluster
+
+  Search   one query record against the store,      cpplink search
+           top-k over the same weight
 ```
 
 Every data command takes one or more parquet files. One file deduplicates, two link, and
@@ -85,6 +88,7 @@ Four invariants hold the design together:
 - [Blocking](blocking.md) — the four pair sources, exact costing, and measured recall.
 - [Linking two files](linking.md): what changes when the pair space is a cross-product.
 - [Commands](commands/index.md) — what each subcommand is for and how to read its output.
+- [`search`](commands/search.md) — a model is also a search index: one query record, top-k.
 - [The schema file](reference/schema.md): every field of the JSON that configures a run.
 
 ## Status
@@ -100,6 +104,14 @@ So is everything built on top of them: the pair-global ceiling,
 [`simplify`](commands/simplify.md), and
 [`estimate --interactions`](commands/estimate.md#relaxing-conditional-independence), which
 relaxes conditional independence inside the scoring model.
+
+**A model is also a search index.** [`search`](commands/search.md) takes a query record and
+returns the records scoring highest against it, top-k over the same weight `predict` writes and
+exact with respect to the model. It needs no blocking and no candidate pairs: interning makes a
+string level a question about a *value*, so every string metric in the query runs once per
+distinct value of a column rather than once per record, after which a record costs a load and a
+compare. At the 20M target a query naming one name column is answered in 598 ms on one thread
+and 166 ms on eight.
 
 Two things are worth stating plainly.
 

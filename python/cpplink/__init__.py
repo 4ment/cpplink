@@ -54,6 +54,9 @@ from ._cpplink import (  # noqa: F401  (re-exported)
     RecallResult,
     RescoreReport,
     Schema,
+    SearchHit,
+    SearchReport,
+    SearchResult,
     SimplifyOptions,
     SimplifyReport,
     __version__,
@@ -101,6 +104,9 @@ __all__ = [
     "RecallResult",
     "RescoreReport",
     "Schema",
+    "SearchHit",
+    "SearchReport",
+    "SearchResult",
     "SimplifyOptions",
     "SimplifyReport",
     "__version__",
@@ -816,6 +822,69 @@ class Linker:
             row_b,
             model=None if model is None else _model(model),
             threshold=threshold,
+            tf_damping=tf_damping,
+            fuzzy_tf=fuzzy_tf,
+            ball=ball,
+            interactions=interactions,
+        )
+
+    def search(
+        self,
+        record: Mapping[str, Any],
+        model: Model | PathLike,
+        *,
+        k: int = 10,
+        threshold: float | None = None,
+        probability: float | None = None,
+        threads: int = 1,
+        expected_matches: float | None = None,
+        prior_weight: float | None = None,
+        explain: bool = False,
+        clusters: PathLike | None = None,
+        tf_damping: float = 1.0,
+        fuzzy_tf: bool = False,
+        ball_budget: int | None = None,
+        interactions: bool = True,
+    ) -> SearchResult:
+        """The ``k`` records that score highest against a query record.
+
+        ``record`` maps column names to values; a list or tuple is spread over
+        the repeats a list column takes one element per, and ``None`` is the
+        same as leaving the column out. A column the query does not name is
+        *missing*, not empty, so its comparison lands on its null level.
+
+        The answer is exact with respect to the model: the same ``k`` records,
+        in the same order, as scoring the query against every record. The
+        result iterates its hits and carries the report as
+        :attr:`SearchResult.report`; ``explain=True`` also builds the ledger
+        behind each hit into :attr:`SearchResult.waterfalls`, which has to
+        happen during the search because the query is a record of the store
+        only while the search runs.
+
+        ``expected_matches`` is the prior stated as the number of records here
+        expected to be the person asked about, which is the question a search
+        asks; without it the model's own prior applies and a hit scores what
+        :meth:`predict` would have given that pair. ``clusters`` is a file
+        :meth:`cluster` wrote, and labels each hit with the cluster it belongs
+        to.
+
+        Reads one input; over several it raises, for the reason
+        :attr:`SearchResult` documents.
+        """
+        ball = BallOptions()
+        if ball_budget is not None:
+            ball.budget = ball_budget
+        return self._session.search(
+            dict(record),
+            _model(model),
+            k=k,
+            threshold=threshold,
+            probability=probability,
+            threads=threads,
+            expected_matches=expected_matches,
+            prior_weight=prior_weight,
+            explain=explain,
+            clusters=_path(clusters),
             tf_damping=tf_damping,
             fuzzy_tf=fuzzy_tf,
             ball=ball,

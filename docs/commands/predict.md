@@ -272,3 +272,11 @@ the bracket a fuzzy level admits is much wider than an exact one's — the check
 On the 1M synthetic sample the adjustment moves 47% of the weights, by a median of 0.6 bits
 and by more than 5 bits on 1,128 of them, and changes no decision at all: the posterior there
 saturates so hard that nothing near the threshold exists to move.
+
+## See also
+
+- [`rescore`](rescore.md) — replay a spill under a new model without comparing again
+- [`cluster`](cluster.md) — join the predictions into duplicate clusters
+- [`search`](search.md) — the same weight and the same bracket, over one query record instead
+  of every candidate pair
+- [The model](../model.md) — where the weights, the bracket and the zones come from

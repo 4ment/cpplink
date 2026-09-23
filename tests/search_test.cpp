@@ -274,6 +274,44 @@ TEST_F(SearchFixture, AValueTheStoreNeverHeldIsStillCompared) {
     EXPECT_EQ(store_->NumRecords(), kRecords);
 }
 
+// And nothing *moves*, which is a stronger claim than nothing changing.
+//
+// The Python bindings hand out tables whose columns are borrowed pointers into
+// this store -- the id arena above all -- so a query row that grew a vector at
+// capacity would reallocate it and leave those pointers dangling. `Finalize`
+// reserves the room for exactly this row, and this is the test of it: every
+// buffer a query touches is at the same address afterwards.
+TEST_F(SearchFixture, AQueryRowMovesNothing) {
+    const char* ids_text = store_->ids().text.data();
+    const uint64_t* ids_offsets = store_->ids().offsets.data();
+    const uint32_t* surname =
+        std::get<cpplink::StringColumn>(store_->column(0)).ids.data();
+    const uint32_t* surname_tf =
+        std::get<cpplink::StringColumn>(store_->column(0)).tf.data();
+    const int32_t* dob = std::get<cpplink::DateColumn>(store_->column(2)).values.data();
+    {
+        cpplink::Searcher searcher;
+        std::string error;
+        ASSERT_TRUE(searcher.Bind(store_.get(), &comparisons_, &scorer_, &error))
+            << error;
+        cpplink::SearchOptions options;
+        cpplink::SearchReport report;
+        // A surname the store never held, so the dictionary and its term
+        // frequencies grow too, which is the case with the most to move.
+        cpplink::QueryRecord query;
+        query.Set("surname", "notasurnamethisstoreholds");
+        query.Set("city", "city1");
+        query.Set("dob", "1981-01-24");
+        ASSERT_TRUE(searcher.Search(query, options, &report, &error)) << error;
+        EXPECT_EQ(report.values_adopted, 2u);
+    }
+    EXPECT_EQ(store_->ids().text.data(), ids_text);
+    EXPECT_EQ(store_->ids().offsets.data(), ids_offsets);
+    EXPECT_EQ(std::get<cpplink::StringColumn>(store_->column(0)).ids.data(), surname);
+    EXPECT_EQ(std::get<cpplink::StringColumn>(store_->column(0)).tf.data(), surname_tf);
+    EXPECT_EQ(std::get<cpplink::DateColumn>(store_->column(2)).values.data(), dob);
+}
+
 // The query row is removed when the searcher goes, and the pairs the store
 // already held score what they scored before it arrived.
 TEST_F(SearchFixture, TheStoreIsLeftAsItWasFound) {

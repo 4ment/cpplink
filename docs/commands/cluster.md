@@ -235,3 +235,10 @@ a merged file alike (a merged file adds the id index, 4 bytes a record). The pas
 predictions and 1.8M records took 0.016 s against 36 s to produce them, which is why the
 lock-free
 CAS version the design mentions stays unbuilt.
+
+## See also
+
+- [`merge-predictions`](merge-predictions.md) — the shard directory as one file
+- [`search`](search.md) — `--clusters` takes the file this writes and labels each hit with the
+  cluster it belongs to, so a query answers with entities rather than records
+- [The cluster viewer](../viewer.md) — the partition as a page
