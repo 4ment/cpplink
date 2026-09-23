@@ -70,6 +70,7 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
                          std::string* error, bool use_signatures, bool use_ladders) {
     bound_.clear();
     tables_.clear();
+    table_dicts_.clear();
     width_ = 0;
     dataset_starts_ = store.dataset_starts();
     // Several comparisons can read the same column, and the signatures belong to
@@ -149,6 +150,7 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
                 if (entry.first == dict) return entry.second;
             }
             tables_.push_back(std::make_unique<SignatureTable>());
+            table_dicts_.push_back(dict);
             tables_.back()->Build(*dict);
             built.emplace_back(dict, tables_.back().get());
             return tables_.back().get();
@@ -226,6 +228,12 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
         width_ = static_cast<uint8_t>(width_ + bound.bits);
     }
     return true;
+}
+
+void ComparisonSet::ResizeTables() {
+    for (size_t i = 0; i < tables_.size(); ++i) {
+        tables_[i]->Extend(*table_dicts_[i]);
+    }
 }
 
 uint64_t ComparisonSet::SignatureBytes() const {
@@ -508,6 +516,20 @@ uint8_t ComparisonSet::LevelForValues(size_t comparison, uint32_t left,
         ++i;
     }
     return static_cast<uint8_t>(levels.size() - 1);
+}
+
+bool ComparisonSet::StringLevelForValues(size_t comparison, size_t level, uint32_t left,
+                                         uint32_t right) const {
+    const BoundComparison& bound = bound_[comparison];
+    const LevelSpec& spec = bound.spec->levels[level];
+    if (spec.type == LevelType::kLevenshtein || spec.type == LevelType::kJaroWinkler) {
+        // One rung of the run, which is what the level would be asked alone. The
+        // screen is the run's, looser than this rung's threshold and so still
+        // admissible for it.
+        return StringRunLevel(bound, level, level + 1, left, right) == level;
+    }
+    if (spec.type == LevelType::kNull || spec.type == LevelType::kElse) return false;
+    return StringLevelFires(bound, spec, left, right);
 }
 
 bool ComparisonSet::LevelFires(const BoundComparison& comparison, size_t index,

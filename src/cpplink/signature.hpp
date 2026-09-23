@@ -28,6 +28,10 @@ uint64_t CharacterMask(std::string_view value);
 class SignatureTable {
    public:
     void Build(const Dictionary& dict);
+    // Brings the table to the dictionary's current size, computing only what is
+    // new. A table is indexed by value id, so a dictionary a query has grown
+    // would be read past the end of one that has not followed it.
+    void Extend(const Dictionary& dict);
 
     bool Empty() const { return mask_.empty(); }
     uint64_t Mask(uint32_t id) const { return mask_[id]; }

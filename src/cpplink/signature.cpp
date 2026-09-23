@@ -24,4 +24,16 @@ void SignatureTable::Build(const Dictionary& dict) {
     }
 }
 
+void SignatureTable::Extend(const Dictionary& dict) {
+    const uint32_t size = dict.Size();
+    const uint32_t have = static_cast<uint32_t>(mask_.size());
+    mask_.resize(size);
+    length_.resize(size);
+    for (uint32_t id = have; id < size; ++id) {
+        const std::string_view value = dict.Value(id);
+        mask_[id] = CharacterMask(value);
+        length_[id] = static_cast<uint32_t>(value.size());
+    }
+}
+
 }  // namespace cpplink

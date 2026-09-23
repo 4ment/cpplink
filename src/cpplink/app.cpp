@@ -39,6 +39,7 @@
 #include "cpplink/sample_data.hpp"
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
+#include "cpplink/search.hpp"
 #include "cpplink/simplify.hpp"
 #include "cpplink/waterfall.hpp"
 
@@ -100,6 +101,8 @@ void PrintUsage(std::ostream& out) {
            "parquet file\n"
         << "  rescore     re-score a spilled run under a new model, without "
            "comparing again\n"
+        << "  search      find the records a query record scores highest against,\n"
+           "              top-k over the same weight predict writes\n"
         << "  gen-sample  write a sample parquet file with planted duplicates\n"
         << "\n"
         << "options:\n"
@@ -1845,6 +1848,151 @@ int RunGenSample(const std::vector<std::string>& args, std::ostream& out,
     return 0;
 }
 
+// Top-k retrieval over the match weight. There is no blocking here and no plan:
+// the query is compared against every record, which is affordable because the
+// comparison is a table lookup per column rather than a string metric per row.
+int RunSearch(const std::vector<std::string>& args, std::ostream& out,
+              std::ostream& err) {
+    std::string schema_path;
+    std::string model_path;
+    std::string cluster_path;
+    std::vector<std::string> data_paths;
+    QueryRecord query;
+    SearchOptions options;
+    ScoreOptions score;
+    std::string value;
+    bool explain = false;
+    bool as_json = false;
+    bool expected_given = false;
+    double expected = 0.0;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--schema") {
+            if (!TakeValue(args, &i, &schema_path, err)) return 1;
+        } else if (args[i] == "--model") {
+            if (!TakeValue(args, &i, &model_path, err)) return 1;
+        } else if (args[i] == "--field") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            QueryField field;
+            std::string error;
+            if (!ParseQueryField(value, &field, &error)) {
+                err << "cpplink search: " << error << "\n";
+                return 1;
+            }
+            query.fields.push_back(field);
+        } else if (args[i] == "-k" || args[i] == "--top") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.k = std::stoull(value);
+        } else if (args[i] == "--threshold") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threshold = std::stod(value);
+        } else if (args[i] == "--threads") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.threads = static_cast<unsigned>(std::stoul(value));
+        } else if (args[i] == "--expected-matches") {
+            // How many records of the person asked about the store is expected to
+            // hold. It becomes bits once the record count is known.
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.override_prior = true;
+            expected_given = true;
+            expected = std::stod(value);
+        } else if (args[i] == "--prior-weight") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            options.override_prior = true;
+            expected_given = false;
+            options.prior_weight = std::stod(value);
+        } else if (args[i] == "--tf-damping") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.tf_damping = std::stod(value);
+        } else if (args[i] == "--no-interactions") {
+            score.use_interactions = false;
+        } else if (args[i] == "--clusters") {
+            if (!TakeValue(args, &i, &cluster_path, err)) return 1;
+        } else if (args[i] == "--explain") {
+            explain = true;
+        } else if (args[i] == "--json") {
+            as_json = true;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            err << "cpplink search: unknown option '" << args[i] << "'\n";
+            return 1;
+        } else {
+            data_paths.push_back(args[i]);
+        }
+    }
+    if (schema_path.empty() || data_paths.empty() || model_path.empty()) {
+        err << "cpplink search: --schema <schema.json>, --model <model.json> and a "
+               "parquet file are required\n";
+        return 1;
+    }
+    if (query.fields.empty()) {
+        err << "cpplink search: give at least one --field <column>=<value>\n";
+        return 1;
+    }
+    Schema schema;
+    std::string error;
+    if (!LoadSchemaFor(schema_path, data_paths, &schema, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    if (schema.comparisons.empty()) {
+        err << "cpplink search: the schema declares no \"comparisons\"\n";
+        return 1;
+    }
+    RecordStore store(schema);
+    if (!LoadParquetFiles(data_paths, schema, &store, nullptr, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    ComparisonSet comparisons;
+    if (!comparisons.Bind(schema, store, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    Model model;
+    if (!LoadModel(model_path, &model, &error)) {
+        err << "cpplink: " << error << "\n";
+        return 1;
+    }
+    Scorer scorer;
+    if (!scorer.Bind(model, comparisons, store, score, &error)) {
+        err << "cpplink search: " << error << "\n";
+        return 1;
+    }
+
+    Searcher searcher;
+    if (!searcher.Bind(&store, &comparisons, &scorer, &error)) {
+        err << "cpplink search: " << error << "\n";
+        return 1;
+    }
+    if (expected_given) {
+        options.prior_weight = PriorWeightForExpected(expected, store.NumRecords());
+    }
+    SearchReport report;
+    if (!searcher.Search(query, options, &report, &error)) {
+        err << "cpplink search: " << error << "\n";
+        return 1;
+    }
+    if (!cluster_path.empty() &&
+        !GroupHitsByCluster(store, cluster_path, &report, &error)) {
+        err << "cpplink search: " << error << "\n";
+        return 1;
+    }
+    if (as_json) {
+        out << SearchReportJson(report) << "\n";
+        return 0;
+    }
+    PrintSearchReport(report, out);
+    if (explain) {
+        // The store row is the first side throughout, so a term-frequency move
+        // reads the frequency of a value the table was built over.
+        for (const SearchHit& hit : report.hits) {
+            out << "\n";
+            PrintPairWaterfall(store, comparisons, scorer, hit.row, searcher.QueryRow(),
+                               out);
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 
 int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& err) {
@@ -1877,6 +2025,7 @@ int Run(const std::vector<std::string>& args, std::ostream& out, std::ostream& e
     if (first == "rescore") return RunRescore(rest, out, err);
     if (first == "cluster") return RunCluster(rest, out, err);
     if (first == "merge-predictions") return RunMergeEdges(rest, out, err);
+    if (first == "search") return RunSearch(rest, out, err);
     if (first == "gen-sample") return RunGenSample(rest, out, err);
 
     err << "cpplink: unknown command '" << first << "'\n";

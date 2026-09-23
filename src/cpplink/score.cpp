@@ -43,7 +43,13 @@ uint32_t TermFrequencyAdjustment::Frequency(uint64_t row) const {
     if (dates != nullptr) {
         const int32_t value = dates->values[row];
         if (value == kNullDate) return 0;
-        return dates->tf[static_cast<size_t>(value - dates->tf_origin)];
+        const size_t at = static_cast<size_t>(value - dates->tf_origin);
+        // The table is dense over the range the *loaded* rows cover, and a search
+        // appends a query row that may carry a date outside it. Nothing the file
+        // holds can be out of range, so this costs a predicted compare and is
+        // only ever taken by a value the table was not built over.
+        if (at >= dates->tf.size()) return 0;
+        return dates->tf[at];
     }
     if (booleans != nullptr) {
         const int8_t value = booleans->values[row];

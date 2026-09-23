@@ -40,6 +40,21 @@ class Dictionary {
     // The index is only needed while loading; dropping it frees roughly half.
     void ReleaseIndex();
 
+    // Appends a value without consulting the index, which a finalized dictionary
+    // no longer has, and without checking whether the text is already here.
+    //
+    // This is the search path and nothing else: a query carries a value the store
+    // may never have seen, and a fuzzy level needs its text and its signature,
+    // which only a value id addresses. The caller has already looked the text up
+    // -- `Adopt` cannot, having no index -- so an adopted id is either a value the
+    // dictionary genuinely lacks or a deliberate duplicate.
+    uint32_t Adopt(std::string_view value);
+
+    // Drops every value from `size` on, undoing the adoptions one query made. The
+    // text stays in the arena, which is a few bytes a query and not worth a
+    // free-list to reclaim.
+    void Truncate(uint32_t size);
+
    private:
     static constexpr size_t kChunkBytes = 1u << 20;
 

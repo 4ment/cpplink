@@ -95,6 +95,16 @@ class ComparisonSet {
     // self-joined once instead of the pair stream being walked again.
     uint8_t LevelForValues(size_t comparison, uint32_t left, uint32_t right) const;
 
+    // Whether one string level fires for two values of the column *that level*
+    // reads. `LevelForValues` answers for a whole comparison and so cannot serve
+    // one whose levels read different columns -- an address against its username
+    // is the shape -- because the two ids it is given belong to one dictionary.
+    // Asked a level at a time, the question is well posed again, and a search
+    // tabulates such a comparison as one table per level. False for the null and
+    // else levels, which are not a value's business.
+    bool StringLevelForValues(size_t comparison, size_t level, uint32_t left,
+                              uint32_t right) const;
+
     // Whether a level could fire for this pair, decided without evaluating one
     // string metric: exact for the cheap level types, and the signature bounds
     // for the fuzzy ones. False means "certainly not"; true means "maybe".
@@ -107,6 +117,19 @@ class ComparisonSet {
     // these once over the data, which makes the null level's u exact rather than
     // sampled.
     bool IsNullValue(size_t comparison, uint64_t row) const;
+
+    // Brings every per-value table this set holds to the size of the dictionary
+    // it was built from.
+    //
+    // A signature table is indexed by value id, so a dictionary that has grown
+    // past it would be read off the end. Nothing in a run grows one: this exists
+    // for the search path, where a query carries values the store never saw and
+    // adopts them into the column's dictionary for the length of the query. The
+    // membership levels' alias map needs no such call, because it is consulted
+    // only below the `alias_size` it was built at, and a value the map does not
+    // reach simply has no alias -- which is what a value the list column never
+    // held would get anyway.
+    void ResizeTables();
 
     size_t Size() const { return bound_.size(); }
     const BoundComparison& at(size_t index) const { return bound_[index]; }
@@ -155,6 +178,10 @@ class ComparisonSet {
     // ComparisonSet cannot be copied into one whose comparisons point at another's
     // tables.
     std::vector<std::unique_ptr<SignatureTable>> tables_;
+    // The dictionary each table was built from, in the same order, so a table
+    // can be brought back to its dictionary's size without asking the caller
+    // which one it belongs to.
+    std::vector<const Dictionary*> table_dicts_;
     // One per list_contains comparison, addressed through BoundComparison. Held
     // by pointer for the same reason the signature tables are: the vector may
     // grow, and a BoundComparison holds the data() of one of these.
