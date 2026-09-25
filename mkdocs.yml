@@ -37,6 +37,7 @@ nav:
   - Getting started: getting-started.md
   - From Python: python.md
   - The cluster viewer: viewer.md
+  - The search page: finder.md
   - Concepts:
       - The model: model.md
       - Comparisons: comparisons.md

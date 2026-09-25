@@ -16,9 +16,12 @@ dependencies = ["numpy", "pandas", "pyarrow"]
 test = ["pytest"]
 # `cpplink-viewer` serves the clusters of a run over a DuckDB cache.
 viewer = ["duckdb"]
+# `cpplink-finder` asks who in a file a person is, over `Linker.search`.
+finder = ["streamlit"]
 
 [project.scripts]
 cpplink-viewer = "cpplink_viewer.server:main"
+cpplink-finder = "cpplink_finder.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/4ment/cpplink"
@@ -31,7 +34,7 @@ metadata.version.input = "CMakeLists.txt"
 metadata.version.regex = 'project\(cpplink VERSION (?P<value>[0-9.]+)'
 cmake.args = ["-DCPPLINK_BUILD_PYTHON=ON"]
 cmake.build-type = "Release"
-wheel.packages = ["python/cpplink", "python/cpplink_viewer"]
+wheel.packages = ["python/cpplink", "python/cpplink_viewer", "python/cpplink_finder"]
 # Keep the extension's build out of build/, which is the CLI's.
 build-dir = "build/python"
 
