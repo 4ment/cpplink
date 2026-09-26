@@ -250,9 +250,27 @@ A term-frequency adjustment needs an exact-match level, here and in splink.
 So two records sharing the misspelling "Zolnerowitch" against "Zolnerowich" get the averaged
 fuzzy weight, and the rarity that makes the pair convincing is thrown away.
 
-`--fuzzy-tf` replaces the value's own frequency with the mass of its *neighbourhood* — the
-share of the file that falls inside the ball the level defines — which is exactly `p_v` again
-when the level is exact.
+`--fuzzy-tf` replaces the value's own frequency with the mass of its *neighbourhood*: the share of the file that falls inside the ball the level defines.
+For a value \(v\) of comparison \(c\) and a level \(\ell\), the ball is every value that would land on \(\ell\) against \(v\), and its mass sums their relative frequencies:
+
+\[
+B_\ell(v) \;=\; \{\, w : (v, w) \text{ reaches level } \ell \,\}
+\qquad
+M_\ell(v) \;=\; \sum_{w \in B_\ell(v)} p_w
+\]
+
+The two records of a pair sit in different neighbourhoods, so the adjustment reads the geometric mean of their two masses:
+
+\[
+\Delta_{c,\ell}(a, b) \;=\; w_c \cdot \log_2 \frac{u_{c,\ell}}{\sqrt{M_\ell(v_a)\, M_\ell(v_b)}}
+\;=\; w_c \left( \log_2 u_{c,\ell} \;-\; \tfrac{1}{2}\bigl(\log_2 M_\ell(v_a) + \log_2 M_\ell(v_b)\bigr) \right)
+\]
+
+where \(u_{c,\ell}\) is the level's learned \(u\) and \(w_c\) the damping factor (`--tf-damping`).
+When the level is exact, \(B_\ell(v) = \{v\}\), both values are the same, and the formula is the [exact-level adjustment](../model.md#term-frequency-adjustment) with \(M = p_v\).
+On a fuzzy level the geometric mean moves half as far as either side would on its own.
+A pair where either side has no mass is not adjusted.
+The admissible bracket follows from the same formula: \(\Delta_{\max}\) comes from the smallest mass the level holds in the column and \(\Delta_{\min}\) from the largest.
 Computing it is a similarity self-join over every distinct value, which is affordable here only
 because values are interned: the join is over the 149k distinct surnames of the 1M sample, not
 its 1M rows, and it is amortised over every pair the run scores.

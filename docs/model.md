@@ -173,6 +173,7 @@ where \(p_v\) is the value's relative frequency, \(p_{\min,c}\) is the singleton
 \(w_c\) is a damping factor (`--tf-damping`, 1.0 by default). The adjustment applies only on
 **exact** levels of comparisons declared `"term_frequency": true`, and only where both sides
 agree — so the value can be read from either record.
+[`predict --fuzzy-tf`](commands/predict.md#term-frequency-on-the-fuzzy-levels) extends it to the fuzzy levels by replacing \(p_v\) with the mass of the value's neighbourhood under the level.
 
 TF adjustment is the one thing that breaks γ's sufficiency, which is why cpplink keeps it
 **out of EM and applies it at scoring**. Estimation stays exact on the pattern histogram, and
