@@ -70,6 +70,10 @@ class BallMassTable {
     double Mass(size_t level, uint32_t id) const {
         return static_cast<double>(mass_[level][id]) * inverse_records_;
     }
+    // A count of records as the same probability `Mass` returns.
+    double MassOf(uint64_t records) const {
+        return static_cast<double>(records) * inverse_records_;
+    }
     double MinMass(size_t level) const { return min_mass_[level]; }
     double MaxMass(size_t level) const { return max_mass_[level]; }
     // Exact u for the level, over ordered draws, on the same denominator the
@@ -102,8 +106,10 @@ struct BallTables {
     double seconds = 0.0;
     uint64_t bytes = 0;
 
+    // `only`, where given, names the comparisons to build; the rest are left
+    // empty with the reason that they were not asked for.
     void Build(const ComparisonSet& comparisons, uint64_t records,
-               const BallOptions& options);
+               const BallOptions& options, const std::vector<bool>* only = nullptr);
     bool Has(size_t comparison) const {
         return comparison < tables.size() && !tables[comparison].Empty();
     }

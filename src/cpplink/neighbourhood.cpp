@@ -237,12 +237,17 @@ bool BallMassTable::Build(const ComparisonSet& comparisons, size_t comparison,
 }
 
 void BallTables::Build(const ComparisonSet& comparisons, uint64_t records,
-                       const BallOptions& options) {
+                       const BallOptions& options, const std::vector<bool>* only) {
     const auto started = std::chrono::steady_clock::now();
     tables.resize(comparisons.Size());
     reasons.assign(comparisons.Size(), std::string());
     for (size_t c = 0; c < comparisons.Size(); ++c) {
         std::string reason;
+        if (only != nullptr && (c >= only->size() || !(*only)[c])) {
+            reasons[c] = "not named by the query";
+            tables[c] = BallMassTable();
+            continue;
+        }
         if (!tables[c].Build(comparisons, c, records, options, &reason)) {
             reasons[c] = reason;
             tables[c] = BallMassTable();

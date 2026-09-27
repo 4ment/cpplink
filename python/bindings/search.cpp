@@ -3,7 +3,6 @@
 
 #include "cpplink/search.hpp"
 
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -66,16 +65,14 @@ SearchOutcome SearchStage(Session& session, const py::dict& fields,
     ScoreOptions score;
     score.tf_damping = tf_damping;
     score.use_interactions = interactions;
-    BallTables balls;
-    std::ostringstream ball_text;
-    if (fuzzy_tf) {
-        py::gil_scoped_release release;
-        BuildBallTables(*comparisons, *store, ball, &balls, ball_text);
-    }
+    // Kept on the session: the self-join is the one part of a fuzzy search that
+    // does not depend on the query's values, only on which columns it names.
+    const BallTables* balls =
+        fuzzy_tf ? &session.Balls(ball, ComparisonsNamedBy(session.schema(), query))
+                 : nullptr;
     Scorer scorer;
     std::string error;
-    Check(scorer.Bind(model, *comparisons, *store, score, &error,
-                      fuzzy_tf ? &balls : nullptr),
+    Check(scorer.Bind(model, *comparisons, *store, score, &error, balls),
           "search: " + error);
 
     SearchOptions options;

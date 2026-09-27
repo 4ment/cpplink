@@ -54,6 +54,12 @@ struct QueryRecord {
     const std::string* Find(const std::string& column) const;
 };
 
+// Which comparisons read a column the query gives a value for, directly or as the
+// source of a column derived from it. The rest land on their null level for every
+// row, so nothing measured over their dictionaries can move a score: this is what
+// `--fuzzy-tf` builds neighbourhood tables for.
+std::vector<bool> ComparisonsNamedBy(const Schema& schema, const QueryRecord& query);
+
 // Parses `column=value`, which is how the command line takes one field.
 bool ParseQueryField(const std::string& text, QueryField* field, std::string* error);
 
@@ -145,11 +151,13 @@ class Searcher {
     Searcher& operator=(const Searcher&) = delete;
 
     // The store and the comparison set are written to, so both are taken
-    // mutable; the scorer is not. Fails where the store holds more than one
+    // mutable. So is the scorer, for one thing only: under fuzzy term frequency
+    // the query row's neighbourhood mass is measured by the walk and pinned on it
+    // for as long as the query is installed. Fails where the store holds more than one
     // input: a query row would have to be a dataset of its own, and the levels
     // that read which input a row came from were bound against a boundary list
     // that does not know about it.
-    bool Bind(RecordStore* store, ComparisonSet* comparisons, const Scorer* scorer,
+    bool Bind(RecordStore* store, ComparisonSet* comparisons, Scorer* scorer,
               std::string* error);
 
     bool Search(const QueryRecord& query, const SearchOptions& options,
@@ -193,7 +201,7 @@ class Searcher {
 
     RecordStore* store_ = nullptr;
     ComparisonSet* comparisons_ = nullptr;
-    const Scorer* scorer_ = nullptr;
+    Scorer* scorer_ = nullptr;
     uint64_t query_row_ = 0;
     bool installed_ = false;
     size_t adopted_ = 0;

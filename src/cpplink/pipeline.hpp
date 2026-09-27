@@ -85,8 +85,10 @@ bool ResolveEdgeOutput(const std::string& command, const std::string& out,
 // Builds the neighbourhood masses a fuzzy term-frequency adjustment needs, and
 // says which columns got one. A column too large for the budget keeps today's
 // behaviour, which is worth saying out loud rather than degrading quietly.
+// `only` limits the build to the comparisons it marks, as `search` asks.
 void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
-                     const BallOptions& options, BallTables* balls, std::ostream& out);
+                     const BallOptions& options, BallTables* balls, std::ostream& out,
+                     const std::vector<bool>* only = nullptr);
 
 // One record named by its id, or by `<dataset>:<id>` where the inputs share ids.
 // Found is a row; missing and ambiguous are each an error that says so, the

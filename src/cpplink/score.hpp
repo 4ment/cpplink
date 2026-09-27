@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,11 @@ struct TermFrequencyAdjustment {
     const DateColumn* dates = nullptr;
     const BooleanColumn* booleans = nullptr;
     const BallMassTable* ball = nullptr;
+    // The one row whose mass is given rather than looked up. A search query is a
+    // row the table was built without, and its value may be one the dictionary
+    // never held, so the searcher measures its neighbourhood from its own walk.
+    uint64_t pinned_row = std::numeric_limits<uint64_t>::max();
+    double pinned_mass = 0.0;
 
     // log2(u / p) for the pair, damped: p is the shared value's frequency on an
     // exact level and the geometric mean of the two neighbourhood masses on a
@@ -129,6 +135,14 @@ class Scorer {
     // Levels of this comparison that carry an adjustment, for the report that has
     // to say which ones did.
     bool AdjustsFuzzyLevels() const;
+    bool AdjustsFuzzyLevels(size_t comparison) const;
+    // Gives `row` its own neighbourhood mass on each fuzzy level of one
+    // comparison: `records[level]` is how many records land on that level
+    // against it. The mass is clamped into the table's range so the bracket
+    // stays admissible without being rebuilt; a value the dictionary holds is
+    // inside it already and scores exactly what `predict` would give it.
+    void PinMass(uint64_t row, size_t comparison, const std::vector<uint64_t>& records);
+    void UnpinMasses();
 
     // The fitted two-way corrections in force, for the waterfall that has to show
     // them: without these rows it would explain a different sum from the one that

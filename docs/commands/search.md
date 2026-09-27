@@ -35,13 +35,28 @@ cpplink search --schema <schema.json> --model <model.json>
 | `--clusters <file>` | — | a file written by [`cluster`](cluster.md); labels each hit with its cluster |
 | `--explain` | off | print the [waterfall](explain.md) behind every hit |
 | `--json` | off | the whole report as one JSON object |
-| `--tf-damping F` | 1.0 | scale the term-frequency adjustment |
+| `--tf-damping F` | 1.0 | scale the term-frequency adjustment; 0 turns it off |
+| `--fuzzy-tf` | off | adjust the fuzzy levels too, by the mass of each value's neighbourhood, as [`predict --fuzzy-tf`](predict.md) does |
+| `--ball-budget N` | 40e9 | value pairs the neighbourhood join may look at per comparison; a larger dictionary gets no fuzzy adjustment |
 | `--no-interactions` | off | score the plain conditionally-independent model |
 | *(positional)* | — | required; the parquet file |
 
 A column the query does not name is **missing**, not empty. So a query carrying a name and a
 date of birth against a ten-column schema is scored as a record whose other eight fields were
 never recorded, which is what it is, and those comparisons land on their null level.
+
+### A common exact name can rank below a rare typo
+
+Term frequency moves an exact agreement by how common the value is, so agreeing on `smith` is worth far less than agreeing on a rare surname.
+Without `--fuzzy-tf` only the exact level moves: a `smythe` landing on a Jaro-Winkler level scores that level's weight whatever its neighbourhood looks like, and that weight can be larger than what an exact `smith` has left.
+The query `John Smith` then returns the typos first.
+
+`--fuzzy-tf` is the fix that keeps the model: the fuzzy level pays for a crowded neighbourhood as the exact level pays for a common value, and `smith`'s neighbourhood contains `smith`.
+On a 200,000-record `gen-sample` file, the commonest first and last name returns 6 of its 10 exact matches in the top 10 by default and 9 with `--fuzzy-tf`.
+The neighbourhood of the query's own value is measured from the dictionary walk, so a query value the store never held is adjusted too, and a value the store does hold scores exactly what `predict --fuzzy-tf` would give the same pair.
+The join behind it is built once per run, only for the comparisons the query names, and it is the slow part: 23 s over both name columns at 200,000 records.
+
+`--tf-damping 0` is the blunt alternative: every agreement counts the same, which returns all 10, and a rare name no longer outweighs a common one.
 
 A list column takes one element per repeat of its field: `--field alias=bill --field
 alias=will`. A date is written `YYYY-MM-DD` and is refused in any other form.

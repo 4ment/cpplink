@@ -17,6 +17,7 @@
 #include "cpplink/cluster.hpp"
 #include "cpplink/comparison.hpp"
 #include "cpplink/explain.hpp"
+#include "cpplink/neighbourhood.hpp"
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
@@ -103,6 +104,17 @@ class Session {
     // --no-signatures` and `--no-ladders`.
     std::unique_ptr<ComparisonSet> BindComparisons(bool use_signatures, bool use_ladders);
 
+    // The neighbourhood masses `fuzzy_tf` reads, for the comparisons in
+    // `wanted`, each built over the bound comparisons the first time it is
+    // wanted and kept. The dictionary self-join costs seconds to minutes where a
+    // search costs milliseconds, so a search asks only for the comparisons its
+    // query names: one over a column the query leaves out is its null level for
+    // every row and no fuzzy level of it can fire. Nothing the join reads changes
+    // after load -- a query adopts values past the end of a dictionary and takes
+    // them back -- and every table is dropped when the budget changes, since that
+    // decides which columns get one.
+    const BallTables& Balls(const BallOptions& options, const std::vector<bool>& wanted);
+
     // The predictions of the last `predict`, which `cluster` with no table
     // given reads: the run's own rows, nothing to resolve.
     const std::shared_ptr<EdgeTable>& last_edges() const { return last_edges_; }
@@ -121,6 +133,9 @@ class Session {
     std::unique_ptr<BlockingPlan> estimation_plan_;
     std::unique_ptr<BlockingPlan> prediction_plan_;
     std::unique_ptr<ComparisonSet> comparisons_;
+    std::unique_ptr<BallTables> balls_;
+    std::vector<bool> balls_tried_;  // by comparison: built, or refused with a reason
+    uint64_t balls_budget_ = 0;
 };
 
 // The schema text `levels` and `simplify` rewrite: the source text where the

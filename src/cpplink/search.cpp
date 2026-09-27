@@ -13,6 +13,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -203,6 +204,27 @@ const std::string* QueryRecord::Find(const std::string& column) const {
     return nullptr;
 }
 
+std::vector<bool> ComparisonsNamedBy(const Schema& schema, const QueryRecord& query) {
+    std::unordered_set<std::string> named;
+    for (const QueryField& field : query.fields) named.insert(field.column);
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (const ColumnSpec& column : schema.columns) {
+            if (column.IsDerived() && named.count(column.derive.from) != 0 &&
+                named.insert(column.name).second) {
+                grew = true;
+            }
+        }
+    }
+    std::vector<bool> wanted(schema.comparisons.size(), false);
+    for (size_t c = 0; c < schema.comparisons.size(); ++c) {
+        for (const std::string& column : schema.comparisons[c].columns) {
+            if (named.count(column) != 0) wanted[c] = true;
+        }
+    }
+    return wanted;
+}
+
 bool ParseQueryField(const std::string& text, QueryField* field, std::string* error) {
     const size_t split = text.find('=');
     if (split == std::string::npos || split == 0) {
@@ -225,7 +247,7 @@ double PriorWeightForExpected(double expected, uint64_t records) {
 
 Searcher::~Searcher() { Uninstall(); }
 
-bool Searcher::Bind(RecordStore* store, ComparisonSet* comparisons, const Scorer* scorer,
+bool Searcher::Bind(RecordStore* store, ComparisonSet* comparisons, Scorer* scorer,
                     std::string* error) {
     if (store->NumDatasets() > 1) {
         *error =
@@ -274,6 +296,7 @@ void Searcher::Uninstall() {
         ids.text.resize(ids.offsets.back());
     }
     comparisons_->ResizeTables();
+    scorer_->UnpinMasses();
     plans_.clear();
     written_ = 0;
     wrote_id_ = false;
@@ -489,6 +512,18 @@ void Searcher::BuildPlans(SearchReport* report) {
         });
         report->values_walked += values;
         ++report->tabled;
+        if (scorer_->AdjustsFuzzyLevels(c)) {
+            // The query's neighbourhood on each level is every record whose value
+            // the walk just put there, which is what the ball table holds for a
+            // value it was built over and the only way to have it for one it was
+            // not. The query row itself was never counted into `tf`.
+            std::vector<uint64_t> landed(bound.spec->levels.size(), 0);
+            const uint32_t counted = static_cast<uint32_t>(strings.tf.size());
+            for (uint32_t v = 0; v < std::min(values, counted); ++v) {
+                landed[plan.table[v]] += strings.tf[v];
+            }
+            scorer_->PinMass(query_row_, c, landed);
+        }
     }
 }
 

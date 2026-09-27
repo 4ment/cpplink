@@ -868,6 +868,12 @@ class Linker:
         :meth:`cluster` wrote, and labels each hit with the cluster it belongs
         to.
 
+        ``tf_damping`` scales the term-frequency move and 0 turns it off.
+        ``fuzzy_tf`` adjusts the fuzzy levels too, by how crowded each value's
+        neighbourhood is, which is what keeps a typo of a common name from
+        outranking the name itself; the neighbourhood tables are built for the
+        comparisons the query names the first time they are asked for, and kept.
+
         Reads one input; over several it raises, for the reason
         :attr:`SearchResult` documents.
         """

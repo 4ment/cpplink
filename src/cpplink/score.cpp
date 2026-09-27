@@ -60,9 +60,11 @@ uint32_t TermFrequencyAdjustment::Frequency(uint64_t row) const {
 }
 
 double TermFrequencyAdjustment::Mass(uint64_t row) const {
+    if (row == pinned_row) return pinned_mass;
     if (ball == nullptr || strings == nullptr) return 0.0;
     const uint32_t id = strings->ids[row];
-    if (id == kNullId) return 0.0;
+    // A value adopted after the table was built has no entry in it.
+    if (id == kNullId || id >= ball->Values()) return 0.0;
     return ball->Mass(level, id);
 }
 
@@ -470,6 +472,38 @@ bool Scorer::AdjustsFuzzyLevels() const {
         if (adjustment.fuzzy) return true;
     }
     return false;
+}
+
+bool Scorer::AdjustsFuzzyLevels(size_t comparison) const {
+    for (const TermFrequencyAdjustment& adjustment : adjustments_) {
+        if (adjustment.fuzzy && adjustment.comparison == comparison) return true;
+    }
+    return false;
+}
+
+void Scorer::PinMass(uint64_t row, size_t comparison,
+                     const std::vector<uint64_t>& records) {
+    for (TermFrequencyAdjustment& adjustment : adjustments_) {
+        if (!adjustment.fuzzy || adjustment.comparison != comparison) continue;
+        const BallMassTable& table = *adjustment.ball;
+        const uint64_t count =
+            adjustment.level < records.size() ? records[adjustment.level] : 0;
+        // The bracket was taken from the table's rarest and commonest
+        // neighbourhoods, so a mass outside them would let a pair beat its own
+        // bound. Only a value the store never held can land outside.
+        const double mass =
+            std::clamp(table.MassOf(count), table.MinMass(adjustment.level),
+                       table.MaxMass(adjustment.level));
+        adjustment.pinned_row = row;
+        adjustment.pinned_mass = mass;
+    }
+}
+
+void Scorer::UnpinMasses() {
+    for (TermFrequencyAdjustment& adjustment : adjustments_) {
+        adjustment.pinned_row = std::numeric_limits<uint64_t>::max();
+        adjustment.pinned_mass = 0.0;
+    }
 }
 
 uint32_t Scorer::FrequencyFor(size_t comparison, uint32_t gamma, uint64_t row) const {

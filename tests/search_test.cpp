@@ -15,6 +15,7 @@
 #include "cpplink/comparison.hpp"
 #include "cpplink/explain.hpp"
 #include "cpplink/model.hpp"
+#include "cpplink/neighbourhood.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
 #include "cpplink/score.hpp"
@@ -464,6 +465,99 @@ TEST_F(SearchFixture, AThresholdCanRefuseEveryRow) {
     std::ostringstream text;
     cpplink::PrintSearchReport(report, text);
     EXPECT_NE(text.str().find("no record here is this one"), std::string::npos);
+}
+
+// Under fuzzy term frequency a fuzzy level's move reads the neighbourhood mass
+// of both sides, and the query's side is measured by the walk rather than looked
+// up. For a value the store holds that has to be the table's own mass, or a
+// search would score a pair differently from `predict`.
+TEST_F(SearchFixture, FuzzyTermFrequencyScoresAStoredValueAsPredictWould) {
+    cpplink::BallTables balls;
+    balls.Build(comparisons_, kRecords, cpplink::BallOptions{});
+    ASSERT_TRUE(balls.Has(0));
+    std::string error;
+    cpplink::Scorer fuzzy;
+    ASSERT_TRUE(fuzzy.Bind(model_, comparisons_, *store_, cpplink::ScoreOptions{}, &error,
+                           &balls))
+        << error;
+    ASSERT_TRUE(fuzzy.AdjustsFuzzyLevels(0));
+    // The same model with nothing pinned on it, which is what `predict` runs.
+    cpplink::Scorer reference;
+    ASSERT_TRUE(reference.Bind(model_, comparisons_, *store_, cpplink::ScoreOptions{},
+                               &error, &balls))
+        << error;
+
+    // A surname rows carry: one interned but held by no row has no mass in the
+    // table, which is the adopted case below rather than this one.
+    const auto& surname = std::get<cpplink::StringColumn>(store_->column(0));
+    ASSERT_GT(surname.tf[surname.ids[2]], 0u);
+    cpplink::QueryRecord query;
+    query.Set("surname", std::string(surname.dict.Value(surname.ids[2])));
+    query.Set("city", "city2");
+    query.Set("dob", "1981-01-24");
+
+    cpplink::Searcher searcher;
+    ASSERT_TRUE(searcher.Bind(store_.get(), &comparisons_, &fuzzy, &error)) << error;
+    cpplink::SearchOptions options;
+    options.k = kRecords;
+    cpplink::SearchReport report;
+    ASSERT_TRUE(searcher.Search(query, options, &report, &error)) << error;
+    EXPECT_EQ(report.values_adopted, 0u);
+    ASSERT_EQ(report.hits.size(), kRecords);
+    size_t moved = 0;
+    for (const cpplink::SearchHit& hit : report.hits) {
+        const double expected = reference.Weight(hit.gamma, hit.row, searcher.QueryRow());
+        EXPECT_DOUBLE_EQ(hit.weight, expected) << "row " << hit.row;
+        if (comparisons_.LevelOf(hit.gamma, 0) == 2 &&
+            fuzzy.AdjustmentFor(0, hit.gamma, hit.row, searcher.QueryRow()) != 0.0) {
+            ++moved;
+        }
+    }
+    EXPECT_GT(moved, 0u);
+}
+
+// And for a value the store never held, whose id is past the end of the table:
+// the walk is the only place its neighbourhood can come from, and the answer is
+// still the top k of scoring every row.
+TEST_F(SearchFixture, FuzzyTermFrequencyMeasuresAnAdoptedValue) {
+    cpplink::BallTables balls;
+    balls.Build(comparisons_, kRecords, cpplink::BallOptions{});
+    std::string error;
+    cpplink::Scorer fuzzy;
+    ASSERT_TRUE(fuzzy.Bind(model_, comparisons_, *store_, cpplink::ScoreOptions{}, &error,
+                           &balls))
+        << error;
+
+    cpplink::QueryRecord query;
+    query.Set("surname", "sander3x");
+    query.Set("city", "city2");
+    cpplink::Searcher searcher;
+    ASSERT_TRUE(searcher.Bind(store_.get(), &comparisons_, &fuzzy, &error)) << error;
+    cpplink::SearchOptions options;
+    options.k = 12;
+    cpplink::SearchReport report;
+    ASSERT_TRUE(searcher.Search(query, options, &report, &error)) << error;
+    ASSERT_EQ(report.values_adopted, 1u);
+
+    std::vector<Scored> all;
+    for (uint64_t row = 0; row < kRecords; ++row) {
+        Scored one;
+        one.row = row;
+        one.gamma = comparisons_.Evaluate(row, searcher.QueryRow());
+        one.weight = fuzzy.Weight(one.gamma, row, searcher.QueryRow());
+        all.push_back(one);
+    }
+    std::sort(all.begin(), all.end(), BetterThan);
+    ASSERT_EQ(report.hits.size(), options.k);
+    for (size_t i = 0; i < report.hits.size(); ++i) {
+        EXPECT_EQ(report.hits[i].row, all[i].row) << "at rank " << i;
+        EXPECT_DOUBLE_EQ(report.hits[i].weight, all[i].weight) << "at rank " << i;
+    }
+    // The top hit lands on the fuzzy level and is moved by it: without the pin
+    // the query side would read no mass and the adjustment would be zero.
+    const cpplink::SearchHit& top = report.hits.front();
+    ASSERT_EQ(comparisons_.LevelOf(top.gamma, 0), 2u);
+    EXPECT_NE(fuzzy.AdjustmentFor(0, top.gamma, top.row, searcher.QueryRow()), 0.0);
 }
 
 TEST_F(SearchFixture, ADateThatIsNotOneIsRefused) {

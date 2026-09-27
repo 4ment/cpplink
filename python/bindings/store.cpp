@@ -161,6 +161,38 @@ ComparisonSet* Session::mutable_comparisons() {
     return comparisons_.get();
 }
 
+const BallTables& Session::Balls(const BallOptions& options,
+                                 const std::vector<bool>& wanted) {
+    ComparisonSet* comparisons = mutable_comparisons();
+    const size_t count = comparisons->Size();
+    if (!balls_ || balls_budget_ != options.budget) {
+        balls_ = std::make_unique<BallTables>();
+        balls_->tables.resize(count);
+        balls_->reasons.assign(count, std::string());
+        balls_tried_.assign(count, false);
+        balls_budget_ = options.budget;
+    }
+    for (size_t c = 0; c < count && c < wanted.size(); ++c) {
+        if (!wanted[c] || balls_tried_[c]) continue;
+        BallMassTable table;
+        std::string reason;
+        bool built = false;
+        {
+            py::gil_scoped_release release;
+            built = table.Build(*comparisons, c, store_->NumRecords(), options, &reason);
+        }
+        if (built) {
+            balls_->bytes += table.BytesUsed();
+            balls_->seconds += table.Seconds();
+            balls_->tables[c] = std::move(table);
+        } else {
+            balls_->reasons[c] = reason;
+        }
+        balls_tried_[c] = true;
+    }
+    return *balls_;
+}
+
 std::unique_ptr<ComparisonSet> Session::BindComparisons(bool use_signatures,
                                                         bool use_ladders) {
     Check(!schema_.comparisons.empty(), "the schema declares no \"comparisons\"");

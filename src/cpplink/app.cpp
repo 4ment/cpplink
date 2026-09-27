@@ -1865,6 +1865,8 @@ int RunSearch(const std::vector<std::string>& args, std::ostream& out,
     bool as_json = false;
     bool expected_given = false;
     double expected = 0.0;
+    bool fuzzy_tf = false;
+    BallOptions ball;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--schema") {
             if (!TakeValue(args, &i, &schema_path, err)) return 1;
@@ -1903,6 +1905,11 @@ int RunSearch(const std::vector<std::string>& args, std::ostream& out,
         } else if (args[i] == "--tf-damping") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             score.tf_damping = std::stod(value);
+        } else if (args[i] == "--fuzzy-tf") {
+            fuzzy_tf = true;
+        } else if (args[i] == "--ball-budget") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            ball.budget = std::stoull(value);
         } else if (args[i] == "--no-interactions") {
             score.use_interactions = false;
         } else if (args[i] == "--clusters") {
@@ -1952,8 +1959,17 @@ int RunSearch(const std::vector<std::string>& args, std::ostream& out,
         err << "cpplink: " << error << "\n";
         return 1;
     }
+    // In JSON mode `out` carries nothing but the object, so the ball-table
+    // report goes to `err`, as `explain` does it. Only the comparisons the query
+    // names get a table: the rest are their null level on every row.
+    BallTables balls;
+    if (fuzzy_tf) {
+        const std::vector<bool> named = ComparisonsNamedBy(schema, query);
+        BuildBallTables(comparisons, store, ball, &balls, as_json ? err : out, &named);
+    }
     Scorer scorer;
-    if (!scorer.Bind(model, comparisons, store, score, &error)) {
+    if (!scorer.Bind(model, comparisons, store, score, &error,
+                     fuzzy_tf ? &balls : nullptr)) {
         err << "cpplink search: " << error << "\n";
         return 1;
     }
