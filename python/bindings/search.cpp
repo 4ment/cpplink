@@ -73,7 +73,7 @@ SearchOutcome SearchStage(Session& session, const py::dict& fields,
     Scorer scorer;
     std::string error;
     Check(scorer.Bind(model, *comparisons, *store, score, &error, balls),
-          "search: " + error);
+          "search: ", error);
 
     SearchOptions options;
     options.k = k;
@@ -95,7 +95,7 @@ SearchOutcome SearchStage(Session& session, const py::dict& fields,
 
     SearchOutcome outcome;
     Searcher searcher;
-    Check(searcher.Bind(store, comparisons, &scorer, &error), "search: " + error);
+    Check(searcher.Bind(store, comparisons, &scorer, &error), "search: ", error);
     {
         py::gil_scoped_release release;
         if (!searcher.Search(query, options, &outcome.report, &error)) {
@@ -119,7 +119,7 @@ SearchOutcome SearchStage(Session& session, const py::dict& fields,
     Check(error.empty(), error);
     if (!clusters.empty()) {
         Check(GroupHitsByCluster(*store, clusters, &outcome.report, &error),
-              "search: " + error);
+              "search: ", error);
     }
     outcome.text =
         CaptureText([&](std::ostream& out) { PrintSearchReport(outcome.report, out); });

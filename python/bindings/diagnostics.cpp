@@ -66,7 +66,7 @@ SimplifyReport SimplifyStage(Session& session, const Model& model,
           "simplify: alpha must be between 0 and 1");
     const ComparisonSet& comparisons = session.Comparisons();
     std::string error;
-    Check(ModelMatches(model, comparisons, &error), "simplify: " + error);
+    Check(ModelMatches(model, comparisons, &error), "simplify: ", error);
     const BlockingPlan& plan = session.Plan(/*for_estimation=*/false);
     py::gil_scoped_release release;
     return BuildSimplify(session.store(), comparisons, plan, model, options);

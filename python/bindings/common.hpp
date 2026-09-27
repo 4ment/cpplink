@@ -40,6 +40,14 @@ inline void Check(bool ok, const std::string& error) {
     if (!ok) throw Error(error);
 }
 
+// The same with a prefix. `Check(f(&error), "stage: " + error)` is wrong: the
+// order the two arguments are evaluated in is unspecified, and MSVC builds the
+// message before `f` has written `error`. Taking both by reference defers the
+// concatenation until after the call.
+inline void Check(bool ok, const char* prefix, const std::string& error) {
+    if (!ok) throw Error(prefix + error);
+}
+
 // Runs one of the core's `Print*(..., std::ostream&)` into a string. Every
 // report's `text` and `__repr__` is the table the command line prints, produced
 // by the same function, so the two cannot disagree.
