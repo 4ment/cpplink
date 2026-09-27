@@ -161,6 +161,8 @@ class Finder:
         threads: int | None = None,
         expected_matches: float | None = None,
         min_probability: float | None = None,
+        tf_damping: float | None = None,
+        fuzzy_tf: bool | None = None,
         explain: bool = True,
     ) -> Outcome:
         """The k records scoring highest against a filled-in form.
@@ -168,7 +170,9 @@ class Finder:
         Anything not given comes from the settings. `expected_matches` is the
         prior stated as the number of records here expected to be the person
         asked about; it shifts every hit by the same constant, so it moves the
-        probability and never the order.
+        probability and never the order. `tf_damping` scales the term-frequency
+        move and `fuzzy_tf` extends it to the fuzzy levels; the neighbourhood
+        tables that needs are built on the first such search and kept.
         """
         query = self.build_query(values)
         if not query:
@@ -178,6 +182,10 @@ class Finder:
             expected_matches = self.settings["expected_matches"]
         if min_probability is None:
             min_probability = self.settings["min_probability"]
+        if tf_damping is None:
+            tf_damping = self.settings["tf_damping"]
+        if fuzzy_tf is None:
+            fuzzy_tf = self.settings["fuzzy_tf"]
         # Zero is how "leave them alone" is said for both: no floor on the
         # score, and the model's own prior rather than a stated one.
         expected_matches = expected_matches or None
@@ -192,6 +200,8 @@ class Finder:
                 threads=threads or self.settings["threads"],
                 expected_matches=expected_matches,
                 probability=min_probability,
+                tf_damping=float(tf_damping),
+                fuzzy_tf=bool(fuzzy_tf),
                 explain=explain,
             )
             ledgers = [w.text for w in result.waterfalls] if explain else []

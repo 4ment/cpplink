@@ -73,9 +73,15 @@ It shifts every hit by the same constant, so it moves the probability and the th
 
 **Minimum probability** is how "nobody here is this person" is expressed: records below it are not returned however few hits there are.
 
+**Term-frequency damping** scales how much a value's frequency moves the score: at 1 agreeing on a rare name counts for more than agreeing on a common one, at 0 every agreement counts the same.
+**Fuzzy term frequency** extends the adjustment to the fuzzy levels.
+Without it an exact `Smith` pays for being common and a `Smythe` one typo away does not, so a query for `John Smith` can return the typos first; with it both pay for the same crowded neighbourhood.
+The first search that asks for it builds a neighbourhood table for each column that search names, which takes seconds to minutes depending on the dictionary, and the process keeps them.
+See [`search`](commands/search.md#a-common-exact-name-can-rank-below-a-rare-typo) for the measurement.
+
 ## The settings file
 
-Everything the form draws comes from the schema, so what is saved beside it is only what a schema has no opinion about: how many hits, how many threads, what a score must clear, the prior, and the two cosmetic things a column name does not settle -- what a box is called, and whether to draw it at all.
+Everything the form draws comes from the schema, so what is saved beside it is only what a schema has no opinion about: how many hits, how many threads, what a score must clear, the prior, how much term frequency counts, and the two cosmetic things a column name does not settle -- what a box is called, and whether to draw it at all.
 
 Hiding a column takes it off the form and leaves it in the table, which is what `latitude` and `longitude` usually want: real columns of the model that nobody types into.
 

@@ -113,6 +113,28 @@ def options(finder: Finder) -> dict:
                 "prior: it moves every score by the same amount, never the order."
             ),
         ),
+        "tf_damping": st.sidebar.slider(
+            "Term-frequency damping",
+            0.0,
+            1.0,
+            float(saved["tf_damping"]),
+            0.05,
+            help=(
+                "How much a value's frequency moves the score. At 1 agreeing on a "
+                "rare name counts for more than agreeing on a common one; at 0 "
+                "every agreement counts the same."
+            ),
+        ),
+        "fuzzy_tf": st.sidebar.checkbox(
+            "Fuzzy term frequency",
+            value=bool(saved["fuzzy_tf"]),
+            help=(
+                "Adjust the fuzzy levels too, by how common a value's near "
+                "spellings are. Without it an exact 'Smith' pays for being common "
+                "and a 'Smythe' one typo away does not, so the typo can rank "
+                "first. The first search builds the tables, which takes a moment."
+            ),
+        ),
     }
     if st.sidebar.button("Save as default"):
         finder.save_settings(chosen)

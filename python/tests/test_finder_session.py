@@ -153,6 +153,28 @@ def test_the_prior_is_the_one_a_search_asks(finder, sample) -> None:
 
 
 @needs_core_parquet
+def test_term_frequency_is_a_setting(finder, sample) -> None:
+    """Damping and the fuzzy adjustment reach the search, and the saved values are
+    what a search given neither uses."""
+    row = _row(sample, 0)
+    query = {"last_name": row["last_name"], "first_name": row["first_name"]}
+    assert finder.settings["tf_damping"] == 1.0
+    assert finder.settings["fuzzy_tf"] is False
+
+    def weights(**options):
+        hits = finder.search(query, **options).hits
+        return [(hit.id, hit.match_weight) for hit in hits]
+
+    assert weights() == weights(tf_damping=1.0, fuzzy_tf=False)
+    assert weights(tf_damping=0.0) != weights()
+    # The neighbourhood tables are built once and kept, so asking twice is the
+    # same answer from the same tables.
+    fuzzy = weights(fuzzy_tf=True)
+    assert fuzzy != weights()
+    assert weights(fuzzy_tf=True) == fuzzy
+
+
+@needs_core_parquet
 def test_searches_from_several_threads_do_not_overlap(finder, sample) -> None:
     """The query is a row of the store, so two at once are two writers.
 

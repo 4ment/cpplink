@@ -4,9 +4,9 @@
 
 Everything about the *form* comes from the schema, so what is left is what a
 schema has no opinion about -- how many hits to return, how many threads to
-split the pass over, what a score has to clear, and the prior a search asks
-under -- plus the two cosmetic things a column name does not settle: what a box
-is called and whether to draw it at all.
+split the pass over, what a score has to clear, the prior a search asks under
+and how much term frequency counts -- plus the two cosmetic things a column
+name does not settle: what a box is called and whether to draw it at all.
 """
 
 from __future__ import annotations
@@ -36,6 +36,13 @@ def defaults() -> dict:
         # person asked about, which is the question a search asks. A model's own
         # prior is the match rate over the pair space, which is a different one.
         "expected_matches": 1.0,
+        # How far term frequency moves a score: 1 is the model as estimated, 0
+        # scores a common name's agreement like a rare one's.
+        "tf_damping": 1.0,
+        # Whether the fuzzy levels are adjusted too, by how crowded the value's
+        # neighbourhood is. Off, an exact "smith" pays for being common and a
+        # "smythe" one typo away does not, so the typo can outrank the match.
+        "fuzzy_tf": False,
         "labels": {},
         "hidden": [],
     }
