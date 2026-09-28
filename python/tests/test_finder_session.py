@@ -268,3 +268,56 @@ def test_a_hit_carries_the_level_every_comparison_landed_on(finder, sample) -> N
     # Without a ledger there are no levels, and so no colours.
     plain = finder.search({"last_name": row["last_name"]}, k=1, explain=False)
     assert plain.hits[0].levels == {}
+
+
+@needs_core_parquet
+def test_a_search_by_id_puts_the_record_first(finder, sample) -> None:
+    """The record's own values are the query, and the record heads the list."""
+    identifier = sample.linker.id_of(0)
+    outcome = finder.search_by_id(identifier, k=5)
+    assert outcome.searched_id == identifier
+    top = outcome.hits[0]
+    assert top.id == identifier
+    assert top.row == 0
+    assert [hit.rank for hit in outcome.hits] == list(range(1, len(outcome) + 1))
+    weights = [hit.match_weight for hit in outcome.hits]
+    assert weights[1:] == sorted(weights[1:], reverse=True)
+    # Every column the model compares that the record holds is in the query.
+    row = _row(sample, 0)
+    assert outcome.query["last_name"] == row["last_name"]
+    assert outcome.query["dob"] == row["dob"]
+
+
+@needs_core_parquet
+def test_the_record_goes_first_even_where_another_outscores_it(finder, sample) -> None:
+    """A record is not always its own best match under the model.
+
+    Row 3's duplicate r76 scores higher against row 3's values than row 3 does,
+    because the address ladder pays more for its Jaccard level than for its exact
+    one and a fuzzy first name pays no term-frequency penalty. The record asked
+    about still heads the list, and the rest stay in weight order.
+    """
+    for row in range(10):
+        identifier = sample.linker.id_of(row)
+        hits = finder.search_by_id(identifier, k=5).hits
+        assert hits[0].id == identifier
+        rest = [hit.match_weight for hit in hits[1:]]
+        assert rest == sorted(rest, reverse=True)
+
+
+@needs_core_parquet
+def test_a_search_by_id_reads_hidden_columns_too(sample, tmp_path) -> None:
+    schema_path = tmp_path / "hidden.json"
+    schema_path.write_text(sample.schema.to_json())
+    settings.save(schema_path, {**settings.defaults(), "hidden": ["last_name"]})
+    finder = Finder(schema_path, sample.model_path, sample.parquet)
+    outcome = finder.search_by_id(sample.linker.id_of(0), k=1)
+    assert "last_name" in outcome.query
+
+
+@needs_core_parquet
+def test_an_unknown_id_is_refused_with_the_reason(finder) -> None:
+    with pytest.raises(FinderError):
+        finder.search_by_id("no-such-record")
+    with pytest.raises(FinderError, match="unique id"):
+        finder.search_by_id("  ")

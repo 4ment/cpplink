@@ -242,3 +242,27 @@ def test_the_shading_marks_those_cells_and_leaves_the_rest_alone() -> None:
     # A column that was not marked is untouched, as is every column of totals.
     assert css["postcode"].tolist() == ["", ""]
     assert css["Probability"].tolist() == ["", ""]
+
+
+def test_a_record_becomes_the_query_of_a_search_by_id(schema) -> None:
+    """Every compared column, as the parquet holds it, whatever the form hides."""
+    record = {
+        "unique_id": "r1",
+        "last_name": " smith ",
+        "first_name": None,
+        "dob": datetime.date(1980, 2, 29),
+        "address_tokens": ["12", None, "Rue", ""],
+        "postcode": "",
+        "latitude": 48.85,
+    }
+    query = form.record_query(schema, record)
+    assert query == {
+        "last_name": "smith",
+        "dob": "1980-02-29",
+        "address_tokens": ["12", "Rue"],
+        "latitude": "48.85",
+    }
+    # The id is not a compared column, and a hidden box is still read.
+    hidden = form.build_form(schema, hidden=["last_name"])
+    assert hidden.box("last_name") is None
+    assert "unique_id" not in query

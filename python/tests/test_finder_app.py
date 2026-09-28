@@ -103,3 +103,19 @@ def test_a_page_with_no_files_asks_for_them(monkeypatch) -> None:
     app = testing.AppTest.from_file(str(APP), default_timeout=60).run()
     assert not app.exception
     assert any("Give a schema" in info.value for info in app.info)
+
+
+@needs_core_parquet
+def test_a_search_by_id_draws_the_record_first(page, sample) -> None:
+    by_id = page.radio[0].set_value("Unique ID").run()
+    assert not by_id.exception
+    # One box, for the id, in place of the fields.
+    labels = [box.label for box in by_id.main.text_input]
+    assert labels == ["Id"]
+    identifier = sample.linker.id_of(0)
+    by_id.main.text_input[0].set_value(identifier)
+    after = by_id.button[0].click().run()
+    assert not after.exception
+    drawn = after.dataframe[0].value
+    frame = getattr(drawn, "data", drawn)
+    assert frame[sample.schema.unique_id].iloc[0] == identifier

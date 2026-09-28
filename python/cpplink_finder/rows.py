@@ -82,6 +82,20 @@ class RowFetcher:
                 }
         return out
 
+    def record(self, row: int) -> dict[str, object]:
+        """One row as the file holds it, for a search by id.
+
+        Not the display form `fetch` gives: a list stays a list and a date a
+        date, because these values become a query rather than a table cell.
+        Empty where the row is past the end of the file.
+        """
+        group = self.group_of(row)
+        if group < 0:
+            return {}
+        table = self._file.read_row_group(group, columns=self._columns)
+        local = row - self._starts[group]
+        return {name: table.column(name)[local].as_py() for name in self._columns}
+
     def categorical(
         self, columns: Sequence[str], limit: int = 12, sample_rows: int = 20000
     ) -> dict[str, list[str]]:

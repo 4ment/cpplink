@@ -52,6 +52,15 @@ So a list column is split and a string column is sent verbatim, and the box says
 For a string column, whether `Michael, John` can match a record holding `John Michael` depends on the schema, and the schema says so: a derived column built with `normalize` turns punctuation into spaces before anything is compared, so the page reads the derivations and tells you in the box's help text.
 Declaring one is a schema decision taken before the model is estimated, not something the page can add afterwards.
 
+## Searching by unique id
+
+**Search by** above the form switches to a single box for the unique id of a record already in the file.
+The record's own values, read off the parquet, are the query, over every column the model compares, including a column hidden from the form.
+The record itself is the first row of the table and the rest are ordered by weight.
+
+It goes first even where another record scores higher against its values, which happens: a ladder whose fuzzy level is worth more bits than its exact one, or a fuzzy level that pays no term-frequency penalty where the exact one does, can put a duplicate above the record it duplicates.
+The one case where it is not shown is a **Minimum probability** it does not clear.
+
 ## The results
 
 The table is the unique id and every column the file holds, after the rank, the match weight and the probability.

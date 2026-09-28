@@ -84,6 +84,8 @@ class Outcome:
     query: dict[str, str | list[str]]
     report: object
     seconds: float
+    # The id a search by id was asked for. Its record is the first hit.
+    searched_id: str = ""
 
     def __len__(self) -> int:
         return len(self.hits)
@@ -110,7 +112,7 @@ class Finder:
             raise FinderError(ONE_INPUT)
 
         self.settings = settings.load(self.schema_path)
-        spec = self.schema.to_dict()
+        spec = self._spec = self.schema.to_dict()
         # Only what the file holds can be shown: a derived column is computed
         # during the search and is not in the parquet.
         self._rows = RowFetcher(self.data_path, list(self.schema.input_columns))
@@ -177,7 +179,62 @@ class Finder:
         query = self.build_query(values)
         if not query:
             raise FinderError("fill in at least one field")
+        return self._search(
+            query,
+            k=k,
+            threads=threads,
+            expected_matches=expected_matches,
+            min_probability=min_probability,
+            tf_damping=tf_damping,
+            fuzzy_tf=fuzzy_tf,
+            explain=explain,
+        )
 
+    def search_by_id(self, identifier: str, **options) -> Outcome:
+        """The records scoring highest against the record an id names.
+
+        The record's own values, read off the parquet, are the query, over every
+        column the model compares whether or not its box is drawn. The record
+        itself is the first hit: nothing scores above a record against itself,
+        and where another record ties with it, it still goes first so the page
+        always shows what was asked about at the top. The options are `search`'s.
+        """
+        identifier = str(identifier).strip()
+        if not identifier:
+            raise FinderError("give a unique id")
+        try:
+            row = self.linker.row_of(identifier)
+        except RuntimeError as error:
+            raise FinderError(str(error)) from None
+        query = form.record_query(self._spec, self._rows.record(row))
+        if not query:
+            raise FinderError(
+                f"{identifier} holds no value in any column the model compares"
+            )
+
+        outcome = self._search(query, **options)
+        outcome.searched_id = identifier
+        for index, hit in enumerate(outcome.hits):
+            if hit.row == row:
+                outcome.hits.insert(0, outcome.hits.pop(index))
+                break
+        for rank, hit in enumerate(outcome.hits, start=1):
+            hit.rank = rank
+        return outcome
+
+    def _search(
+        self,
+        query: dict[str, str | list[str]],
+        *,
+        k: int | None = None,
+        threads: int | None = None,
+        expected_matches: float | None = None,
+        min_probability: float | None = None,
+        tf_damping: float | None = None,
+        fuzzy_tf: bool | None = None,
+        explain: bool = True,
+    ) -> Outcome:
+        """One query, already built, against the store."""
         if expected_matches is None:
             expected_matches = self.settings["expected_matches"]
         if min_probability is None:

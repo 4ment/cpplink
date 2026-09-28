@@ -157,6 +157,25 @@ def _help(columns: Mapping[str, Mapping], name: str, kind: str) -> str:
     return ""
 
 
+def compared(schema: Mapping) -> list[tuple[str, str]]:
+    """Every non-derived column the model reads, with the comparison reading it.
+
+    In the order the comparisons are declared, each column once. Hiding a box is
+    the caller's business: a record searched by its id still names every one.
+    """
+    columns = {column["name"]: column for column in schema.get("columns", [])}
+    ordered: list[tuple[str, str]] = []  # (source column, comparison name)
+    for comparison in schema.get("comparisons", []):
+        for name in comparison.get("columns", []):
+            source = source_of(columns, name)
+            if source not in columns:
+                continue
+            if any(source == existing for existing, _ in ordered):
+                continue
+            ordered.append((source, comparison.get("name", source)))
+    return ordered
+
+
 def build_form(
     schema: Mapping,
     *,
@@ -174,15 +193,7 @@ def build_form(
     labels = dict(labels or {})
     hide = set(hidden)
 
-    ordered: list[tuple[str, str]] = []  # (source column, comparison name)
-    for comparison in schema.get("comparisons", []):
-        for name in comparison.get("columns", []):
-            source = source_of(columns, name)
-            if source in hide or source not in columns:
-                continue
-            if any(source == existing for existing, _ in ordered):
-                continue
-            ordered.append((source, comparison.get("name", source)))
+    ordered = [pair for pair in compared(schema) if pair[0] not in hide]
 
     strings = [name for name, _ in ordered if _kind(columns[name]) == "text"]
     offered = dict(choices(strings)) if choices and strings else {}
@@ -287,6 +298,38 @@ def to_query(values: Mapping[str, object], spec: FormSpec) -> dict[str, str | li
                 query[box.column] = cells
         else:
             query[box.column] = text
+    return query
+
+
+def record_query(
+    schema: Mapping, record: Mapping[str, object]
+) -> dict[str, str | list[str]]:
+    """A record of the file as the query a search takes, for a search by id.
+
+    Every column the model compares, hidden or not, since the question is who
+    else is this record and not who matches what somebody typed. A null or empty
+    value is left out, as an empty box is: it lands on the null level. Values
+    come as the parquet holds them, so a date may be a `date` or its text and a
+    list column is already a list.
+    """
+    columns = {column["name"]: column for column in schema.get("columns", [])}
+    query: dict[str, str | list[str]] = {}
+    for name, _ in compared(schema):
+        value = record.get(name)
+        if value is None:
+            continue
+        kind = _kind(columns[name])
+        if kind == "list":
+            cells = [str(cell).strip() for cell in value if cell is not None]
+            cells = [cell for cell in cells if cell]
+            if cells:
+                query[name] = cells
+        elif kind == "date" and isinstance(value, (datetime.date, datetime.datetime)):
+            query[name] = date_text(value)
+        else:
+            text = str(value).strip()
+            if text:
+                query[name] = text
     return query
 
 

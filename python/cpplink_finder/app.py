@@ -171,6 +171,17 @@ def draw_form(finder: Finder) -> tuple[dict, bool]:
     return values, submitted
 
 
+def draw_id_form(finder: Finder) -> tuple[str, bool]:
+    """One box for the id of a record already in the file."""
+    with st.form("by_id"):
+        identifier = st.text_input(
+            form_spec.prettify(finder.id_column),
+            help="The record's own values are the query, and it comes back first.",
+        )
+        submitted = st.form_submit_button("Search", type="primary")
+    return identifier, submitted
+
+
 def table(finder: Finder, outcome) -> pd.DataFrame:
     """The hits as the page shows them: the score, then the record itself."""
     rows = []
@@ -187,6 +198,11 @@ def table(finder: Finder, outcome) -> pd.DataFrame:
 
 
 def draw(finder: Finder, outcome) -> None:
+    if outcome.searched_id and outcome.hits[0].id == outcome.searched_id:
+        st.caption(
+            f"#1 is {outcome.searched_id} itself; the rest are ordered by how well "
+            "they match it."
+        )
     frame = table(finder, outcome)
     marks = [
         form_spec.cell_classes(finder.form, outcome.query, hit.levels)
@@ -246,11 +262,19 @@ def run() -> None:
         f"{len(finder.boxes)} fields the model compares"
     )
 
-    values, submitted = draw_form(finder)
+    by_id = st.radio("Search by", ["Fields", "Unique ID"], horizontal=True) == "Unique ID"
+    if by_id:
+        identifier, submitted = draw_id_form(finder)
+    else:
+        values, submitted = draw_form(finder)
     if submitted:
         try:
             with st.spinner("Searching..."):
-                st.session_state.outcome = finder.search(values, **chosen)
+                if by_id:
+                    outcome = finder.search_by_id(identifier, **chosen)
+                else:
+                    outcome = finder.search(values, **chosen)
+                st.session_state.outcome = outcome
         except (FinderError, form_spec.FormError) as error:
             st.warning(str(error))
             st.session_state.pop("outcome", None)
