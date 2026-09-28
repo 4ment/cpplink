@@ -213,6 +213,45 @@ Which member names a cluster depends on the order the edges arrived, so two runs
 The numpy arrays view the C++ vectors and keep the assignment alive for as long as they do.
 A `Linker` holds every column, so its `cluster` costs no second load but more memory than the command, which loads the id column alone; `cpplink.cluster_file(schema_path, files, predictions)` is that lighter path.
 
+### 8. Search for a record
+
+A resident `Linker` is a search service: one store loaded once, a query answered in milliseconds.
+
+```python
+hits = linker.search(
+    {"last_name": "zolnerowich", "dob": "1979-08-06", "postcode": "4508"},
+    model,
+    k=10,
+    expected_matches=1,
+)
+for hit in hits:
+    print(hit.id, hit.match_weight, hit.match_probability)
+hits.report.walk_seconds, hits.report.gather_seconds   # what each phase cost
+```
+
+The query maps column names to values, as text, in the form the file holds them; a date is `YYYY-MM-DD` and is refused in any other form.
+A list or a tuple is spread over the repeats a list column takes one element per, and `None` is the same as leaving the column out.
+A column the query does not name is **missing**, not empty, so its comparison lands on its null level and costs nothing at all.
+
+The answer is exact with respect to the model: the same `k` records, in the same order, as scoring the query against every record.
+`SearchResult` iterates its hits, indexes them and carries the printed report as `text`, the numbers as `report` and the command's `--json` as `json()`.
+
+`expected_matches` is the prior stated as the number of records here you expect to be the person asked about, which is the question a search asks; λ is the match rate over the *pair* space, which is the question deduplication asks, and the two differ by orders of magnitude.
+Without it the model's own prior applies and a hit scores exactly what `predict` would have given that pair.
+The prior is a constant added to every hit, so it moves the posterior and where a threshold sits, and never the order.
+
+```python
+hits = linker.search({"last_name": "zolnerowich"}, model, k=3, explain=True)
+print(hits.waterfalls[0])        # the same ledger `explain` prints, for that pair
+```
+
+`explain=True` builds the ledger behind each hit during the search, which is when it has to happen: the query is a record of the store only while the search runs, so a result that outlived it would be a result nothing could explain.
+`clusters=` takes the file `cluster` wrote and labels each hit with the cluster it belongs to, marking the ones that are another record of an entity already listed.
+
+Two limits, both narrow.
+`search` reads one input and raises over several, because the query row would have to be a dataset of its own.
+And one search runs at a time against one store; `threads` splits the work *within* a query rather than running several.
+
 ### And then
 
 ```python
@@ -247,7 +286,7 @@ That text is the run's, not a recomputation.
 
 ## What it costs, and what it does not
 
-The `Linker` releases the GIL for every stage that does work: the load, `estimate`, `predict`, `cluster`, `rescore`, `profile`, `levels`, `simplify`, `recall` and `completeness`.
+The `Linker` releases the GIL for every stage that does work: the load, `estimate`, `predict`, `cluster`, `rescore`, `profile`, `levels`, `simplify`, `recall`, `completeness` and `search`.
 None of them calls back into Python, so another thread can run while they do.
 
 Errors the core reports as `false` and a message become `cpplink.Error`, a `RuntimeError` carrying the core's own text.

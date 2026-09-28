@@ -106,8 +106,9 @@ bool ResolveEdgeOutput(const std::string& command, const std::string& out,
 }
 
 void BuildBallTables(const ComparisonSet& comparisons, const RecordStore& store,
-                     const BallOptions& options, BallTables* balls, std::ostream& out) {
-    balls->Build(comparisons, store.NumRecords(), options);
+                     const BallOptions& options, BallTables* balls, std::ostream& out,
+                     const std::vector<bool>* only) {
+    balls->Build(comparisons, store.NumRecords(), options, only);
     out << "Neighbourhood masses in " << std::fixed << std::setprecision(1)
         << balls->seconds << " s";
     if (store.NumDatasets() > 1) {

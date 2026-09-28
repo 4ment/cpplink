@@ -222,6 +222,7 @@ Nothing in it recomputes a bit of the weight, and it does not run this binary.
 ## See also
 
 - [`predict`](predict.md) — the same scoring, over every candidate pair
+- [`search`](search.md) — the same ledger, for each hit of a query record, under `--explain`
 - [The model](../model.md) — where `m`, `u`, `λ` and the weights come from
 
 ### The packed pattern

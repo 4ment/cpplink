@@ -171,5 +171,6 @@ PYBIND11_MODULE(_cpplink, m) {
     cpplink::python::BindTables(m);
     cpplink::python::SessionClass session = cpplink::python::BindSession(m);
     cpplink::python::BindStages(m, &session);
+    cpplink::python::BindSearch(m, &session);
     cpplink::python::BindDiagnostics(m, &session);
 }

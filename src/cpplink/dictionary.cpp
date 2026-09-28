@@ -40,6 +40,19 @@ uint32_t Dictionary::Intern(std::string_view value) {
     return id;
 }
 
+uint32_t Dictionary::Adopt(std::string_view value) {
+    const std::string_view stored = Store(value);
+    const uint32_t id = static_cast<uint32_t>(entries_.size());
+    entries_.push_back(stored);
+    text_bytes_ += stored.size();
+    return id;
+}
+
+void Dictionary::Truncate(uint32_t size) {
+    if (size >= entries_.size()) return;
+    entries_.resize(size);
+}
+
 uint64_t Dictionary::BytesUsed() const {
     uint64_t bytes = 0;
     // Chunks are fully allocated whether or not they are fully used.

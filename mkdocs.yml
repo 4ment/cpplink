@@ -57,6 +57,7 @@ nav:
       - completeness: commands/completeness.md
       - estimate: commands/estimate.md
       - predict: commands/predict.md
+      - search: commands/search.md
       - rescore: commands/rescore.md
       - cluster: commands/cluster.md
       - merge-predictions: commands/merge-predictions.md

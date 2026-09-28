@@ -16,10 +16,13 @@
 #include "cpplink/blocking.hpp"
 #include "cpplink/cluster.hpp"
 #include "cpplink/comparison.hpp"
+#include "cpplink/explain.hpp"
+#include "cpplink/neighbourhood.hpp"
 #include "cpplink/parquet_loader.hpp"
 #include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "cpplink/search.hpp"
 
 namespace cpplink {
 namespace python {
@@ -35,6 +38,14 @@ class Error : public std::runtime_error {
 
 inline void Check(bool ok, const std::string& error) {
     if (!ok) throw Error(error);
+}
+
+// The same with a prefix. `Check(f(&error), "stage: " + error)` is wrong: the
+// order the two arguments are evaluated in is unspecified, and MSVC builds the
+// message before `f` has written `error`. Taking both by reference defers the
+// concatenation until after the call.
+inline void Check(bool ok, const char* prefix, const std::string& error) {
+    if (!ok) throw Error(prefix + error);
 }
 
 // Runs one of the core's `Print*(..., std::ostream&)` into a string. Every
@@ -77,6 +88,14 @@ class Session {
 
     const Schema& schema() const { return schema_; }
     const RecordStore& store() const { return *store_; }
+    // The store and the bound comparisons as a `Searcher` needs them: it makes
+    // the query a row, which is a write, and grows the signature tables with any
+    // dictionary that row extends. Nothing else here is allowed to write, and
+    // the store reserved room for exactly this row when it was finalized, so the
+    // borrowed columns a prediction or cluster table hands to Python keep
+    // pointing at what they pointed at.
+    RecordStore* mutable_store() { return store_.get(); }
+    ComparisonSet* mutable_comparisons();
     const LoadStats& stats() const { return stats_; }
     const std::vector<std::string>& paths() const { return paths_; }
     PairMode mode() const { return mode_; }
@@ -92,6 +111,17 @@ class Session {
     // A binding with either optimisation off, built fresh, for `predict
     // --no-signatures` and `--no-ladders`.
     std::unique_ptr<ComparisonSet> BindComparisons(bool use_signatures, bool use_ladders);
+
+    // The neighbourhood masses `fuzzy_tf` reads, for the comparisons in
+    // `wanted`, each built over the bound comparisons the first time it is
+    // wanted and kept. The dictionary self-join costs seconds to minutes where a
+    // search costs milliseconds, so a search asks only for the comparisons its
+    // query names: one over a column the query leaves out is its null level for
+    // every row and no fuzzy level of it can fire. Nothing the join reads changes
+    // after load -- a query adopts values past the end of a dictionary and takes
+    // them back -- and every table is dropped when the budget changes, since that
+    // decides which columns get one.
+    const BallTables& Balls(const BallOptions& options, const std::vector<bool>& wanted);
 
     // The predictions of the last `predict`, which `cluster` with no table
     // given reads: the run's own rows, nothing to resolve.
@@ -111,6 +141,9 @@ class Session {
     std::unique_ptr<BlockingPlan> estimation_plan_;
     std::unique_ptr<BlockingPlan> prediction_plan_;
     std::unique_ptr<ComparisonSet> comparisons_;
+    std::unique_ptr<BallTables> balls_;
+    std::vector<bool> balls_tried_;  // by comparison: built, or refused with a reason
+    uint64_t balls_budget_ = 0;
 };
 
 // The schema text `levels` and `simplify` rewrite: the source text where the
@@ -156,6 +189,16 @@ class ArrowTable : public std::enable_shared_from_this<ArrowTable> {
 
     BatchBuilder builder_;
     std::vector<std::string> names_;
+};
+
+// One search's hits, each with the ledger behind it where the caller asked for
+// one. The waterfalls are built while the query is still a row, because the row
+// goes as soon as the search returns and every report that explains a pair takes
+// a pair of rows.
+struct SearchOutcome {
+    SearchReport report;
+    std::vector<PairWaterfall> waterfalls;
+    std::string text;
 };
 
 // The predictions of one run: `dataset_a, id_a, dataset_b, id_b` (the datasets
@@ -205,6 +248,7 @@ void BindSchema(py::module_& m);
 void BindModel(py::module_& m);
 SessionClass BindSession(py::module_& m);
 void BindStages(py::module_& m, SessionClass* session);
+void BindSearch(py::module_& m, SessionClass* session);
 void BindDiagnostics(py::module_& m, SessionClass* session);
 
 }  // namespace python

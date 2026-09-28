@@ -124,6 +124,28 @@ void RecordStore::Finalize() {
             }
         }
     }
+
+    ReserveQueryRow();
+}
+
+void RecordStore::ReserveQueryRow() {
+    const size_t rows = static_cast<size_t>(num_records_) + 1;
+    for (Column& column : columns_) {
+        if (auto* col = std::get_if<StringColumn>(&column)) {
+            col->ids.reserve(rows);
+            if (!col->tf.empty()) col->tf.reserve(col->tf.size() + 1);
+        } else if (auto* col = std::get_if<StringListColumn>(&column)) {
+            col->offsets.reserve(rows + 1);
+        } else if (auto* col = std::get_if<DateColumn>(&column)) {
+            col->values.reserve(rows);
+        } else if (auto* col = std::get_if<DoubleColumn>(&column)) {
+            col->values.reserve(rows);
+        } else if (auto* col = std::get_if<BooleanColumn>(&column)) {
+            col->values.reserve(rows);
+        }
+    }
+    ids_.offsets.reserve(rows + 1);
+    ids_.text.reserve(ids_.text.size() + kQueryIdBytes);
 }
 
 uint32_t RecordStore::DistinctValues(size_t index) const {

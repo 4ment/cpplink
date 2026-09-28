@@ -21,6 +21,10 @@ inline constexpr int32_t kNullDate = std::numeric_limits<int32_t>::min();
 // A missing boolean. Like kNullId, it never compares equal to anything.
 inline constexpr int8_t kNullBoolean = -1;
 
+// Bytes kept past the loaded ids for the one a search's query row carries. The
+// id it writes is short and fixed; this is that with room to spare.
+inline constexpr size_t kQueryIdBytes = 64;
+
 // The shape of the pair space a run enumerates.
 //
 // Deduplication is the upper triangle of one input; linking is the cross-product
@@ -168,6 +172,23 @@ class RecordStore {
     // Counts values once all rows are loaded. Skips kDouble columns, which carry
     // no term frequencies. Also releases the dictionaries' load-time indexes.
     void Finalize();
+
+    // Leaves room past the loaded rows for the one row a search appends.
+    //
+    // `search` makes the query a row so that every level, bound and report the
+    // pair path has applies to it unchanged, and removes it again afterwards.
+    // What that must not do is *move* anything, because the Python bindings hand
+    // out tables whose columns are borrowed pointers into this store -- the id
+    // arena above all, which every prediction and cluster table uses as its
+    // dictionary. Growing a vector at capacity would reallocate it and leave
+    // those pointers dangling, so the room is made here, once, while nothing can
+    // yet be pointing at anything. Finalize calls it, so it is true of every
+    // loaded store and no caller has to remember.
+    //
+    // A list column's flat `ids` is the one array a query can grow by more than
+    // one element, its cell being as long as the query cares to make it. Nothing
+    // borrows it.
+    void ReserveQueryRow();
 
     uint32_t DistinctValues(size_t index) const;
     uint64_t NullCount(size_t index) const;

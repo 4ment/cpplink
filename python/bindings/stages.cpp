@@ -213,7 +213,7 @@ RescoreOutcome RescoreStage(const py::object& self, const Model& model,
     const ComparisonSet& comparisons = session.Comparisons();
     Scorer scorer;
     Check(scorer.Bind(model, comparisons, session.store(), score, &error),
-          "rescore: " + error);
+          "rescore: ", error);
     RescoreOutcome result;
     bool ok = false;
     {

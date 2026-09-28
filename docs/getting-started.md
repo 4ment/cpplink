@@ -45,7 +45,7 @@ ctest --preset asan
 On Windows the `windows` preset builds with Visual Studio 2026 against the conda-forge Arrow, which lives under `%CONDA_PREFIX%\Library`, and the build and test presets of the same name select the `Release` configuration, since the Visual Studio generator holds every configuration in one tree.
 The GitHub Actions workflow runs `release`, `asan` and `tsan` on Linux and macOS and `windows` on Windows, then the Python suite and the format and lint checks.
 
-## The whole pipeline in seven commands
+## The whole pipeline in eight commands
 
 Everything below runs against the synthetic sample cpplink can write for itself. The numbers
 shown are from a real run on 1.8M rows with eight threads.
@@ -172,6 +172,57 @@ bounds still admit and drops the pair if even that sum cannot clear the threshol
 
 Edges carry their weight, so re-clustering at a higher `--threshold` is a re-read and no
 re-scoring. See [`cluster`](commands/cluster.md).
+
+### 8. Ask the model about one record
+
+Everything above builds a model of what a matching pair looks like. That model is also a search
+index: [`search`](commands/search.md) takes a query record and returns the records scoring
+highest against it.
+
+```sh
+./build/cpplink search --schema examples/sample_schema.json --model model.json \
+                       examples/sample.parquet -k 5 \
+                       --field last_name=chirdloackki --field dob=1979-08-06 \
+                       --field postcode=4508 --expected-matches 1
+```
+
+```text
+Records        1,800,000
+Comparisons    2 tabulated over their dictionary, 1 evaluated per row, 6 constant because the query is missing the column
+Values walked  182,320
+Rows scored    436 of 1,800,000 exactly; the rest were dropped on the bracket
+Prior          -20.780 bits  (the model's lambda says -23.475)
+Elapsed        0.0080 s walking the dictionaries, 0.0762 s over the rows on 1 thread
+
+Record                          weight     posterior
+r0                              27.785      1.000000
+r259138                         -3.045      0.108036
+r1482739                        -3.045      0.108036
+r632071                         -7.288      0.006357
+r1048594                        -7.288      0.006357
+```
+
+That is one record of the sample asked for as a query, and it comes back at the top with 27.8
+bits while the runners-up sit below even odds. The three counts on the `Comparisons` line are
+the three things a comparison can cost: **constant** is free, the query not carrying the column;
+**tabulated** is one walk over that column's dictionary and then a byte read per record;
+**evaluated** is the pair path's own evaluation per record, which a date or a coordinate pair
+needs because it is not a function of a single value id.
+
+No blocking and no candidate pairs: the query is compared against every record, which is
+affordable because interning makes a string level a question about a *value*. Every string
+metric in the query runs once per **distinct value** of a column rather than once per record,
+after which a record costs a load and a compare. A column the query does not name is *missing*
+and costs nothing at all.
+
+The answer is exact with respect to the model — the same records, in the same order, as scoring
+the query against every record one at a time — because the ranking is on the same admissible
+bracket `predict` prunes with.
+
+`--expected-matches 1` is the prior stated as the question a *search* asks. λ is the match rate
+over the pair space, which is what deduplication faces; a query against N records asks something
+else, and the two differ by orders of magnitude. `--explain` prints the same waterfall
+[`explain`](commands/explain.md) does, for each hit.
 
 ## Where the time goes
 

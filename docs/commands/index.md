@@ -23,6 +23,8 @@ commands:
               merged prediction file or a shard directory
   merge-predictions  combine the prediction shards into one csv or parquet file
   rescore     re-score a spilled run under a new model, without comparing again
+  search      find the records a query record scores highest against,
+              top-k over the same weight predict writes
   gen-sample  write a sample parquet file with planted duplicates
 
 options:
@@ -48,6 +50,7 @@ one store and each becomes a dataset, so two files mean linking rather than dedu
 | [`estimate`](estimate.md) | What are `m`, `u` and `λ`? | parquet + schema | `model.json` |
 | [`completeness`](completeness.md) | What fraction of true matches does blocking reach, with no truth file? | parquet + schema + model | stdout |
 | [`predict`](predict.md) | Which pairs score above the threshold? | parquet + schema + model | one prediction file, or one shard per thread |
+| [`search`](search.md) | Which records score highest against *this* query record? | parquet + schema + model | stdout |
 | [`rescore`](rescore.md) | What would a different model have scored? | parquet + schema + model + spill | the same, one file or shards |
 | [`cluster`](cluster.md) | Which records are the same entity? | parquet + schema + predictions (a file or a shard directory) | `clusters.csv` |
 | [`merge-predictions`](merge-predictions.md) | Give me the predictions as one file something else can open. | prediction shards (+ parquet + schema for the ids) | one csv or parquet file |
