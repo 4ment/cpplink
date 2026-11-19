@@ -381,12 +381,16 @@ Two consequences worth knowing.
   read as a disagreement where "no alias data" is the truer statement.
   Keeping a fuzzy level in the same comparison is what makes that harmless: the pair is then
   charged for the names disagreeing, which they do.
-- **No term-frequency adjustment.**
-  A membership comparison reads two columns and the TF machinery is defined over one, so
-  it is skipped rather than approximated, the same way it is for a list column's `exact`
-  level.
-  That applies to the [fuzzy-level TF](../model.md#term-frequency-adjustment) too, which is
-  the price of keeping the fuzzy levels inside this comparison: the neighbourhood mass comes
+- **Term frequency adjusts the `exact` level only.**
+  With `"term_frequency": true`, the `exact` level is adjusted by how common the shared name
+  is, exactly as it would be in a single-column comparison, and its `u` is the name column's
+  collision rate in closed form.
+  That level reads the scalar column alone, and a row the null level takes holds no name, so
+  nothing about the list enters it.
+  The membership levels get no adjustment: which alias the other name matched has no
+  frequency the level could be priced by.
+  Neither does the [fuzzy-level TF](../model.md#term-frequency-adjustment), which is the
+  price of keeping the fuzzy levels inside this comparison: the neighbourhood mass comes
   from self-joining one column's dictionary, and a level a row's *list* can pre-empt is not
   answerable from two values of the other column.
   A name column carrying an alias comparison keeps `--fuzzy-tf` only if its fuzzy levels sit

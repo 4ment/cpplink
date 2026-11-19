@@ -4,6 +4,7 @@ A like-for-like comparison of [splink](https://moj-analytical-services.github.io
 and cpplink on public deduplication datasets, at a scale small enough that both tools
 finish in seconds and the whole thing is reproducible on a laptop.
 The same comparison on a link between two tables, splink's own transactions example, is [further down](#linking-two-tables-the-transactions-benchmark).
+A cpplink-only benchmark of comparing a name beside its list of aliases is in [`alias/`](alias/README.md).
 
 The point is *not* to show cpplink winning. cpplink's design claim is about **20M records**,
 where splink's pair table does not fit; at 50k records splink's pair table fits easily and

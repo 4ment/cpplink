@@ -230,7 +230,12 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
         return true;
     }
     if (levels[level].type != LevelType::kExact) return false;
-    if (bound.lists != nullptr) return false;
+    // A name beside its aliases: the exact level is the two names being equal,
+    // and a row the null level takes holds no name, so it could never have
+    // agreed. The level's event is the scalar column's collision and nothing
+    // else. An exact level over a whole set has no such form.
+    const bool scalar_and_list = bound.strings != nullptr && bound.lists != nullptr;
+    if (bound.lists != nullptr && !scalar_and_list) return false;
     // Only a null level may sit above it, or equality is not the level's event.
     for (size_t l = 0; l < level; ++l) {
         if (levels[l].type != LevelType::kNull) return false;
@@ -246,7 +251,7 @@ bool ExactU(const RecordStore& store, const ComparisonSet& comparisons, size_t i
         *value = (total_sq - (cross ? within_sq : present)) / space;
         return true;
     }
-    if (bound.spec->columns.size() != 1) return false;
+    if (bound.spec->columns.size() != 1 && !scalar_and_list) return false;
 
     const std::vector<uint32_t>* tf = nullptr;
     if (bound.strings != nullptr) {

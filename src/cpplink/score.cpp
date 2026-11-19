@@ -166,12 +166,16 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
         // The exact levels, each over the column it reads. A comparison over one
         // column has one; one over an address and its username has two, and the
         // second is adjusted by how common the username is, which is the only
-        // frequency it can be adjusted by. A list column's term frequencies
-        // count values, not sets, so an exact level over a whole set has no
-        // frequency to look up. Doubles have no frequencies at all. Both simply
-        // get no adjustment. A boolean's two counts are an adjustment of the
-        // same kind as any other, and the one that matters most on such a
-        // column: agreeing on the rare value is most of what it can say.
+        // frequency it can be adjusted by. A name beside its list of aliases is
+        // the same case: the exact level is the two names being equal, which
+        // reads the scalar column alone, so the scalar's own frequency is the
+        // one it is adjusted by; the membership levels below it get none. A list
+        // column's term frequencies count values, not sets, so an exact level
+        // over a whole set has no frequency to look up. Doubles have no
+        // frequencies at all. Both simply get no adjustment. A boolean's two
+        // counts are an adjustment of the same kind as any other, and the one
+        // that matters most on such a column: agreeing on the rare value is most
+        // of what it can say.
         const BoundComparison& bound = comparisons.at(c);
         for (size_t l = 0; l < spec.levels.size(); ++l) {
             if (spec.levels[l].type != LevelType::kExact) continue;
@@ -180,11 +184,11 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
             adjustment.damping = options.tf_damping;
             adjustment.level = static_cast<uint8_t>(l);
             adjustment.log_u_times_records = std::log2(learned.levels[l].u * records);
-            if (bound.strings != nullptr && bound.lists == nullptr) {
+            if (bound.strings != nullptr) {
                 adjustment.strings = bound.slots[spec.levels[l].column].strings;
-            } else if (bound.dates != nullptr && bound.lists == nullptr) {
+            } else if (bound.dates != nullptr) {
                 adjustment.dates = bound.dates;
-            } else if (bound.booleans != nullptr && bound.lists == nullptr) {
+            } else if (bound.booleans != nullptr) {
                 adjustment.booleans = bound.booleans;
             }
             const std::vector<uint32_t>* tf = nullptr;
