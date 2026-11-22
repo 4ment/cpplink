@@ -54,7 +54,8 @@ SearchOutcome SearchStage(Session& session, const py::dict& fields,
                           unsigned threads, const py::object& expected_matches,
                           const py::object& prior_weight, bool explain,
                           const std::string& clusters, double tf_damping, bool fuzzy_tf,
-                          const BallOptions& ball, bool interactions) {
+                          const BallOptions& ball, bool interactions,
+                          const py::object& uninformative_nulls) {
     const Model& model = model_object.cast<const Model&>();
     const QueryRecord query = RecordFrom(fields);
     Check(!query.fields.empty(), "search: give at least one column and value");
@@ -65,6 +66,7 @@ SearchOutcome SearchStage(Session& session, const py::dict& fields,
     ScoreOptions score;
     score.tf_damping = tf_damping;
     score.use_interactions = interactions;
+    NullsFrom(uninformative_nulls, &score);
     // Kept on the session: the self-join is the one part of a fuzzy search that
     // does not depend on the query's values, only on which columns it names.
     const BallTables* balls =
@@ -178,14 +180,14 @@ void BindSearch(py::module_& m, SessionClass* session) {
              })
         .def("__repr__", [](const SearchOutcome& o) { return o.text; });
 
-    session->def("search", &SearchStage, py::arg("fields"), py::arg("model"),
-                 py::arg("k") = 10, py::arg("threshold") = py::none(),
-                 py::arg("probability") = py::none(), py::arg("threads") = 1,
-                 py::arg("expected_matches") = py::none(),
-                 py::arg("prior_weight") = py::none(), py::arg("explain") = false,
-                 py::arg("clusters") = "", py::arg("tf_damping") = 1.0,
-                 py::arg("fuzzy_tf") = false, py::arg("ball") = BallOptions{},
-                 py::arg("interactions") = true);
+    session->def(
+        "search", &SearchStage, py::arg("fields"), py::arg("model"), py::arg("k") = 10,
+        py::arg("threshold") = py::none(), py::arg("probability") = py::none(),
+        py::arg("threads") = 1, py::arg("expected_matches") = py::none(),
+        py::arg("prior_weight") = py::none(), py::arg("explain") = false,
+        py::arg("clusters") = "", py::arg("tf_damping") = 1.0,
+        py::arg("fuzzy_tf") = false, py::arg("ball") = BallOptions{},
+        py::arg("interactions") = true, py::arg("uninformative_nulls") = py::none());
 }
 
 }  // namespace python

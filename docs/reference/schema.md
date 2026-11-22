@@ -223,7 +223,7 @@ An optional `"label"` overrides the generated description in reports:
 `percentage_within` is splink's percentage difference: the gap over the larger of the two magnitudes, strictly below the threshold, for an amount whose tolerance scales with its size.
 `exact` on a `double` is equality to the last digit.
 
-Two more optional fields apply to one level type each.
+Three more optional fields apply to one level type each.
 
 #### `direction` on `date_within`
 
@@ -236,6 +236,17 @@ The level orients by which file each row came from, not by which side of the pai
 It therefore needs two inputs and is refused on one; two rows of the same input under `--mode link-and-dedup` have no earlier side and read the window either way.
 The default, `"either"`, is the plain window.
 See [Linking two files](../linking.md).
+
+#### `informative` on `null`
+
+```json
+{"type": "null", "informative": false}
+```
+
+`false` scores the level 0 bits and reads the comparison's other levels given the field is present, which is what splink means by `is_null_level`.
+The default, `true`, scores the null level by its own learned \(m\) and \(u\) like any other level.
+It applies wherever the schema scores a pair (`predict`, `explain`, `rescore`, `search`), and the run's `--uninformative-null NAME` and `--uninformative-nulls` can add comparisons to it but never take one away.
+[Missing values](../comparisons.md#a-null-level-as-evidence-or-as-nothing) says when each reading is right and what each is worth.
 
 #### `column` on a level of a comparison over several string columns
 

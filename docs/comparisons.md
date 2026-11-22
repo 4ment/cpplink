@@ -177,6 +177,91 @@ And the null level's \(u\) is exact rather than sampled, because it is a count o
 rather than a property of pairs, which is worth having for free.
 See [Estimation and EM](em.md#u-in-closed-form).
 
+### A null level as evidence or as nothing
+
+By default a `null` level is a level like any other: its \(u\) is the closed-form rate at which a random pair has a field missing, its \(m\) is learned by EM, and it scores \(\log_2(m_\text{null}/u_\text{null})\) bits.
+That weight is the answer to one question: is a pair with this field missing more or less likely to be a match than a random pair?
+The answer depends on how the data lost the value, and it can go either way.
+
+| How values go missing | \(m_\text{null}\) against \(u_\text{null}\) | Weight |
+| --- | --- | --- |
+| Independently on each record, at the same rate for matches and non-matches | equal | 0 bits; the level says nothing and keeping it costs nothing |
+| A property of the *entity*: a person whose occupation is unknown is unknown in every record of them | lower, since the null level fires when **either** side is missing, and a random pair has two chances where a matching pair has nearly one | negative, approaching −1 bit for a rare gap |
+| A property of the *pair*: a duplicate was keyed from a worse source and lost fields the original kept | higher | positive |
+
+Both signs occur in practice.
+On the three bench datasets every null level is negative: on `historical_50k` from −0.36 bits (`postcode_fake`) to −2.10 (`first_name`), on `febrl3` from −0.06 to −0.42, and on `fake_1000` within 0.05 of zero.
+On `gen-sample`, which deletes fields on the duplicates it plants, `email`, `phone` and `postcode` are worth +2.8 bits each for being missing.
+
+There are two reasons to distrust that weight even where it is estimated well.
+Missingness is usually a property of how the records were collected, and that need not be the same in the file the model was trained on and the file it scores.
+And the model multiplies the null levels as if they were independent, when a record missing one field is often missing others: on `historical_50k` a record missing one of `postcode_fake`, `occupation` and `gender` is 1.3 to 1.6 times as likely to be missing another, which is the worst-fitting part of the model ([dependence](dependence.md)).
+
+splink takes the other reading by declaration.
+A level declared with `is_null_level=True` has no \(m\) or \(u\) at all, its Bayes factor is fixed at 1 (0 bits), and splink's own comparison templates, such as `NameComparison`, `EmailComparison` and `PostcodeComparison`, open with one.
+So in splink a missing value is uninformative unless you build the comparison yourself and declare the null test as an ordinary level.
+splink also leaves the null pairs out when it estimates the other levels of that comparison, in EM and in the random-pair \(u\) alike, so those levels' \(m\) and \(u\) are conditional on the field being present.
+
+cpplink can score the same model file the splink way, per comparison, and there are three ways to ask.
+The schema declares it on the level, `{"type": "null", "informative": false}`, which is where splink puts `is_null_level` and where it belongs when it is a fact about the column.
+A run names comparisons with `--uninformative-null NAME`, repeated, or all of them with `--uninformative-nulls`, on [`predict`](commands/predict.md), [`explain`](commands/explain.md), [`rescore`](commands/rescore.md) and [`search`](commands/search.md); in [Python](python.md) that is `uninformative_nulls=["email", "phone"]` or `uninformative_nulls=True`.
+The run can add comparisons to what the schema declares but never take one away, and a name that matches no comparison is refused rather than ignored.
+Such a `null` level scores 0 bits, and every other level of that comparison is read given the field is present, which is not the same as zeroing the one cell.
+The levels' \(m\) and \(u\) are unconditional rates that already lost the mass the null level took, so each is rescaled by its own denominator:
+
+\[
+w_\ell \;=\; \log_2 \frac{m_\ell / (1 - m_\text{null})}{u_\ell / (1 - u_\text{null})}
+\;=\; \log_2 \frac{m_\ell}{u_\ell} \;+\; \log_2 \frac{1 - u_\text{null}}{1 - m_\text{null}}
+\]
+
+The second term is one constant per comparison: +0.61 bits on `gen-sample`'s `email`, −0.75 on `historical_50k`'s `occupation`.
+A term-frequency move needs no change, being a ratio of two \(u\) on the same level that the conditioning scales alike.
+A fitted [interaction](commands/estimate.md#relaxing-conditional-independence) scores 0 on every cell where either of its comparisons is null, since a comparison that is not evaluated takes part in no association; the observed cells keep their bits.
+The [waterfall](commands/explain.md) shows the null step at exactly 0.0 and still sums to the score, and the shortcuts `predict` takes stay exact.
+
+Measured with the threshold swept from −10 to 40 bits, since the operating point moves:
+
+| Dataset | Model | Best F1, null as evidence | Best F1, uninformative |
+| --- | --- | ---: | ---: |
+| `fake_1000` | plain | **0.9361** | 0.9344 |
+| `fake_1000` | `--interactions` | **0.8828** | 0.8741 |
+| `febrl3` | plain | **0.9993** | 0.9992 |
+| `historical_50k` | plain | **0.8684** at 9.5 bits | 0.8670 at 11.5 bits |
+| `historical_50k` | `--interactions` | **0.9111** at 3.0 bits | 0.9069 at 4.5 bits |
+| `gen-sample`, 200k | plain | 0.9965 | 0.9965 |
+
+**Keeping the null evidence is better everywhere it differs, by 0.0001 to 0.009.**
+On `historical_50k` dropping it buys precision (0.9158 to 0.9482) and costs more recall (0.8257 to 0.7987): a matching pair with a field missing loses the renormalising shift on every observed level and drifts below the threshold.
+On `gen-sample` the best F1 is the same because blocking, not scoring, sets it there, but the curve holds 0.9965 up to 42 bits with the null evidence and only to 36 without, because the bonus was carrying the duplicates that lost their contact fields.
+So the default stays: the estimated null weight is a parameter like any other, and on these files it is fitted well enough to be worth its bits.
+
+One comparison at a time on `historical_50k` does not find a column to single out either:
+
+| Null held uninformative | Plain model | `--interactions` |
+| --- | ---: | ---: |
+| none | 0.8684 | 0.9111 |
+| `first_name` | 0.8685 | 0.9111 |
+| `surname` | **0.8703** | 0.9057 |
+| `first_and_surname` | 0.8685 | 0.9111 |
+| `dob` | 0.8675 | **0.9119** |
+| `postcode_fake` | 0.8677 | 0.9114 |
+| `birth_place` | 0.8672 | 0.9117 |
+| `occupation` | 0.8672 | 0.9117 |
+| `gender` | 0.8690 | 0.9114 |
+
+Every move but one is within 0.002 and the best one changes with the model.
+`first_name` and `first_and_surname` are missing on 0.3% of random pairs, so their null levels barely fire.
+`surname` is the one large move and it changes sign: +0.0019 on the plain model and −0.0054 with `--interactions`, whose `surname x first_and_surname` term was fitted to the null cells the option zeroes.
+Picking the best of eight against the same truth that scores them is selection, not a finding, so none of these is a reason to change a schema.
+The per-comparison switch is for saying what a column's missingness means, not for tuning.
+
+Reach for `--uninformative-nulls` when the weight was learned under one way of losing values and is applied under another.
+Linking a source that never records a field to one that usually does is that case.
+So is a [`search`](commands/search.md) query, where a column is missing because nobody typed it rather than because the data lost it; the order of the hits does not change, but their totals and posteriors stop carrying bits for what the query left out.
+
+One limit.
+It acts at scoring only: EM still reads a null as evidence while it estimates, which splink does not, so the conditional rates are recovered from the model's unconditional ones rather than estimated directly.
+
 The membership shape is the exception, and deliberately so.
 There a row is null only when it holds **neither** a value nor a list, because a row with a
 name and no aliases of its own is still reachable through the other row's list, and marking it

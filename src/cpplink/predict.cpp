@@ -664,6 +664,13 @@ void PrintPredictReport(const PredictReport& report, const Scorer& scorer,
         << " bits  (posterior " << std::setprecision(6)
         << ProbabilityForWeight(scorer.threshold()) << ")\n"
         << "Threads        " << report.threads << "\n";
+    if (!scorer.UninformativeNulls().empty()) {
+        out << "Null levels    0 bits on";
+        for (size_t i = 0; i < scorer.UninformativeNulls().size(); ++i) {
+            out << (i == 0 ? " " : ", ") << scorer.UninformativeNulls()[i];
+        }
+        out << "; their other levels read given the field is present\n";
+    }
     if (report.datasets > 1) {
         out << "Mode           " << PairModeName(report.mode) << " over "
             << report.datasets << " inputs\n";

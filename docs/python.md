@@ -231,7 +231,8 @@ hits.report.walk_seconds, hits.report.gather_seconds   # what each phase cost
 
 The query maps column names to values, as text, in the form the file holds them; a date is `YYYY-MM-DD` and is refused in any other form.
 A list or a tuple is spread over the repeats a list column takes one element per, and `None` is the same as leaving the column out.
-A column the query does not name is **missing**, not empty, so its comparison lands on its null level and costs nothing at all.
+A column the query does not name is **missing**, not empty, so its comparison lands on its null level.
+That level's weight is constant across every candidate, so it cannot change the ranking, but it is part of every hit's total and its waterfall; `uninformative_nulls=True`, or the comparison's name in a list, makes it 0 bits.
 
 The answer is exact with respect to the model: the same `k` records, in the same order, as scoring the query against every record.
 `SearchResult` iterates its hits, indexes them and carries the printed report as `text`, the numbers as `report` and the command's `--json` as `json()`.

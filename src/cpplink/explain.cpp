@@ -190,8 +190,10 @@ PairWaterfall BuildPairWaterfall(const RecordStore& store,
         step.u = std::nan("");
         if (model != nullptr && i < model->comparisons.size() &&
             step.level < model->comparisons[i].levels.size()) {
-            step.m = model->comparisons[i].levels[step.level].m;
-            step.u = model->comparisons[i].levels[step.level].u;
+            // The rates the scorer read, which under uninformative nulls are the
+            // observed-field ones and not the file's.
+            step.m = scorer.LevelM(i, step.level);
+            step.u = scorer.LevelU(i, step.level);
         }
         step.bits = scorer.LevelWeight(i, step.level);
         step.tf = scorer.AdjustmentFor(i, w.gamma, a, b);

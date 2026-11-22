@@ -101,6 +101,24 @@ PairMode ModeFrom(const py::object& mode, size_t inputs) {
     return parsed;
 }
 
+void NullsFrom(const py::object& nulls, ScoreOptions* score) {
+    if (nulls.is_none()) return;
+    if (py::isinstance<py::bool_>(nulls)) {
+        score->uninformative_nulls = nulls.cast<bool>();
+        return;
+    }
+    if (py::isinstance<py::str>(nulls)) {
+        score->uninformative_null_comparisons.push_back(nulls.cast<std::string>());
+        return;
+    }
+    for (const py::handle item : nulls) {
+        if (!py::isinstance<py::str>(item)) {
+            throw Error("uninformative_nulls wants True, False or comparison names");
+        }
+        score->uninformative_null_comparisons.push_back(item.cast<std::string>());
+    }
+}
+
 double ThresholdFrom(const py::object& threshold, const py::object& probability,
                      const char* command) {
     if (threshold.is_none() == probability.is_none()) {

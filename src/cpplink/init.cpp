@@ -864,6 +864,7 @@ std::string SchemaToJson(const Schema& schema) {
                 item["threshold"] = level.threshold;
             }
             if (level.directed) item["direction"] = "forward";
+            if (!level.informative) item["informative"] = false;
             if (level.names_column) {
                 const std::string& column = comparison.columns[level.column];
                 item["column"] = column;

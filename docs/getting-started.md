@@ -212,8 +212,9 @@ needs because it is not a function of a single value id.
 No blocking and no candidate pairs: the query is compared against every record, which is
 affordable because interning makes a string level a question about a *value*. Every string
 metric in the query runs once per **distinct value** of a column rather than once per record,
-after which a record costs a load and a compare. A column the query does not name is *missing*
-and costs nothing at all.
+after which a record costs a load and a compare. A column the query does not name is *missing*:
+it lands on its null level, whose weight is constant across every candidate, so it cannot
+change the order but is part of every hit's total.
 
 The answer is exact with respect to the model — the same records, in the same order, as scoring
 the query against every record one at a time — because the ranking is on the same admissible

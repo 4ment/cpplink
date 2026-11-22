@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pyarrow.parquet as pq
+import pytest
 from conftest import SEED, needs_core_parquet
 
 import cpplink
@@ -139,3 +140,77 @@ def test_report_parity(sample) -> None:
         assert cli[key] == ours[key], key
     inspect = _run("inspect", *common).stdout
     assert f"{sample.linker.records:,}" in inspect
+
+
+def test_uninformative_nulls_parity(sample, tmp_path: Path) -> None:
+    cli_out = tmp_path / "predictions.parquet"
+    result = _run(
+        "predict",
+        "--schema",
+        sample.schema_path,
+        "--model",
+        sample.model_path,
+        "--threshold",
+        10,
+        "--uninformative-nulls",
+        "--out",
+        cli_out,
+        sample.parquet,
+    )
+    assert "Null levels    0 bits on" in result.stdout
+    py_out = tmp_path / "predictions_py.parquet"
+    sample.linker.predict(sample.model, py_out, threshold=10, uninformative_nulls=True)
+    assert _sorted(cli_out).equals(_sorted(py_out))
+    # The option moves the weights, so the rows differ from the default run's.
+    assert not _sorted(cli_out).equals(_sorted(sample.predictions))
+
+    row = pq.read_table(str(cli_out)).slice(0, 1).to_pylist()[0]
+    as_json = _run(
+        "explain",
+        "--schema",
+        sample.schema_path,
+        "--model",
+        sample.model_path,
+        "--pair",
+        f"{row['id_a']},{row['id_b']}",
+        "--uninformative-nulls",
+        "--json",
+        sample.parquet,
+    )
+    explanation = sample.linker.explain(
+        row["id_a"], row["id_b"], model=sample.model, uninformative_nulls=True
+    )
+    assert as_json.stdout.strip() == explanation.json()
+    ledger = json.loads(explanation.json())
+    for step in ledger["steps"]:
+        if step["label"] == "null":
+            assert step["bits"] == 0.0
+            assert "m" not in step
+
+
+def test_uninformative_nulls_by_name(sample, tmp_path: Path) -> None:
+    cli_out = tmp_path / "predictions.parquet"
+    result = _run(
+        "predict",
+        "--schema",
+        sample.schema_path,
+        "--model",
+        sample.model_path,
+        "--threshold",
+        10,
+        "--uninformative-null",
+        "email",
+        "--uninformative-null",
+        "phone",
+        "--out",
+        cli_out,
+        sample.parquet,
+    )
+    assert "Null levels    0 bits on email, phone;" in result.stdout
+    py_out = tmp_path / "predictions_py.parquet"
+    sample.linker.predict(
+        sample.model, py_out, threshold=10, uninformative_nulls=["email", "phone"]
+    )
+    assert _sorted(cli_out).equals(_sorted(py_out))
+    with pytest.raises(cpplink.Error, match="does not declare"):
+        sample.linker.predict(sample.model, threshold=10, uninformative_nulls=["mail"])

@@ -39,11 +39,15 @@ cpplink search --schema <schema.json> --model <model.json>
 | `--fuzzy-tf` | off | adjust the fuzzy levels too, by the mass of each value's neighbourhood, as [`predict --fuzzy-tf`](predict.md) does |
 | `--ball-budget N` | 40e9 | value pairs the neighbourhood join may look at per comparison; a larger dictionary gets no fuzzy adjustment |
 | `--no-interactions` | off | score the plain conditionally-independent model |
+| `--uninformative-null NAME` | none | the same for one comparison, repeatable, as in [`predict`](predict.md) |
+| `--uninformative-nulls` | off | score `null` levels as 0 bits, as in [`predict`](predict.md); a column the query leaves out then adds nothing to a hit's total |
 | *(positional)* | — | required; the parquet file |
 
 A column the query does not name is **missing**, not empty. So a query carrying a name and a
 date of birth against a ten-column schema is scored as a record whose other eight fields were
 never recorded, which is what it is, and those comparisons land on their null level.
+That level's weight is the same for every record a hit could be, so it cannot change the ranking, but it is added to every hit's total and shows in its waterfall.
+Under `--uninformative-nulls`, or `--uninformative-null` naming that comparison, it is 0 bits and the total is what the named columns earned.
 
 ### A common exact name can rank below a rare typo
 

@@ -225,8 +225,15 @@ void PrintRescoreReport(const RescoreReport& report, const Scorer& scorer,
     }
     out << "\n";
     out << "Threshold      " << std::setprecision(3) << scorer.threshold() << " bits\n"
-        << "Threads        " << report.threads << "\n"
-        << "Pairs read     " << WithThousands(report.pairs) << "\n"
+        << "Threads        " << report.threads << "\n";
+    if (!scorer.UninformativeNulls().empty()) {
+        out << "Null levels    0 bits on";
+        for (size_t i = 0; i < scorer.UninformativeNulls().size(); ++i) {
+            out << (i == 0 ? " " : ", ") << scorer.UninformativeNulls()[i];
+        }
+        out << "; their other levels read given the field is present\n";
+    }
+    out << "Pairs read     " << WithThousands(report.pairs) << "\n"
         << "Predictions    " << WithThousands(report.edges) << "\n"
         << "Elapsed        " << std::setprecision(2) << report.seconds << " s";
     if (report.seconds > 0.0) {

@@ -13,7 +13,9 @@ cpplink predict --schema <schema.json> --model <model.json>
                 --out <dir|file.csv|file.parquet>
                 [--threshold BITS | --probability P] [--format bin|csv]
                 [--threads N] [--limit N] [--no-bounds] [--tf-damping F]
-                [--no-signatures] [--no-interactions] [--spill <dir>] [--spill-sample R]
+                [--no-signatures] [--no-interactions]
+                [--uninformative-nulls] [--uninformative-null NAME]
+                [--spill <dir>] [--spill-sample R]
                 [--mode MODE] <file.parquet>...
 ```
 
@@ -32,6 +34,8 @@ cpplink predict --schema <schema.json> --model <model.json>
 | `--no-signatures` | off | disable the per-value character-mask filter. **Verification only** |
 | `--no-ceiling` | off | score every candidate instead of bounding the whole pair first. **Verification only**; 3.2x slower on the 1M sample |
 | `--no-interactions` | off | ignore any two-way corrections the model carries and score the plain conditionally-independent model out of the same file. This is how the two are [measured against each other](estimate.md#what-it-is-worth) |
+| `--uninformative-null NAME` | none | the same for one comparison; repeat it for several. Adds to what the schema declares with `"informative": false` |
+| `--uninformative-nulls` | off | score every `null` level as 0 bits, splink's reading, and read the comparison's other levels given the field is present. See [missing values](../comparisons.md#a-null-level-as-evidence-or-as-nothing) |
 | `--fuzzy-tf` | off | term-frequency adjustment on the fuzzy levels too, from neighbourhood mass. Costs a dictionary self-join per column |
 | `--ball-budget N` | 4e10 | value pairs the self-join may look at for one column; a larger dictionary is refused and keeps today's behaviour |
 | `--spill <dir>` | none | also write `(a, b, γ)` at 12 bytes a pair, so the run can be re-scored by [`rescore`](rescore.md) without comparing again |

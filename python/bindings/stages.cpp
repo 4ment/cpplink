@@ -103,7 +103,8 @@ PredictOutcome PredictStage(const py::object& self, const Model& model,
                             bool bounds, bool ceiling, bool fuzzy_tf,
                             const BallOptions& ball, const std::string& spill,
                             double spill_sample, bool signatures, bool ladders,
-                            bool interactions, bool verbose) {
+                            bool interactions, const py::object& uninformative_nulls,
+                            bool verbose) {
     Session& session = py::cast<Session&>(self);
     PredictOptions options;
     options.threads = threads;
@@ -132,6 +133,7 @@ PredictOutcome PredictStage(const py::object& self, const Model& model,
     score.use_bounds = bounds;
     score.use_ceiling = ceiling;
     score.use_interactions = interactions;
+    NullsFrom(uninformative_nulls, &score);
 
     const BlockingPlan& plan = session.Plan(/*for_estimation=*/false);
     std::unique_ptr<ComparisonSet> own;
@@ -185,7 +187,8 @@ RescoreOutcome RescoreStage(const py::object& self, const Model& model,
                             const std::string& spill, const std::string& out,
                             const py::object& threshold, const py::object& probability,
                             const py::object& format, unsigned threads, uint64_t limit,
-                            double tf_damping, bool bounds) {
+                            double tf_damping, bool bounds,
+                            const py::object& uninformative_nulls) {
     Session& session = py::cast<Session&>(self);
     RescoreOptions options;
     options.spill_dir = spill;
@@ -206,6 +209,7 @@ RescoreOutcome RescoreStage(const py::object& self, const Model& model,
     score.threshold = ThresholdFrom(threshold, probability, "rescore");
     score.tf_damping = tf_damping;
     score.use_bounds = bounds;
+    NullsFrom(uninformative_nulls, &score);
 
     // The plan is what the command line builds too, though the spill replaces
     // the enumeration: it is how the schema's blocking section is checked.
@@ -736,12 +740,12 @@ void BindStages(py::module_& m, SessionClass* session) {
              py::arg("ball") = BallOptions{}, py::arg("spill") = "",
              py::arg("spill_sample") = 0.0, py::arg("signatures") = true,
              py::arg("ladders") = true, py::arg("interactions") = true,
-             py::arg("verbose") = false)
+             py::arg("uninformative_nulls") = py::none(), py::arg("verbose") = false)
         .def("rescore", &RescoreStage, py::arg("model"), py::arg("spill"),
              py::arg("out") = "", py::arg("threshold") = py::none(),
              py::arg("probability") = py::none(), py::arg("format") = py::none(),
              py::arg("threads") = 0, py::arg("limit") = 0, py::arg("tf_damping") = 1.0,
-             py::arg("bounds") = true)
+             py::arg("bounds") = true, py::arg("uninformative_nulls") = py::none())
         .def("cluster", &ClusterStage, py::arg("predictions") = py::none(),
              py::arg("threshold") = py::none(), py::arg("probability") = py::none(),
              py::arg("out") = "", py::arg("min_size") = 2, py::arg("truth") = "");

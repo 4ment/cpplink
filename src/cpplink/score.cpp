@@ -101,6 +101,10 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
     options_ = options;
     prior_ = model.PriorWeight();
     weight_.assign(comparisons.Size(), {});
+    m_.assign(comparisons.Size(), {});
+    u_.assign(comparisons.Size(), {});
+    null_level_.assign(comparisons.Size(), {});
+    uninformative_.clear();
     adjustments_.clear();
 
     if (model.comparisons.size() != comparisons.Size()) {
@@ -108,6 +112,30 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
                  " comparisons but the schema declares " +
                  std::to_string(comparisons.Size());
         return false;
+    }
+    // A name that matches nothing is a typo, and silently scoring the null as
+    // evidence after being asked not to would be worse than refusing.
+    for (const std::string& name : options.uninformative_null_comparisons) {
+        bool found = false;
+        bool has_null = false;
+        for (size_t c = 0; c < comparisons.Size(); ++c) {
+            const ComparisonSpec& spec = *comparisons.at(c).spec;
+            if (spec.name != name) continue;
+            found = true;
+            for (const LevelSpec& level : spec.levels) {
+                has_null = has_null || level.type == LevelType::kNull;
+            }
+        }
+        if (!found) {
+            *error = "uninformative nulls asked for comparison \"" + name +
+                     "\", which the schema does not declare";
+            return false;
+        }
+        if (!has_null) {
+            *error = "uninformative nulls asked for comparison \"" + name +
+                     "\", which has no null level";
+            return false;
+        }
     }
 
     const double records = static_cast<double>(store.NumRecords());
@@ -125,9 +153,57 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
                      std::to_string(learned.levels.size());
             return false;
         }
-        weight_[c].resize(learned.levels.size());
-        for (size_t l = 0; l < learned.levels.size(); ++l) {
+        const size_t levels = learned.levels.size();
+        weight_[c].resize(levels);
+        m_[c].resize(levels);
+        u_[c].resize(levels);
+        null_level_[c].assign(levels, false);
+        // A null level is held uninformative where the schema declares it so, where
+        // the run names its comparison, or where the run says so for every one.
+        const bool named =
+            std::find(options.uninformative_null_comparisons.begin(),
+                      options.uninformative_null_comparisons.end(),
+                      spec.name) != options.uninformative_null_comparisons.end();
+        double m_null = 0.0;
+        double u_null = 0.0;
+        bool any = false;
+        for (size_t l = 0; l < levels; ++l) {
             weight_[c][l] = learned.levels[l].Weight();
+            m_[c][l] = learned.levels[l].m;
+            u_[c][l] = learned.levels[l].u;
+            if (spec.levels[l].type != LevelType::kNull) continue;
+            if (!options.uninformative_nulls && !named && spec.levels[l].informative) {
+                continue;
+            }
+            null_level_[c][l] = true;
+            any = true;
+            m_null += learned.levels[l].m;
+            u_null += learned.levels[l].u;
+        }
+        // Missing at random, the way splink reads a null level: it says nothing,
+        // and what the other levels say is conditional on the field being there.
+        // Both sides rescale by their own denominator, so the shift is one
+        // constant per comparison. A level the model gives no weight (an m or u
+        // of zero) stays at none. The term-frequency moves need nothing: each is
+        // a ratio of two u on the same level, and conditioning scales both alike.
+        if (any) {
+            uninformative_.push_back(spec.name);
+            const bool renormalise = m_null < 1.0 && u_null < 1.0;
+            const double m_observed = 1.0 - m_null;
+            const double u_observed = 1.0 - u_null;
+            const double shift = renormalise ? std::log2(u_observed / m_observed) : 0.0;
+            for (size_t l = 0; l < levels; ++l) {
+                if (null_level_[c][l]) {
+                    weight_[c][l] = 0.0;
+                    m_[c][l] = std::nan("");
+                    u_[c][l] = std::nan("");
+                    continue;
+                }
+                if (!renormalise) continue;
+                m_[c][l] /= m_observed;
+                u_[c][l] /= u_observed;
+                if (weight_[c][l] != 0.0) weight_[c][l] += shift;
+            }
         }
 
         if (!spec.term_frequency) continue;
@@ -263,6 +339,20 @@ bool Scorer::Bind(const Model& model, const ComparisonSet& comparisons,
             }
             bound.right_levels = static_cast<uint8_t>(width);
             bound.bits = term.bits;
+            // A comparison on its null level is not evaluated, so neither is any
+            // association it takes part in. The observed cells keep their bits,
+            // which is exact only where missingness is independent across the two
+            // comparisons: the table stores M less U and no longer carries the two
+            // joints that would price that.
+            if (bound.bits.size() == height * width) {
+                for (size_t i = 0; i < height; ++i) {
+                    for (size_t j = 0; j < width; ++j) {
+                        if (null_level_[bound.left][i] || null_level_[bound.right][j]) {
+                            bound.bits[i * width + j] = 0.0;
+                        }
+                    }
+                }
+            }
             double widest = 0.0;
             for (const double value : bound.bits) widest = std::max(widest, value);
             interaction_ceiling_ += widest;
@@ -452,6 +542,16 @@ double Scorer::LevelWeight(size_t comparison, uint8_t level) const {
     if (comparison >= weight_.size()) return 0.0;
     if (level >= weight_[comparison].size()) return 0.0;
     return weight_[comparison][level];
+}
+
+double Scorer::LevelM(size_t comparison, uint8_t level) const {
+    if (comparison >= m_.size() || level >= m_[comparison].size()) return std::nan("");
+    return m_[comparison][level];
+}
+
+double Scorer::LevelU(size_t comparison, uint8_t level) const {
+    if (comparison >= u_.size() || level >= u_[comparison].size()) return std::nan("");
+    return u_[comparison][level];
 }
 
 bool Scorer::HasAdjustment(size_t comparison) const {

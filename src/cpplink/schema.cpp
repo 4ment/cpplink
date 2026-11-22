@@ -632,6 +632,21 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                     return false;
                 }
             }
+            if (entry.contains("informative")) {
+                if (level.type != LevelType::kNull) {
+                    *error = "comparison \"" + comparison.name + "\" level \"" +
+                             type_name +
+                             "\" has \"informative\", which only a null level takes";
+                    return false;
+                }
+                if (!entry["informative"].is_boolean()) {
+                    *error = "comparison \"" + comparison.name +
+                             "\" level \"null\" has an \"informative\" that is not "
+                             "true or false";
+                    return false;
+                }
+                level.informative = entry["informative"].get<bool>();
+            }
             if (entry.contains("label") && entry["label"].is_string()) {
                 level.label = entry["label"].get<std::string>();
             }

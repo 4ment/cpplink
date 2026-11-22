@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -666,6 +666,7 @@ class Linker:
         signatures: bool = True,
         ladders: bool = True,
         interactions: bool = True,
+        uninformative_nulls: bool | Sequence[str] = False,
         verbose: bool = False,
     ) -> Any:
         """Score the candidate pairs and return the predictions above a threshold.
@@ -680,6 +681,10 @@ class Linker:
         bits or a ``probability``. The other keywords are ``cpplink predict``'s
         flags, with ``bounds``, ``ceiling``, ``signatures``, ``ladders`` and
         ``interactions`` the positive forms of its ``--no-*`` switches.
+        ``uninformative_nulls`` is ``--uninformative-nulls`` when ``True`` and
+        ``--uninformative-null`` per name when a list of comparison names: such
+        a null level scores 0 bits and the comparison's other levels are read
+        given the field is there. A schema may also declare it on the level.
         """
         ball = BallOptions()
         if ball_budget is not None:
@@ -702,6 +707,7 @@ class Linker:
             signatures=signatures,
             ladders=ladders,
             interactions=interactions,
+            uninformative_nulls=uninformative_nulls,
             verbose=verbose,
         )
         frame = to_pandas(self.last_predict.table)
@@ -722,6 +728,7 @@ class Linker:
         limit: int = 0,
         tf_damping: float = 1.0,
         bounds: bool = True,
+        uninformative_nulls: bool | Sequence[str] = False,
     ) -> Any:
         """Replay a spilled run under a new model, without comparing again.
 
@@ -740,6 +747,7 @@ class Linker:
             limit=limit,
             tf_damping=tf_damping,
             bounds=bounds,
+            uninformative_nulls=uninformative_nulls,
         )
         frame = to_pandas(self.last_rescore.table)
         if not _core_writes(out):
@@ -803,6 +811,7 @@ class Linker:
         fuzzy_tf: bool = False,
         ball_budget: int | None = None,
         interactions: bool = True,
+        uninformative_nulls: bool | Sequence[str] = False,
     ) -> Explanation:
         """The level each comparison lands on for one pair, and with a model
         the waterfall of bits behind its score.
@@ -826,6 +835,7 @@ class Linker:
             fuzzy_tf=fuzzy_tf,
             ball=ball,
             interactions=interactions,
+            uninformative_nulls=uninformative_nulls,
         )
 
     def search(
@@ -845,6 +855,7 @@ class Linker:
         fuzzy_tf: bool = False,
         ball_budget: int | None = None,
         interactions: bool = True,
+        uninformative_nulls: bool | Sequence[str] = False,
     ) -> SearchResult:
         """The ``k`` records that score highest against a query record.
 
@@ -895,6 +906,7 @@ class Linker:
             fuzzy_tf=fuzzy_tf,
             ball=ball,
             interactions=interactions,
+            uninformative_nulls=uninformative_nulls,
         )
 
     def explain_blocking(self, count: bool = False) -> BlockingReport:

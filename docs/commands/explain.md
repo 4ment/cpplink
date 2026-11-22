@@ -34,6 +34,8 @@ cpplink explain --schema <schema.json> --model <model.json> \
 | `--tf-damping F` | default 1.0; scale the term-frequency move, as in [`predict`](predict.md) |
 | `--fuzzy-tf`, `--ball-budget N` | adjust fuzzy levels by neighbourhood mass, as in [`predict`](predict.md) |
 | `--no-interactions` | score the plain model out of a file that carries two-way corrections |
+| `--uninformative-null NAME` | the same for one comparison, repeatable, as in [`predict`](predict.md) |
+| `--uninformative-nulls` | score `null` levels as 0 bits, as in [`predict`](predict.md); the JSON then reports the observed-field `m` and `u` and none on a null step |
 | `--json` | one JSON object per pair instead of the text report; needs `--model` |
 | *(positional)* | required; the parquet file |
 

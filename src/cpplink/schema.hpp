@@ -154,6 +154,10 @@ struct LevelSpec {
     // evidence. The sides are the two inputs of a link, so the level needs two;
     // two rows of one input have no earlier side and read the window either way.
     bool directed = false;
+    // `"informative": false` on a null level: score it 0 bits and read the
+    // comparison's other levels given the field is present, which is what splink
+    // means by `is_null_level`. Only a null level takes it.
+    bool informative = true;
 
     std::string Describe() const;
 };

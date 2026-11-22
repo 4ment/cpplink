@@ -170,7 +170,7 @@ struct Explanation {
 Explanation ExplainStage(Session& session, uint64_t row_a, uint64_t row_b,
                          const py::object& model_object, double threshold,
                          double tf_damping, bool fuzzy_tf, const BallOptions& ball,
-                         bool interactions) {
+                         bool interactions, const py::object& uninformative_nulls) {
     const RecordStore& store = session.store();
     Check(row_a < store.NumRecords() && row_b < store.NumRecords(),
           "row out of range; the file has " + std::to_string(store.NumRecords()) +
@@ -199,6 +199,7 @@ Explanation ExplainStage(Session& session, uint64_t row_a, uint64_t row_b,
         score.threshold = threshold;
         score.tf_damping = tf_damping;
         score.use_interactions = interactions;
+        NullsFrom(uninformative_nulls, &score);
         BallTables balls;
         if (fuzzy_tf) {
             py::gil_scoped_release release;
@@ -894,7 +895,8 @@ void BindDiagnostics(py::module_& m, SessionClass* session) {
         .def("explain_rows", &ExplainStage, py::arg("row_a"), py::arg("row_b"),
              py::arg("model") = py::none(), py::arg("threshold") = 0.0,
              py::arg("tf_damping") = 1.0, py::arg("fuzzy_tf") = false,
-             py::arg("ball") = BallOptions{}, py::arg("interactions") = true)
+             py::arg("ball") = BallOptions{}, py::arg("interactions") = true,
+             py::arg("uninformative_nulls") = py::none())
         .def("explain_blocking", &ExplainBlockingStage, py::arg("count") = false);
 }
 

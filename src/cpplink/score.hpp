@@ -90,6 +90,17 @@ struct ScoreOptions {
     // the plain conditionally-independent model out of the same file, which is how
     // the two are measured against each other.
     bool use_interactions = true;
+    // Hold null levels uninformative, the reading splink gives a level it declares
+    // `is_null_level`: a missing field is a fact about how the records were
+    // collected rather than about the pair, so it scores 0 bits, and the surviving
+    // levels of that comparison are read conditional on the field being observed.
+    // That second half is what makes it more than zeroing a cell: each non-null
+    // level gains log2((1 - u_null) / (1 - m_null)), because its m and u are
+    // unconditional rates that already lost the mass the null level took.
+    // `uninformative_nulls` does it for every comparison, the list for the ones it
+    // names, and a null level the schema declares `"informative": false` always.
+    bool uninformative_nulls = false;
+    std::vector<std::string> uninformative_null_comparisons;
 };
 
 // The scoring model bound to a store: base weight per pattern, the term-frequency
@@ -125,6 +136,11 @@ class Scorer {
     // scoring billions.
     double PriorWeight() const { return prior_; }
     double LevelWeight(size_t comparison, uint8_t level) const;
+    // The m and u the level was scored with: the model's own, or under
+    // `uninformative_nulls` the rates conditional on the field being observed,
+    // with NaN for a null level, whose rates the score no longer reads.
+    double LevelM(size_t comparison, uint8_t level) const;
+    double LevelU(size_t comparison, uint8_t level) const;
     bool HasAdjustment(size_t comparison) const;
     // The term-frequency move this pair gets for one comparison: zero unless the
     // pattern puts it on a level that has one.
@@ -152,6 +168,8 @@ class Scorer {
     double InteractionBits(size_t index, uint32_t gamma) const;
 
     double threshold() const { return options_.threshold; }
+    // The comparisons whose null level is held uninformative, in schema order.
+    const std::vector<std::string>& UninformativeNulls() const { return uninformative_; }
     bool Dense() const { return dense_; }
     // Distinct patterns an evaluation can actually produce: the product of the
     // level counts, not two to the packed width.
@@ -189,6 +207,10 @@ class Scorer {
     ScoreOptions options_;
     double prior_ = 0.0;
     std::vector<std::vector<double>> weight_;  // by comparison, by level
+    std::vector<std::vector<double>> m_;       // the rates weight_ was taken from
+    std::vector<std::vector<double>> u_;
+    std::vector<std::vector<bool>> null_level_;  // a null level held uninformative
+    std::vector<std::string> uninformative_;
     std::vector<TermFrequencyAdjustment> adjustments_;
 
     std::vector<BoundInteraction> interactions_;

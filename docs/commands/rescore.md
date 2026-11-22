@@ -30,6 +30,8 @@ cpplink rescore --schema <schema.json> --model <model.json> --spill <dir>
 | `--limit N` | unlimited | stop after N predictions |
 | `--tf-damping F` | 1.0 | scale the term-frequency adjustment |
 | `--no-bounds` | off | score every pair exactly instead of using the bracket. **Verification only** |
+| `--uninformative-null NAME` | none | the same for one comparison, repeatable, as in [`predict`](predict.md) |
+| `--uninformative-nulls` | off | score `null` levels as 0 bits, as in [`predict`](predict.md). It moves the weights the spill was cut at, so treat it as a new model: a pair the spill dropped cannot come back |
 | *(positional)* | — | required; the parquet file |
 | `--mode dedup\|link\|link-and-dedup` | link with more than one file, else dedup | which pairs to enumerate; see [linking](../linking.md) |
 

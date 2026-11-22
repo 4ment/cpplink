@@ -22,6 +22,7 @@
 #include "cpplink/predict.hpp"
 #include "cpplink/record_store.hpp"
 #include "cpplink/schema.hpp"
+#include "cpplink/score.hpp"
 #include "cpplink/search.hpp"
 
 namespace cpplink {
@@ -157,6 +158,11 @@ PairMode ModeFrom(const py::object& mode, size_t inputs);
 // A threshold in bits, or a probability turned into one; exactly one is given.
 double ThresholdFrom(const py::object& threshold, const py::object& probability,
                      const char* command);
+
+// `uninformative_nulls` as a keyword: True for every comparison's null level, or
+// a list of comparison names for those alone. False or an empty list leaves the
+// schema's own declarations.
+void NullsFrom(const py::object& nulls, ScoreOptions* score);
 
 // A table handed to Python through the Arrow PyCapsule protocol: whatever
 // `pa.table(x)`, `pl.DataFrame(x)` or `pd.DataFrame(pa.table(x).to_pandas())`

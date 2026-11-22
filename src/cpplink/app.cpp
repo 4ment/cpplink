@@ -148,7 +148,9 @@ void PrintUsage(std::ostream& out) {
         << "                [--rows <i>,<j>] [--pairs <file|->] [--row-pairs <file|->]\n"
         << "                [--predictions <file> --out <file.csv|file.parquet>]\n"
         << "                [--model <model.json>] [--threshold BITS] [--tf-damping F]\n"
-        << "                [--fuzzy-tf] [--ball-budget N] [--no-interactions] [--json]\n"
+        << "                [--fuzzy-tf] [--ball-budget N] [--no-interactions]\n"
+        << "                [--uninformative-nulls] [--uninformative-null NAME]\n"
+        << "                [--json]\n"
         << "                <file.parquet>...\n"
         << "cpplink explain-blocking --schema <schema.json> [--count] "
            "[--mode MODE]\n"
@@ -173,7 +175,9 @@ void PrintUsage(std::ostream& out) {
         << "                [--tf-damping F] [--no-signatures] [--no-ladders]\n"
         << "                [--spill <dir>] [--spill-sample R] [--fuzzy-tf]\n"
         << "                [--ball-budget N]\n"
-        << "                [--no-interactions] [--mode MODE] [--all-pairs]\n"
+        << "                [--no-interactions] [--uninformative-nulls]\n"
+        << "                [--uninformative-null NAME]\n"
+        << "                [--mode MODE] [--all-pairs]\n"
         << "                [-v | --verbose] <file.parquet>...\n"
         << "cpplink completeness --schema <schema.json> --model <model.json>\n"
         << "                [--truth <pairs.csv>] [--sample R] [--threads N]\n"
@@ -185,6 +189,7 @@ void PrintUsage(std::ostream& out) {
         << "                [--threshold BITS | --probability P]\n"
         << "                [--format bin|csv] [--threads N] [--limit N] "
            "[--mode MODE]\n"
+        << "                [--uninformative-nulls] [--uninformative-null NAME]\n"
         << "                <file.parquet>...\n"
         << "cpplink cluster --schema <schema.json>\n"
         << "                --predictions <dir|file.csv|file.parquet>\n"
@@ -753,6 +758,11 @@ int RunExplain(const std::vector<std::string>& args, std::ostream& out,
             ball.budget = std::stoull(value);
         } else if (args[i] == "--no-interactions") {
             score.use_interactions = false;
+        } else if (args[i] == "--uninformative-nulls") {
+            score.uninformative_nulls = true;
+        } else if (args[i] == "--uninformative-null") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.uninformative_null_comparisons.push_back(value);
         } else if (args[i] == "--pair") {
             if (!TakeValue(args, &i, &pair, err)) return 1;
         } else if (args[i] == "--rows") {
@@ -1431,6 +1441,11 @@ int RunPredict(const std::vector<std::string>& args, std::ostream& out,
             use_ladders = false;
         } else if (args[i] == "--no-interactions") {
             score.use_interactions = false;
+        } else if (args[i] == "--uninformative-nulls") {
+            score.uninformative_nulls = true;
+        } else if (args[i] == "--uninformative-null") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.uninformative_null_comparisons.push_back(value);
         } else if (!args[i].empty() && args[i][0] == '-') {
             err << "cpplink predict: unknown option '" << args[i] << "'\n";
             return 1;
@@ -1721,6 +1736,11 @@ int RunRescore(const std::vector<std::string>& args, std::ostream& out,
             }
             score.threshold = WeightForProbability(probability);
             have_threshold = true;
+        } else if (args[i] == "--uninformative-nulls") {
+            score.uninformative_nulls = true;
+        } else if (args[i] == "--uninformative-null") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.uninformative_null_comparisons.push_back(value);
         } else if (args[i] == "--format") {
             if (!TakeValue(args, &i, &value, err)) return 1;
             if (value == "bin") {
@@ -1912,6 +1932,11 @@ int RunSearch(const std::vector<std::string>& args, std::ostream& out,
             ball.budget = std::stoull(value);
         } else if (args[i] == "--no-interactions") {
             score.use_interactions = false;
+        } else if (args[i] == "--uninformative-nulls") {
+            score.uninformative_nulls = true;
+        } else if (args[i] == "--uninformative-null") {
+            if (!TakeValue(args, &i, &value, err)) return 1;
+            score.uninformative_null_comparisons.push_back(value);
         } else if (args[i] == "--clusters") {
             if (!TakeValue(args, &i, &cluster_path, err)) return 1;
         } else if (args[i] == "--explain") {
