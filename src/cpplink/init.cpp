@@ -859,8 +859,11 @@ std::string SchemaToJson(const Schema& schema) {
         for (const LevelSpec& level : comparison.levels) {
             nlohmann::ordered_json item;
             item["type"] = LevelTypeName(level.type);
-            if (level.type != LevelType::kNull && level.type != LevelType::kExact &&
-                level.type != LevelType::kElse) {
+            if (level.type == LevelType::kPartialDate) {
+                item["match"] = DateMatchName(level.date_match);
+            } else if (level.type != LevelType::kNull &&
+                       level.type != LevelType::kExact &&
+                       level.type != LevelType::kElse) {
                 item["threshold"] = level.threshold;
             }
             if (level.directed) item["direction"] = "forward";

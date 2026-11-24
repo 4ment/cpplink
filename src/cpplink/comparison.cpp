@@ -64,6 +64,133 @@ bool SameSet(const StringListColumn& column, uint64_t a, uint64_t b) {
                       column.ids.begin() + column.offsets[b]);
 }
 
+// A date of birth as eight digits, DDMMYYYY, with 00 for an unknown day or month.
+// Packed as `year << 9 | month << 5 | day`, which is never 0 because the year
+// must be known. Anything else is refused with the reason, since a value that is
+// not a date cannot be compared as one and guessing would make a level fire on
+// a pair it should not.
+bool ParsePartialDate(std::string_view text, uint32_t* packed, std::string* why) {
+    if (text.size() != 8) {
+        *why = "it is " + std::to_string(text.size()) + " characters, not 8";
+        return false;
+    }
+    uint32_t digits[8];
+    for (size_t i = 0; i < 8; ++i) {
+        if (text[i] < '0' || text[i] > '9') {
+            *why = "it holds a character that is not a digit";
+            return false;
+        }
+        digits[i] = static_cast<uint32_t>(text[i] - '0');
+    }
+    const uint32_t day = (digits[0] * 10) + digits[1];
+    const uint32_t month = (digits[2] * 10) + digits[3];
+    const uint32_t year =
+        (digits[4] * 1000) + (digits[5] * 100) + (digits[6] * 10) + digits[7];
+    if (year == 0) {
+        *why = "its year is 0000";
+        return false;
+    }
+    if (month > 12) {
+        *why = "its month is " + std::to_string(month);
+        return false;
+    }
+    if (day > 31) {
+        *why = "its day is " + std::to_string(day);
+        return false;
+    }
+    *packed = (year << 9u) | (month << 5u) | day;
+    return true;
+}
+
+constexpr uint32_t DateYear(uint32_t date) { return date >> 9u; }
+constexpr uint32_t DateMonth(uint32_t date) { return (date >> 5u) & 15u; }
+constexpr uint32_t DateDay(uint32_t date) { return date & 31u; }
+constexpr bool DateComplete(uint32_t date) {
+    return DateMonth(date) != 0 && DateDay(date) != 0;
+}
+
+// Whether two complete, different dates are one keying error apart as they were
+// written, DDMMYYYY: one digit wrong, two adjacent digits swapped, or the day and
+// month swapped whole. The digits are rebuilt from the parts, which hold exactly
+// what the eight characters did.
+bool OneKeyingError(uint32_t left, uint32_t right) {
+    if (DateYear(left) == DateYear(right) && DateDay(left) == DateMonth(right) &&
+        DateMonth(left) == DateDay(right)) {
+        return true;
+    }
+    auto digits = [](uint32_t date, char* out) {
+        const uint32_t day = DateDay(date);
+        const uint32_t month = DateMonth(date);
+        const uint32_t year = DateYear(date);
+        out[0] = static_cast<char>(day / 10);
+        out[1] = static_cast<char>(day % 10);
+        out[2] = static_cast<char>(month / 10);
+        out[3] = static_cast<char>(month % 10);
+        out[4] = static_cast<char>(year / 1000);
+        out[5] = static_cast<char>(year / 100 % 10);
+        out[6] = static_cast<char>(year / 10 % 10);
+        out[7] = static_cast<char>(year % 10);
+    };
+    char x[8];
+    char y[8];
+    digits(left, x);
+    digits(right, y);
+    int first = -1;
+    int differing = 0;
+    for (int i = 0; i < 8; ++i) {
+        if (x[i] != y[i]) {
+            if (first < 0) first = i;
+            ++differing;
+        }
+    }
+    if (differing == 1) return true;
+    return differing == 2 && first < 7 && x[first] != x[first + 1] &&
+           x[first] == y[first + 1] && x[first + 1] == y[first];
+}
+
+// The partial_date question for one pair of dates. An unknown part never
+// disagrees; two dates that are not both complete can only be compatible, so two
+// records that both say "1978" share a year and are never a full match.
+bool PartialDatesMatch(DateMatch match, uint32_t left, uint32_t right) {
+    if (left == 0 || right == 0) return false;
+    const bool complete = DateComplete(left) && DateComplete(right);
+    switch (match) {
+        case DateMatch::kFull:
+            return complete && left == right;
+        case DateMatch::kTypo:
+            return complete && left != right && OneKeyingError(left, right);
+        case DateMatch::kCompatibleMonth:
+        case DateMatch::kCompatibleYear: {
+            if (complete || DateYear(left) != DateYear(right)) return false;
+            const uint32_t month_l = DateMonth(left);
+            const uint32_t month_r = DateMonth(right);
+            const uint32_t day_l = DateDay(left);
+            const uint32_t day_r = DateDay(right);
+            if (month_l != 0 && month_r != 0 && month_l != month_r) return false;
+            if (day_l != 0 && day_r != 0 && day_l != day_r) return false;
+            if (match == DateMatch::kCompatibleMonth) {
+                return month_l != 0 && month_r != 0;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// The partial_date table for one dictionary: every distinct value parsed once, or
+// 0 where it is not a date. Bind refuses the column on the first such value;
+// ResizeTables, extending a table over values a query adopted, leaves it at 0 so
+// it matches nothing.
+void ParseDates(const Dictionary& dict, std::vector<uint32_t>* table) {
+    const auto from = static_cast<uint32_t>(table->size());
+    table->resize(dict.Size(), 0);
+    std::string why;
+    for (uint32_t id = from; id < dict.Size(); ++id) {
+        uint32_t packed = 0;
+        if (ParsePartialDate(dict.Value(id), &packed, &why)) table->at(id) = packed;
+    }
+}
+
 }  // namespace
 
 bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
@@ -71,6 +198,8 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
     bound_.clear();
     tables_.clear();
     table_dicts_.clear();
+    date_tables_.clear();
+    date_dicts_.clear();
     width_ = 0;
     dataset_starts_ = store.dataset_starts();
     // Several comparisons can read the same column, and the signatures belong to
@@ -118,6 +247,7 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
         bool fuzzy = false;
         bool list_fuzzy = false;
         bool contains = false;
+        bool partial_date = false;
         // Which slots a fuzzy level reads: a table is built only for those, since
         // an exact level never touches a character and has no use for one.
         std::vector<bool> slot_fuzzy(bound.slots.size(), false);
@@ -140,7 +270,37 @@ bool ComparisonSet::Bind(const Schema& schema, const RecordStore& store,
                 if (!slot_fuzzy.empty()) slot_fuzzy[0] = true;
             } else if (level.type == LevelType::kListContains) {
                 contains = true;
+            } else if (level.type == LevelType::kPartialDate) {
+                partial_date = true;
             }
+        }
+        if (partial_date) {
+            // Parsed once per distinct value, so the pair path reads two packed
+            // integers. A value that is not a date fails the run here, before a
+            // pair is compared, and names the value and the reason.
+            const Dictionary* dict = bound.lists != nullptr     ? &bound.lists->dict
+                                     : bound.strings != nullptr ? &bound.strings->dict
+                                                                : nullptr;
+            if (dict == nullptr) {
+                *error = "comparison \"" + spec.name +
+                         "\" has a partial_date level but no string column of dates";
+                return false;
+            }
+            auto table = std::make_unique<std::vector<uint32_t>>(dict->Size(), 0);
+            std::string why;
+            for (uint32_t id = 0; id < dict->Size(); ++id) {
+                uint32_t packed = 0;
+                if (!ParsePartialDate(dict->Value(id), &packed, &why)) {
+                    *error = "column \"" + spec.columns.front() + "\" holds \"" +
+                             std::string(dict->Value(id)) + "\", which comparison \"" +
+                             spec.name + "\" cannot read as a DDMMYYYY date: " + why;
+                    return false;
+                }
+                (*table)[id] = packed;
+            }
+            date_tables_.push_back(std::move(table));
+            date_dicts_.push_back(dict);
+            bound.partial_dates = date_tables_.back()->data();
         }
         // Signatures belong to a dictionary rather than to a comparison, so the
         // same table serves every comparison reading that column -- and a list
@@ -234,6 +394,47 @@ void ComparisonSet::ResizeTables() {
     for (size_t i = 0; i < tables_.size(); ++i) {
         tables_[i]->Extend(*table_dicts_[i]);
     }
+    // A date table extends in place and may move, so every comparison pointing
+    // at it is pointed at it again.
+    for (size_t i = 0; i < date_tables_.size(); ++i) {
+        const uint32_t* before = date_tables_[i]->data();
+        ParseDates(*date_dicts_[i], date_tables_[i].get());
+        for (BoundComparison& bound : bound_) {
+            if (bound.partial_dates == before)
+                bound.partial_dates = date_tables_[i]->data();
+        }
+    }
+}
+
+bool ComparisonSet::PartialDateFires(const BoundComparison& comparison,
+                                     const LevelSpec& level, uint64_t a, uint64_t b) {
+    // A row's dates as a run of value ids: a cell of the list column, or the one
+    // id of a string column.
+    const uint32_t* left = nullptr;
+    const uint32_t* right = nullptr;
+    size_t left_size = 0;
+    size_t right_size = 0;
+    if (comparison.lists != nullptr) {
+        const StringListColumn& lists = *comparison.lists;
+        left = lists.ids.data() + lists.offsets[a];
+        left_size = lists.offsets[a + 1] - lists.offsets[a];
+        right = lists.ids.data() + lists.offsets[b];
+        right_size = lists.offsets[b + 1] - lists.offsets[b];
+    } else {
+        const StringColumn& strings = *comparison.strings;
+        left = &strings.ids[a];
+        right = &strings.ids[b];
+        left_size = *left == kNullId ? 0 : 1;
+        right_size = *right == kNullId ? 0 : 1;
+    }
+    const uint32_t* dates = comparison.partial_dates;
+    for (size_t i = 0; i < left_size; ++i) {
+        const uint32_t x = dates[left[i]];
+        for (size_t j = 0; j < right_size; ++j) {
+            if (PartialDatesMatch(level.date_match, x, dates[right[j]])) return true;
+        }
+    }
+    return false;
 }
 
 uint64_t ComparisonSet::SignatureBytes() const {
@@ -648,6 +849,9 @@ bool ComparisonSet::LevelFires(const BoundComparison& comparison, size_t index,
         case LevelType::kContainsJaroWinkler:
             return NearListFires(comparison, level, a, b, false);
 
+        case LevelType::kPartialDate:
+            return PartialDateFires(comparison, level, a, b);
+
         case LevelType::kListContains: {
             // Both directions, because the relation is asymmetric: a nickname
             // list is a property of the row that owns it, and "Bill is one of
@@ -682,6 +886,7 @@ bool ComparisonSet::LevelMaybe(const BoundComparison& comparison, size_t index,
         case LevelType::kNumericWithin:
         case LevelType::kPercentageWithin:
         case LevelType::kListContains:
+        case LevelType::kPartialDate:
             // Exact already, and cheaper than any bound would be: two integer
             // lookups and a walk over a cell that holds a handful of ids.
             return LevelFires(comparison, index, a, b);

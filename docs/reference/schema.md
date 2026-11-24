@@ -212,6 +212,7 @@ the strongest evidence first.
 | `contains_jaro_winkler` | required | 1 string + 1 string_list | either row's value is that similar to an element of the other's list |
 | `list_levenshtein` | required | 1 string_list | some element pair is within threshold edits |
 | `list_jaro_winkler` | required | 1 string_list | some element pair is at least this similar |
+| `partial_date` | none; takes `match` | 1 string or 1 string_list | some date of one row and some date of the other answer the `match` question, each read whole |
 | `else` | — | any | always; **must be last** |
 
 An optional `"label"` overrides the generated description in reports:
@@ -223,7 +224,7 @@ An optional `"label"` overrides the generated description in reports:
 `percentage_within` is splink's percentage difference: the gap over the larger of the two magnitudes, strictly below the threshold, for an amount whose tolerance scales with its size.
 `exact` on a `double` is equality to the last digit.
 
-Three more optional fields apply to one level type each.
+Three more optional fields apply to one level type each, and `partial_date` has a required one of its own, [`match`](#dates-with-unknown-parts-partial_date).
 
 #### `direction` on `date_within`
 
@@ -448,6 +449,45 @@ That is one `uint32` per distinct scalar value, built by one pass over each dict
 is what keeps the pair path integer-only: no string is touched, and the level costs two
 lookups and a walk over a cell holding a handful of ids.
 
+### Dates with unknown parts: `partial_date`
+
+A date of birth is often recorded with its day or month unknown, written as `00`.
+`partial_date` reads such dates as eight-character strings, `DDMMYYYY`, from a `string` column or from a `string_list` column holding several dates per record:
+
+```json
+{"name": "dob", "columns": ["dobs"], "levels": [
+  {"type": "null"},
+  {"type": "partial_date", "match": "full"},
+  {"type": "partial_date", "match": "typo"},
+  {"type": "partial_date", "match": "compatible_month"},
+  {"type": "partial_date", "match": "compatible_year"},
+  {"type": "else"}
+]}
+```
+
+`match` says what the level asks of a pair of dates:
+
+| `match` | Fires when | Example |
+| --- | --- | --- |
+| `full` | both dates are complete and identical | `25111978` and `25111978` |
+| `typo` | both are complete and one keying error apart: one digit wrong, two adjacent digits swapped, or the day and month swapped | `25111978` and `25111979`, `05111978` and `11051978` |
+| `compatible_month` | at least one is partial, every part known on both agrees, and the month is known on both | `00111978` and `25111978` |
+| `compatible_year` | at least one is partial and every part known on both agrees | `00001978` and `25111978`, `00111978` and `25001978` |
+
+An unknown part never disagrees with anything, and two partial dates are never a full match: `00001978` against `00001978` shares a year, not a date, and lands on `compatible_year`.
+The same year with a known part that contradicts, such as `25111978` against `03021978`, is `else`.
+
+With a list column, each level fires when **some single pair** of dates, one from each record, answers its question, so the ladder lands on the best pair.
+The parts of one date are never read against the parts of another: a record holding `25021965` and `01111978` does not match `25111978`, although it holds each of its parts.
+
+Every distinct value is parsed once when the comparison is bound, and a value that is not a date fails the run before any pair is compared, naming the value and the reason.
+A date must be exactly eight digits, its year may not be `0000`, its month may not exceed 12 and its day may not exceed 31.
+The pair path then reads two packed integers per date pair, so the level is exact and cheap and is its own bound under the [ceiling](../comparisons.md#the-admissibility-contract).
+
+There is no term-frequency adjustment on these levels, and their `u` is sampled.
+The levels are separate, rather than one `compatible` level, because agreeing on the year alone is much weaker evidence than agreeing on the year and the month, and only separate levels let the model price the two differently.
+[`simplify`](../commands/simplify.md) may merge `compatible_month` into `compatible_year` below it, which is the one implication among the four.
+
 ### Two conventions worth following
 
 - **Put `null` first.** It then fires whenever either side is missing, which means (a) a
@@ -466,7 +506,7 @@ Before a data file is opened, cpplink rejects a schema that:
   levels a scalar column then a list one);
 - names columns of different types, unless they are the string-then-string_list pair the
   membership levels read;
-- omits a required `threshold`;
+- omits a required `threshold`, or gives `partial_date` no `match` (or gives any other level one);
 - does not end in `else`, or places an `else` before the end (levels after it can never fire);
 - needs more than 32 bits for the packed γ.
 

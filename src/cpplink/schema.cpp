@@ -44,7 +44,20 @@ constexpr LevelName kLevelNames[] = {
     {"list_jaro_winkler", LevelType::kListJaroWinkler},
     {"contains_levenshtein", LevelType::kContainsLevenshtein},
     {"contains_jaro_winkler", LevelType::kContainsJaroWinkler},
+    {"partial_date", LevelType::kPartialDate},
     {"else", LevelType::kElse},
+};
+
+struct DateMatchName_ {
+    const char* name;
+    DateMatch match;
+};
+
+constexpr DateMatchName_ kDateMatchNames[] = {
+    {"full", DateMatch::kFull},
+    {"typo", DateMatch::kTypo},
+    {"compatible_month", DateMatch::kCompatibleMonth},
+    {"compatible_year", DateMatch::kCompatibleYear},
 };
 
 // Thresholds are printed at the precision the level is written in, so an explain
@@ -192,6 +205,23 @@ bool ParseLevelType(const std::string& name, LevelType* type) {
     return false;
 }
 
+const char* DateMatchName(DateMatch match) {
+    for (const DateMatchName_& entry : kDateMatchNames) {
+        if (entry.match == match) return entry.name;
+    }
+    return "unknown";
+}
+
+bool ParseDateMatch(const std::string& name, DateMatch* match) {
+    for (const DateMatchName_& entry : kDateMatchNames) {
+        if (name == entry.name) {
+            *match = entry.match;
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string LevelSpec::Describe() const {
     if (!label.empty()) return label;
     switch (type) {
@@ -226,6 +256,20 @@ std::string LevelSpec::Describe() const {
             return "contains_levenshtein <= " + Number(threshold, 0);
         case LevelType::kContainsJaroWinkler:
             return "contains_jaro_winkler >= " + Number(threshold, 2);
+        case LevelType::kPartialDate:
+            // Short enough for a report's level column, which a level reading
+            // "partial_date compatible_month" would overflow.
+            switch (date_match) {
+                case DateMatch::kFull:
+                    return "date full";
+                case DateMatch::kTypo:
+                    return "date typo";
+                case DateMatch::kCompatibleMonth:
+                    return "date compatible month";
+                case DateMatch::kCompatibleYear:
+                    return "date compatible year";
+            }
+            return "date";
         case LevelType::kElse:
             return "else";
     }
@@ -372,6 +416,10 @@ bool LevelAcceptsColumn(LevelType level, ColumnType column) {
         case LevelType::kListLevenshtein:
         case LevelType::kListJaroWinkler:
             return column == ColumnType::kStringList;
+        case LevelType::kPartialDate:
+            // The dates are text, eight digits each, because a date column cannot
+            // say that its month is unknown.
+            return column == ColumnType::kString || column == ColumnType::kStringList;
         case LevelType::kListContains:
         case LevelType::kContainsLevenshtein:
         case LevelType::kContainsJaroWinkler:
@@ -466,6 +514,7 @@ bool LevelNeedsThreshold(LevelType level) {
         case LevelType::kNull:
         case LevelType::kExact:
         case LevelType::kListContains:
+        case LevelType::kPartialDate:
         case LevelType::kElse:
             return false;
         default:
@@ -505,6 +554,13 @@ bool CheckComparisonTypes(const Schema& schema, const ComparisonSpec& comparison
             }
             *error = "comparison \"" + comparison.name + "\" applies level \"" +
                      type_name + "\" to a " + types + " column, which it cannot read";
+            return false;
+        }
+        if (level.type == LevelType::kPartialDate && comparison.columns.size() != 1) {
+            *error = "comparison \"" + comparison.name +
+                     "\" level \"partial_date\" reads one column of dates, and the "
+                     "comparison names " +
+                     std::to_string(comparison.columns.size());
             return false;
         }
         // A one-column level in the scalar-and-list shape reads one of the two,
@@ -631,6 +687,22 @@ bool ParseComparisons(const nlohmann::json& root, Schema* schema, std::string* e
                              "\"; it must be forward or either";
                     return false;
                 }
+            }
+            if (level.type == LevelType::kPartialDate) {
+                const std::string match =
+                    entry.contains("match") && entry["match"].is_string()
+                        ? entry["match"].get<std::string>()
+                        : "";
+                if (!ParseDateMatch(match, &level.date_match)) {
+                    *error = "comparison \"" + comparison.name +
+                             "\" level \"partial_date\" needs a \"match\": full, typo, "
+                             "compatible_month or compatible_year";
+                    return false;
+                }
+            } else if (entry.contains("match")) {
+                *error = "comparison \"" + comparison.name + "\" level \"" + type_name +
+                         "\" has a \"match\", which only partial_date takes";
+                return false;
             }
             if (entry.contains("informative")) {
                 if (level.type != LevelType::kNull) {

@@ -75,7 +75,7 @@ walk down the ladder.
 
 ## What each level reads
 
-Fifteen level types, in five groups.
+Sixteen level types, in six groups.
 The `threshold` column says whether one is required; the schema reference has
 [the same table as syntax](reference/schema.md#levels).
 
@@ -282,6 +282,21 @@ levels read both.
 That is the reason to want the shape rather than two comparisons, since the alias bridge has
 to rank between an exact name match and a fuzzy one inside a single field of γ.
 
+### A date with unknown parts
+
+| Level | `match` | Fires when |
+| --- | --- | --- |
+| `partial_date` | `full` | both dates are complete and identical |
+| `partial_date` | `typo` | both are complete and one keying error apart |
+| `partial_date` | `compatible_month` | one is partial, the parts known on both agree, and both know the month |
+| `partial_date` | `compatible_year` | one is partial and the parts known on both agree |
+
+This is a date of birth written `DDMMYYYY` with `00` for an unknown day or month, one per record in a `string` column or several per record in a `string_list`.
+A `date` column cannot say that its month is unknown, and splitting the date into a year, a month and a day compared separately would let a record's aliases agree part by part on a date neither record holds.
+Each level instead reads one date of each record whole, and the ladder lands on the best pair.
+Two partial dates are never a full match, so two records that both say only `1978` are priced as sharing a year.
+[The schema reference](reference/schema.md#dates-with-unknown-parts-partial_date) has the full definition and what fails the load.
+
 ## What a level costs
 
 The comparison is the expensive part of the pipeline, by two orders of magnitude.
@@ -296,6 +311,7 @@ The ladder is.
 | `exact`, `date_within`, `numeric_within` | one or two nanoseconds, integer or double arithmetic |
 | `list_overlap`, `list_jaccard`, `exact` on a list | a linear merge over two sorted cells |
 | `list_contains` | two integer lookups and a walk over a sorted cell |
+| `partial_date` | two lookups of a date parsed at bind time per date pair, \(\lvert a \rvert \times \lvert b \rvert\) of them over lists |
 | `geo_within` | four trigonometric calls |
 | `levenshtein`, `jaro_winkler` | the string metric, unless a bound rejects the pair first |
 | `contains_levenshtein`, `contains_jaro_winkler` | \(\lvert a \rvert + \lvert b \rvert\) of those |
@@ -344,7 +360,7 @@ This is what each level answers when asked the cheap question.
 
 | Level | The cheap answer |
 | --- | --- |
-| `null`, `else`, `exact`, `date_within`, `numeric_within`, `list_contains` | the level itself, which is already cheaper than any bound |
+| `null`, `else`, `exact`, `date_within`, `numeric_within`, `list_contains`, `partial_date` | the level itself, which is already cheaper than any bound |
 | `levenshtein`, `jaro_winkler` | the signature bounds |
 | `geo_within` | the latitude arc, a subtraction where the haversine is four trigonometric calls |
 | `list_overlap` | \(\min(\lvert A \rvert, \lvert B \rvert)\), two subtractions off the offset array |
@@ -371,6 +387,7 @@ It is opt-in per comparison with `"term_frequency": true`, and it does not reach
 | `levenshtein`, `jaro_winkler` on a string column | with [`--fuzzy-tf`](commands/predict.md), from the mass of the value's neighbourhood |
 | any level of a list column | no |
 | any level of the membership shape | no |
+| `partial_date` | no |
 | `exact` on a double | no such level exists |
 
 The fuzzy case is the interesting one.

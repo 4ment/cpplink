@@ -81,6 +81,14 @@ bool Implies(const LevelSpec& upper, const LevelSpec& lower) {
         }
     }
     if (upper.type != lower.type) return false;
+    // Of the four partial-date questions only one implies another: compatible with
+    // the month known on both is compatible. A full match and a typo need both
+    // dates complete, which is exactly what rules compatibility out.
+    if (upper.type == LevelType::kPartialDate) {
+        return upper.date_match == lower.date_match ||
+               (upper.date_match == DateMatch::kCompatibleMonth &&
+                lower.date_match == DateMatch::kCompatibleYear);
+    }
     // A directed window sits inside the window either side at the same threshold,
     // and not the other way round.
     if (upper.type == LevelType::kDateWithin && !upper.directed && lower.directed) {

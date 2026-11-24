@@ -48,6 +48,13 @@ struct BoundComparison {
     // aligning them once at bind time is what keeps the pair path integer-only.
     const uint32_t* alias_ids = nullptr;
     uint32_t alias_size = 0;
+    // Present only when this comparison has a partial_date level. Indexed by a
+    // value id of the dates' column -- the string column, or the list column's
+    // own dictionary -- holding the date parsed once per distinct value: year,
+    // month and day packed as `year << 9 | month << 5 | day`, with 0 for a part
+    // that is unknown. A year is never unknown, so a packed date is never 0, and
+    // 0 marks a value adopted after the bind that is not a date at all.
+    const uint32_t* partial_dates = nullptr;
     // Every string column the comparison names, in the schema's order, each with
     // its signature table where a fuzzy level reads it. A string level reads the
     // slot its `LevelSpec::column` indexes, so a comparison over an address and
@@ -172,6 +179,10 @@ class ComparisonSet {
     // every element of `row`'s list.
     bool NearCell(const BoundComparison& comparison, const LevelSpec& level,
                   uint32_t value, uint64_t row, bool bounds_only) const;
+    // A partial_date level: whether some date of one row and some date of the
+    // other answer the level's question, each pair read whole.
+    static bool PartialDateFires(const BoundComparison& comparison,
+                                 const LevelSpec& level, uint64_t a, uint64_t b);
 
     std::vector<BoundComparison> bound_;
     // unique_ptr so the tables keep their address as the vector grows, and so a
@@ -186,6 +197,10 @@ class ComparisonSet {
     // by pointer for the same reason the signature tables are: the vector may
     // grow, and a BoundComparison holds the data() of one of these.
     std::vector<std::unique_ptr<std::vector<uint32_t>>> alias_maps_;
+    // One per partial_date comparison, held by pointer for the same reason, with
+    // the dictionary each was parsed from so ResizeTables can extend it.
+    std::vector<std::unique_ptr<std::vector<uint32_t>>> date_tables_;
+    std::vector<const Dictionary*> date_dicts_;
     // The store's input boundaries, for the one level that reads which side of a
     // link a row is on. Empty for a single input, as in the store.
     std::vector<uint64_t> dataset_starts_;

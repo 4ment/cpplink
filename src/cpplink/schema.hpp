@@ -127,8 +127,30 @@ enum class LevelType {
     // |a| x |b|, because only one side of each comparison is a list.
     kContainsLevenshtein,  // some element is within threshold edits of the value
     kContainsJaroWinkler,  // some element is at least this similar to the value
-    kElse,                 // always fires; must be last
+    // A date of birth written as eight digits, DDMMYYYY, where a day or month of
+    // 00 is unknown, over a string column or a list of such dates per record.
+    // What it asks is set by `LevelSpec::date_match`, and it is answered by the
+    // best single pair of dates, one from each record: the parts of one date are
+    // never read against the parts of another, so two lists of aliases cannot
+    // agree on a date neither record holds.
+    kPartialDate,
+    kElse,  // always fires; must be last
 };
+
+// What a partial_date level asks of a pair of dates. An unknown part is never a
+// disagreement, and two dates that are both partial can only be compatible: two
+// records both saying "1978" share a year, not a date.
+enum class DateMatch : uint8_t {
+    kFull,             // both complete and identical
+    kTypo,             // both complete, one digit wrong, two adjacent swapped, or
+                       // the day and month swapped
+    kCompatibleMonth,  // one partial, every part known on both agrees, and the
+                       // month is known on both
+    kCompatibleYear,   // one partial and every part known on both agrees
+};
+
+const char* DateMatchName(DateMatch match);
+bool ParseDateMatch(const std::string& name, DateMatch* match);
 
 const char* LevelTypeName(LevelType type);
 bool ParseLevelType(const std::string& name, LevelType* type);
@@ -158,6 +180,8 @@ struct LevelSpec {
     // comparison's other levels given the field is present, which is what splink
     // means by `is_null_level`. Only a null level takes it.
     bool informative = true;
+    // What a partial_date level asks. Only that level reads it.
+    DateMatch date_match = DateMatch::kFull;
 
     std::string Describe() const;
 };
